@@ -135,9 +135,8 @@ let doubleClickThreshold = 600; // Changed to 600ms
 let doubleDragThreshold = 300;
 let lastDoubleDragTime = 0;
 const inputSmooth = 0.7;
-let isHidden = false;
 async function init() {
-    const urlParams = new URLSearchParams(window.location.search); // Changed to window.location.search
+    const urlParams = new URLSearchParams(window.parent.location.search);
     const mode = urlParams.get('mode');
     const remotePeerId = urlParams.get('peer');
     isClient = (mode === 'client');
@@ -392,6 +391,8 @@ async function init() {
                                         adjustedY = currentHandIndexY + (Math.abs(deltaY) - deadZoneHandY) * Math.sign(deltaY);
                                     }
                                     currentHandIndexY = currentHandIndexY * inputSmooth + adjustedY * (1 - inputSmooth);
+                                    currentHandDx = currentHandIndexX - anchorHand.x;
+                                    currentHandDy = currentHandIndexY - anchorHand.y;
                                     const pinchThresh = parseFloat(document.getElementById('pinch-thresh').value);
                                     const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y, thumb.z - index.z);
                                     isPinching = pinchDist < pinchThresh;
@@ -493,20 +494,11 @@ async function init() {
             }
         };
         document.getElementById('hide-tracker').onchange = (e) => {
-            isHidden = e.target.checked;
-            toggleHideTracker();
-            parent.postMessage(JSON.stringify({type: 'toggle_show_tracker', show: !isHidden}), '*');
+            if (e.target.checked) {
+                window.parent.postMessage(JSON.stringify({type: 'hide_tracker'}), '*');
+            }
         };
     }
-}
-function toggleHideTracker() {
-    const display = isHidden ? 'none' : 'block';
-    document.getElementById('tracker-panel').style.display = display;
-    document.getElementById('ui-video-box').style.display = display;
-    document.getElementById('toggle-btns').style.display = display;
-    document.getElementById('ui-text-canvas').style.display = display;
-    document.getElementById('timer-overlay').style.display = 'none';
-    document.getElementById('cal-dot').style.display = 'none';
 }
 frameUpdate();
 loadSettings();
@@ -742,7 +734,7 @@ function processFace(lm) {
     const deadZoneHeadYaw = parseFloat(document.getElementById('dz-head-yaw').value);
     const deadZoneHeadPitch = parseFloat(document.getElementById('dz-hp').value);
     let adjustedHeadYaw = rawHeadYaw;
-    let deltaYaw = rawHeadYaw -currentHeadYaw;
+    let deltaYaw = rawHeadYaw - currentHeadYaw;
     if (Math.abs(deltaYaw) <= deadZoneHeadYaw) {
         adjustedHeadYaw = currentHeadYaw;
     } else {
@@ -1261,6 +1253,7 @@ function frameUpdate() {
                 dragTarget.dispatchEvent(upEvent);
             }
             dragging = false;
+            dragTarget = null;
             winkDownSent = false;
         }
         lastWinkTime = now;
@@ -1717,25 +1710,65 @@ function setupTrackerEvents() {
             e.preventDefault();
         }
     });
-    window.addEventListener('message', (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'toggle_hide') {
-                document.getElementById('hide-tracker').checked = data.hide;
-                isHidden = data.hide;
-                toggleHideTracker();
-            }
-        } catch (e) {
-            console.error('Error parsing message from parent:', e);
+}
+function setupSlider(slider) {
+    if (!slider) return;
+    const id = slider.id;
+    const num = document.getElementById(`${id}-num`);
+    if (!num) return;
+    const valDisplay = document.getElementById(`${id.replace(/-[^-]+$/, '')}-val`) || document.getElementById(`v-${id}`);
+    const originalOnInput = slider.oninput || (() => {});
+    slider.oninput = (e) => {
+        originalOnInput(e);
+        const val = parseFloat(slider.value);
+        num.value = val.toFixed(3);
+        if (valDisplay) valDisplay.innerText = val.toFixed(id.includes('dz-head') || id.includes('dz-hp') ? 1 : 3);
+        localStorage.setItem(id, slider.value);
+    };
+    num.oninput = (e) => {
+        slider.value = parseFloat(e.target.value);
+        const displayVal = parseFloat(e.target.value);
+        if (valDisplay) valDisplay.innerText = displayVal.toFixed(id.includes('dz-head') || id.includes('dz-hp') ? 1 : 3);
+        originalOnInput({target: slider});
+    };
+    const minus = document.getElementById(`${id}-minus`);
+    const plus = document.getElementById(`${id}-plus`);
+    let holdTimer;
+    let holdInterval;
+    function startHold(dir) {
+        clearTimeout(holdTimer);
+        clearInterval(holdInterval);
+        const range = parseFloat(slider.max) - parseFloat(slider.min);
+        let incAmount = range > 100 ? 0.01 : 0.001;
+        let stepVal = incAmount * dir;
+        function inc() {
+            let newVal = parseFloat(slider.value) + stepVal;
+            newVal = Math.min(parseFloat(slider.max), Math.max(parseFloat(slider.min), newVal));
+            slider.value = newVal;
+            const displayVal = newVal;
+            num.value = displayVal.toFixed(3);
+            if (valDisplay) valDisplay.innerText = displayVal.toFixed(id.includes('dz-head') || id.includes('dz-hp') ? 1 : 3);
+            originalOnInput({target: slider});
         }
-    });
-    document.querySelectorAll('input[type=range]').forEach(setupSlider);
-    window.addEventListener('keydown', (e) => {
-        if (e.code === 'Space') {
-            isPaused = !isPaused;
-            e.preventDefault();
-        }
-    });
+        inc();
+        holdTimer = setTimeout(() => {
+            holdInterval = setInterval(inc, 50);
+        }, 400);
+    }
+    function stopHold() {
+        clearTimeout(holdTimer);
+        clearInterval(holdInterval);
+    }
+    if (minus) {
+        minus.onmousedown = () => startHold(-1);
+        minus.onmouseup = stopHold;
+        minus.onmouseleave = stopHold;
+    }
+    if (plus) {
+        plus.onmousedown = () => startHold(1);
+        plus.onmouseup = stopHold;
+        plus.onmouseleave = stopHold;
+    }
 }
 const MESH_SILHOUETTE = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
 const MESH_EYELASHES = [33, 160, 158, 133, 153, 144, 362, 385, 387, 263, 373, 380];
@@ -1763,40 +1796,3 @@ window.addEventListener('wheel', (e) => {
         mouseWheelZ += e.deltaY * wheelSens;
     }
 });
-function setupSlider(slider) {
-    const num = document.getElementById(slider.id + '-num');
-    const val = document.getElementById(slider.id + '-val');
-    if (num) {
-        num.value = slider.value;
-    }
-    if (val) {
-        val.innerText = parseFloat(slider.value).toFixed(3);
-    }
-    slider.oninput = (e) => {
-        const v = parseFloat(e.target.value);
-        if (num) num.value = v;
-        if (val) val.innerText = v.toFixed(3);
-    };
-    const minus = document.getElementById(slider.id + '-minus');
-    const plus = document.getElementById(slider.id + '-plus');
-    if (minus) {
-        minus.onclick = () => {
-            let v = parseFloat(slider.value) - parseFloat(slider.step);
-            v = Math.max(parseFloat(slider.min), v);
-            slider.value = v;
-            if (num) num.value = v;
-            if (val) val.innerText = v.toFixed(3);
-            slider.dispatchEvent(new Event('input'));
-        };
-    }
-    if (plus) {
-        plus.onclick = () => {
-            let v = parseFloat(slider.value) + parseFloat(slider.step);
-            v = Math.min(parseFloat(slider.max), v);
-            slider.value = v;
-            if (num) num.value = v;
-            if (val) val.innerText = v.toFixed(3);
-            slider.dispatchEvent(new Event('input'));
-        };
-    }
-}
