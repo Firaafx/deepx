@@ -137,7 +137,7 @@ let lastDoubleDragTime = 0;
 const inputSmooth = 0.7;
 let isHidden = false;
 async function init() {
-    const urlParams = new URLSearchParams(window.parent.location.search);
+    const urlParams = new URLSearchParams(window.location.search); // Changed to window.location.search
     const mode = urlParams.get('mode');
     const remotePeerId = urlParams.get('peer');
     isClient = (mode === 'client');
@@ -742,7 +742,7 @@ function processFace(lm) {
     const deadZoneHeadYaw = parseFloat(document.getElementById('dz-head-yaw').value);
     const deadZoneHeadPitch = parseFloat(document.getElementById('dz-hp').value);
     let adjustedHeadYaw = rawHeadYaw;
-    let deltaYaw = rawHeadYaw - currentHeadYaw;
+    let deltaYaw = rawHeadYaw -currentHeadYaw;
     if (Math.abs(deltaYaw) <= deadZoneHeadYaw) {
         adjustedHeadYaw = currentHeadYaw;
     } else {
@@ -1261,7 +1261,6 @@ function frameUpdate() {
                 dragTarget.dispatchEvent(upEvent);
             }
             dragging = false;
-            dragTarget = null;
             winkDownSent = false;
         }
         lastWinkTime = now;
@@ -1764,3 +1763,40 @@ window.addEventListener('wheel', (e) => {
         mouseWheelZ += e.deltaY * wheelSens;
     }
 });
+function setupSlider(slider) {
+    const num = document.getElementById(slider.id + '-num');
+    const val = document.getElementById(slider.id + '-val');
+    if (num) {
+        num.value = slider.value;
+    }
+    if (val) {
+        val.innerText = parseFloat(slider.value).toFixed(3);
+    }
+    slider.oninput = (e) => {
+        const v = parseFloat(e.target.value);
+        if (num) num.value = v;
+        if (val) val.innerText = v.toFixed(3);
+    };
+    const minus = document.getElementById(slider.id + '-minus');
+    const plus = document.getElementById(slider.id + '-plus');
+    if (minus) {
+        minus.onclick = () => {
+            let v = parseFloat(slider.value) - parseFloat(slider.step);
+            v = Math.max(parseFloat(slider.min), v);
+            slider.value = v;
+            if (num) num.value = v;
+            if (val) val.innerText = v.toFixed(3);
+            slider.dispatchEvent(new Event('input'));
+        };
+    }
+    if (plus) {
+        plus.onclick = () => {
+            let v = parseFloat(slider.value) + parseFloat(slider.step);
+            v = Math.min(parseFloat(slider.max), v);
+            slider.value = v;
+            if (num) num.value = v;
+            if (val) val.innerText = v.toFixed(3);
+            slider.dispatchEvent(new Event('input'));
+        };
+    }
+}
