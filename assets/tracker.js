@@ -1,4 +1,4 @@
-// web/assets/tracker.js
+// web/tracker.js
 // --- GLOBAL VARIABLES ---
 let eyesClosed = false;
 let closedCount = 0;
@@ -272,7 +272,7 @@ async function init() {
                 peer = new Peer(hostPeerId || undefined);
                 peer.on('open', (id) => {
                     localStorage.setItem('hostPeerId', id);
-                    const baseUrl = window.location.origin + window.location.pathname;
+                    const baseUrl = window.parent.location.origin + window.parent.location.pathname;
                     const url = `${baseUrl}?mode=client&peer=${id}`;
                     qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
                     if (hostPeerId) {
@@ -493,16 +493,11 @@ async function init() {
                 }
             }
         };
-        document.getElementById('hide-tracker').onchange = (e) => {
-            if (e.target.checked) {
-                window.parent.postMessage(JSON.stringify({type: 'hide_tracker'}), '*');
-            }
-        };
     }
     frameUpdate();
     loadSettings();
     if (document.getElementById('tracking-toggle').checked) {
-        updatePerformanceSettings();
+        await updatePerformanceSettings();
     }
     document.addEventListener('fullscreenchange', () => {
         const isFull = !!document.fullscreenElement;
@@ -1390,30 +1385,6 @@ function frameUpdate() {
         });
         dragTarget.dispatchEvent(moveEvent);
     }
-    // Send tracking data to parent (Flutter)
-    const trackingData = {
-        head: {
-            x: currentFace.x,
-            y: currentFace.y,
-            z: currentFace.z,
-            yaw: currentHeadYaw,
-            pitch: currentHeadPitch
-        },
-        iris: {
-            yaw: currentIrisYaw,
-            pitch: currentIrisPitch
-        },
-        wink: isWinking,
-        pinch: isPinching,
-        hand: hasHand ? {
-            indexX: currentHandIndexX,
-            indexY: currentHandIndexY,
-            dx: currentHandDx,
-            dy: currentHandDy
-        } : null
-        // Add more as needed, e.g., ear, etc.
-    };
-    window.parent.postMessage(JSON.stringify(trackingData), '*');
     requestAnimationFrame(frameUpdate);
 }
 function drawHUD() {
@@ -1610,7 +1581,7 @@ function setupTrackerEvents() {
             coeffX = gaussianElimination(augX);
             coeffY = gaussianElimination(augY);
             isIrisCalibrated = true;
-        };
+        }
         overlay.style.display = 'none';
     };
     document.getElementById('h-sens').oninput = (e) => { document.getElementById('h-val').innerText = e.target.value; localStorage.setItem('h-sens', e.target.value); };
