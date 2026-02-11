@@ -136,7 +136,7 @@ let doubleDragThreshold = 300;
 let lastDoubleDragTime = 0;
 const inputSmooth = 0.7;
 async function init() {
-    const urlParams = new URLSearchParams(window.location.search);
+    const urlParams = new URLSearchParams(window.parent.location.search);
     const mode = urlParams.get('mode');
     const remotePeerId = urlParams.get('peer');
     isClient = (mode === 'client');
@@ -596,7 +596,7 @@ async function updatePerformanceSettings() {
     let minTrackingConfidence = minDetectionConfidence;
     let modelComplexity = (perfMode === 'low' ? 0 : 1);
     let vidSize;
-    if (perfMode ===             'low') {
+    if (perfMode === 'low') {
         vidSize = 160;
     } else if (perfMode === 'medium') {
         vidSize = 320;
