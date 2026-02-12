@@ -1,6 +1,6 @@
 /* web/assets/tracker.css */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap');
-body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: black; font-family: 'Poppins', sans-serif; color: #e0e0e0; }
+body { margin: 0; background: rgba(0,0,0,0.5); overflow: hidden; font-family: 'Poppins', sans-serif; color: #e0e0e0; }
 #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; }
 /* --- TRACKER PANEL (LEFT) --- */
 #tracker-panel {

@@ -2,281 +2,281 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <link rel="stylesheet" href="tracker.css">
+    <link rel="stylesheet" href="tracker.css">
 </head>
 <body>
-  <div id="canvas-container"></div>
-  <canvas id="ui-text-canvas"></canvas>
-  <div id="timer-overlay">
-      <div id="timer-label">CENTER EYES</div>
-      <div id="timer-count">3</div>
-  </div>
-  <div id="ui-video-box">
-      <video id="webcam-small" autoplay muted playsinline></video>
-      <canvas id="face-dots-overlay"></canvas>
-  </div>
-  <div id="tracker-panel">
-      <div class="section-title">Neural Link Configuration</div>
-      <button id="btn-calibrate" class="btn btn-capture">Init Calibration</button>
-      <label>Input Source</label>
-      <select id="input-source">
-          <option value="local">Local Camera</option>
-          <option value="remote">Remote Device</option>
-      </select>
-      <label>Input Mode</label>
-      <select id="cursor-mode">
-          <option value="iris">Iris Neural Link</option>
-          <option value="head" selected>Head Pose Sync</option>
-          <option value="hand">Hand Neural Link</option>
-      </select>
-      <label>Performance Mode</label>
-      <select id="perf-mode-host">
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-      </select>
-      <div style="display:flex; justify-content:space-between; margin-top:8px;">
-          <label>Link Active</label>
-          <input type="checkbox" id="tracking-toggle" checked>
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-top:8px;">
-          <label>Show Cursor</label>
-          <input type="checkbox" id="show-cursor" checked>
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-top:8px;">
-          <label>Mouse Tracking</label>
-          <input type="checkbox" id="mouse-tracking">
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-top:8px;">
-          <label>Full Screen</label>
-          <input type="checkbox" id="full-screen-host">
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-top:8px;">
-          <label>Hide Tracker</label>
-          <input type="checkbox" id="hide-tracker">
-      </div>
-      <label>H-Sensitivity <span id="h-val" class="val-display">100</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="h-sens" min="1" max="1000" step="0.001" value="100">
-          <input type="number" id="h-sens-num" step="0.001" value="100">
-          <button class="btn-inc" id="h-sens-minus">-</button>
-          <button class="btn-inc" id="h-sens-plus">+</button>
-      </div>
-      <label>V-Sensitivity <span id="v-val" class="val-display">100</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="v-sens" min="1" max="1000" step="0.001" value="100">
-          <input type="number" id="v-sens-num" step="0.001" value="100">
-          <button class="btn-inc" id="v-sens-minus">-</button>
-          <button class="btn-inc" id="v-sens-plus">+</button>
-      </div>
-      <label>Smoothing <span id="s-val" class="val-display">85%</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="s-sens" min="0" max="98" step="0.001" value="85">
-          <input type="number" id="s-sens-num" step="0.001" value="85">
-          <button class="btn-inc" id="s-sens-minus">-</button>
-          <button class="btn-inc" id="s-sens-plus">+</button>
-      </div>
-      <div class="section-title">Dead Zones</div>
-      <label>Iris X <span id="dz-ix-val" class="val-display">0.010</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="dz-ix" min="0.001" max="0.1" step="0.001" value="0.010">
-          <input type="number" id="dz-ix-num" step="0.001" value="0.010">
-          <button class="btn-inc" id="dz-ix-minus">-</button>
-          <button class="btn-inc" id="dz-ix-plus">+</button>
-      </div>
-      <label>Iris Y <span id="dz-iy-val" class="val-display">0.010</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="dz-iy" min="0.001" max="0.1" step="0.001" value="0.010">
-          <input type="number" id="dz-iy-num" step="0.001" value="0.010">
-          <button class="btn-inc" id="dz-iy-minus">-</button>
-          <button class="btn-inc" id="dz-iy-plus">+</button>
-      </div>
-      <label>Head Yaw <span id="dz-head-yaw-val" class="val-display">1.0</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="dz-head-yaw" min="0" max="10" step="0.1" value="1.0">
-          <input type="number" id="dz-head-yaw-num" step="0.1" value="1.0">
-          <button class="btn-inc" id="dz-head-yaw-minus">-</button>
-          <button class="btn-inc" id="dz-head-yaw-plus">+</button>
-      </div>
-      <label>Head Pitch <span id="dz-hp-val" class="val-display">1.0</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="dz-hp" min="0" max="10" step="0.1" value="1.0">
-          <input type="number" id="dz-hp-num" step="0.1" value="1.0">
-          <button class="btn-inc" id="dz-hp-minus">-</button>
-          <button class="btn-inc" id="dz-hp-plus">+</button>
-      </div>
-      <label>Hand X <span id="dz-hx-val" class="val-display">0.010</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="dz-hx" min="0.001" max="0.5" step="0.001" value="0.010">
-          <input type="number" id="dz-hx-num" step="0.001" value="0.010">
-          <button class="btn-inc" id="dz-hx-minus">-</button>
-          <button class="btn-inc" id="dz-hx-plus">+</button>
-      </div>
-      <label>Hand Y <span id="dz-hand-y-val" class="val-display">0.010</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="dz-hand-y" min="0.001" max="0.5" step="0.001" value="0.010">
-          <input type="number" id="dz-hand-y-num" step="0.001" value="0.010">
-          <button class="btn-inc" id="dz-hand-y-minus">-</button>
-          <button class="btn-inc" id="dz-hand-y-plus">+</button>
-      </div>
-      <div class="section-title">Head Acceleration</div>
-      <label>Head Slow X <span id="head-slow-x-val" class="val-display">0.100</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="head-slow-x" min="0.001" max="10" step="0.001" value="0.1">
-          <input type="number" id="head-slow-x-num" step="0.001" value="0.1">
-          <button class="btn-inc" id="head-slow-x-minus">-</button>
-          <button class="btn-inc" id="head-slow-x-plus">+</button>
-      </div>
-      <label>Head Fast X <span id="head-fast-x-val" class="val-display">1.000</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="head-fast-x" min="0.001" max="10" step="0.001" value="1">
-          <input type="number" id="head-fast-x-num" step="0.001" value="1">
-          <button class="btn-inc" id="head-fast-x-minus">-</button>
-          <button class="btn-inc" id="head-fast-x-plus">+</button>
-      </div>
-      <label>Head Transition X <span id="head-trans-x-val" class="val-display">5.000</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="head-trans-x" min="0.001" max="10" step="0.001" value="5">
-          <input type="number" id="head-trans-x-num" step="0.001" value="5">
-          <button class="btn-inc" id="head-trans-x-minus">-</button>
-          <button class="btn-inc" id="head-trans-x-plus">+</button>
-      </div>
-      <label>Head Slow Y <span id="head-slow-y-val" class="val-display">0.100</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="head-slow-y" min="0.001" max="10" step="0.001" value="0.1">
-          <input type="number" id="head-slow-y-num" step="0.001" value="0.1">
-          <button class="btn-inc" id="head-slow-y-minus">-</button>
-          <button class="btn-inc" id="head-slow-y-plus">+</button>
-      </div>
-      <label>Head Fast Y <span id="head-fast-y-val" class="val-display">1.000</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="head-fast-y" min="0.001" max="10" step="0.001" value="1">
-          <input type="number" id="head-fast-y-num" step="0.001" value="1">
-          <button class="btn-inc" id="head-fast-y-minus">-</button>
-          <button class="btn-inc" id="head-fast-y-plus">+</button>
-      </div>
-      <label>Head Transition Y <span id="head-trans-y-val" class="val-display">5.000</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="head-trans-y" min="0.001" max="10" step="0.001" value="5">
-          <input type="number" id="head-trans-y-num" step="0.001" value="5">
-          <button class="btn-inc" id="head-trans-y-minus">-</button>
-          <button class="btn-inc" id="head-trans-y-plus">+</button>
-      </div>
-      <div class="section-title">Hand Acceleration</div>
-      <label>Hand Slow X <span id="hand-slow-x-val" class="val-display">1.000</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="hand-slow-x" min="0.001" max="10" step="0.001" value="1">
-          <input type="number" id="hand-slow-x-num" step="0.001" value="1">
-          <button class="btn-inc" id="hand-slow-x-minus">-</button>
-          <button class="btn-inc" id="hand-slow-x-plus">+</button>
-      </div>
-      <label>Hand Fast X <span id="hand-fast-x-val" class="val-display">10.000</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="hand-fast-x" min="0.001" max="10" step="0.001" value="10">
-          <input type="number" id="hand-fast-x-num" step="0.001" value="10">
-          <button class="btn-inc" id="hand-fast-x-minus">-</button>
-          <button class="btn-inc" id="hand-fast-x-plus">+</button>
-      </div>
-      <label>Hand Transition X <span id="hand-trans-x-val" class="val-display">0.001</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="hand-trans-x" min="0.001" max="10" step="0.001" value="0.001">
-          <input type="number" id="hand-trans-x-num" step="0.001" value="0.001">
-          <button class="btn-inc" id="hand-trans-x-minus">-</button>
-          <button class="btn-inc" id="hand-trans-x-plus">+</button>
-      </div>
-      <label>Hand Slow Y <span id="hand-slow-y-val" class="val-display">1.000</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="hand-slow-y" min="0.001" max="10" step="0.001" value="1">
-          <input type="number" id="hand-slow-y-num" step="0.001" value="1">
-          <button class="btn-inc" id="hand-slow-y-minus">-</button>
-          <button class="btn-inc" id="hand-slow-y-plus">+</button>
-      </div>
-      <label>Hand Fast Y <span id="hand-fast-y-val" class="val-display">10.000</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="hand-fast-y" min="0.001" max="10" step="0.001" value="10">
-          <input type="number" id="hand-fast-y-num" step="0.001" value="10">
-          <button class="btn-inc" id="hand-fast-y-minus">-</button>
-          <button class="btn-inc" id="hand-fast-y-plus">+</button>
-      </div>
-      <label>Hand Transition Y <span id="hand-trans-y-val" class="val-display">0.001</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="hand-trans-y" min="0.001" max="10" step="0.001" value="0.001">
-          <input type="number" id="hand-trans-y-num" step="0.001" value="0.001">
-          <button class="btn-inc" id="hand-trans-y-minus">-</button>
-          <button class="btn-inc" id="hand-trans-y-plus">+</button>
-      </div>
-      <div class="section-title">Wink Detection</div>
-      <label>Left Closed Thresh <span id="lct-val" class="val-display">0.180</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="left-closed-thresh" min="0" max="1" step="0.001" value="0.180">
-          <input type="number" id="left-closed-thresh-num" step="0.001" value="0.180">
-          <button class="btn-inc" id="left-closed-thresh-minus">-</button>
-          <button class="btn-inc" id="left-closed-thresh-plus">+</button>
-      </div>
-      <label>Left Open Thresh <span id="lot-val" class="val-display">0.250</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="left-open-thresh" min="0" max="1" step="0.001" value="0.250">
-          <input type="number" id="left-open-thresh-num" step="0.001" value="0.250">
-          <button class="btn-inc" id="left-open-thresh-minus">-</button>
-          <button class="btn-inc" id="left-open-thresh-plus">+</button>
-      </div>
-      <label>Right Closed Thresh <span id="rct-val" class="val-display">0.180</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="right-closed-thresh" min="0" max="1" step="0.001" value="0.180">
-          <input type="number" id="right-closed-thresh-num" step="0.001" value="0.180">
-          <button class="btn-inc" id="right-closed-thresh-minus">-</button>
-          <button class="btn-inc" id="right-closed-thresh-plus">+</button>
-      </div>
-      <label>Right Open Thresh <span id="rot-val" class="val-display">0.250</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="right-open-thresh" min="0" max="1" step="0.001" value="0.250">
-          <input type="number" id="right-open-thresh-num" step="0.001" value="0.250">
-          <button class="btn-inc" id="right-open-thresh-minus">-</button>
-          <button class="btn-inc" id="right-open-thresh-plus">+</button>
-      </div>
-      <div class="section-title">Pinch Detection</div>
-      <label>Pinch Thresh <span id="pt-val" class="val-display">0.050</span></label>
-      <div class="slider-wrap">
-          <input type="range" id="pinch-thresh" min="0.01" max="0.2" step="0.001" value="0.050">
-          <input type="number" id="pinch-thresh-num" step="0.001" value="0.050">
-          <button class="btn-inc" id="pinch-thresh-minus">-</button>
-          <button class="btn-inc" id="pinch-thresh-plus">+</button>
-      </div>
-      <button id="stop-connection" class="btn btn-small">Stop Connection</button>
-  </div>
-  <div id="client-panel">
-      <div class="section-title">Remote Configuration</div>
-      <label>Performance Mode</label>
-      <select id="perf-mode-client">
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-      </select>
-      <div style="display:flex; justify-content:space-between; margin-top:8px;">
-          <label>Full Screen</label>
-          <input type="checkbox" id="full-screen-client">
-      </div>
-      <div class="section-title">Data to Send</div>
-      <div><input type="checkbox" id="send-iris" checked> Iris Gaze (eye data only)</div>
-      <div><input type="checkbox" id="send-nose" checked> Nose Position (x,y)</div>
-      <div><input type="checkbox" id="send-yaw-pitch" checked> Yaw and Pitch</div>
-      <div><input type="checkbox" id="send-fingertips" checked> Index Tip and Thumb Tip</div>
-      <div><input type="checkbox" id="send-full-face"> Full Face</div>
-      <div><input type="checkbox" id="send-full-hand"> Full Hand</div>
-      <div><input type="checkbox" id="send-all" checked> All</div>
-      <div><input type="checkbox" id="send-none"> None</div>
-      <div id="client-stats">FPS: <span id="fps-span">0</span> | Latency: <span id="lat-span">0</span>ms | Bat: <span id="bat-level">N/A</span>% | Bat Rate: <span id="bat-rate">0.00</span>%/min</div>
-      <button id="stop-connection-client" class="btn btn-small">Stop Connection</button>
-  </div>
-  <div id="toggle-btns">
-      <button class="btn btn-capture" id="toggle-tracker-ui" style="width:120px;">HUD UI</button>
-  </div>
-  <div id="white-cursor"></div>
-  <div id="cal-dot"></div>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="tracker.js"></script>
+    <div id="canvas-container"></div>
+    <canvas id="ui-text-canvas"></canvas>
+    <div id="timer-overlay">
+        <div id="timer-label">CENTER EYES</div>
+        <div id="timer-count">3</div>
+    </div>
+    <div id="ui-video-box">
+        <video id="webcam-small" autoplay muted playsinline></video>
+        <canvas id="face-dots-overlay"></canvas>
+    </div>
+    <div id="tracker-panel">
+        <div class="section-title">Neural Link Configuration</div>
+        <button id="btn-calibrate" class="btn btn-capture">Init Calibration</button>
+        <label>Input Source</label>
+        <select id="input-source">
+            <option value="local">Local Camera</option>
+            <option value="remote">Remote Device</option>
+        </select>
+        <label>Input Mode</label>
+        <select id="cursor-mode">
+            <option value="iris">Iris Neural Link</option>
+            <option value="head" selected>Head Pose Sync</option>
+            <option value="hand">Hand Neural Link</option>
+        </select>
+        <label>Performance Mode</label>
+        <select id="perf-mode-host">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+        </select>
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+            <label>Link Active</label>
+            <input type="checkbox" id="tracking-toggle" checked>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+            <label>Show Cursor</label>
+            <input type="checkbox" id="show-cursor" checked>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+            <label>Mouse Tracking</label>
+            <input type="checkbox" id="mouse-tracking">
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+            <label>Full Screen</label>
+            <input type="checkbox" id="full-screen-host">
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+            <label>Hide Tracker</label>
+            <input type="checkbox" id="hide-tracker">
+        </div>
+        <label>H-Sensitivity <span id="h-val" class="val-display">100</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="h-sens" min="1" max="1000" step="0.001" value="100">
+            <input type="number" id="h-sens-num" step="0.001" value="100">
+            <button class="btn-inc" id="h-sens-minus">-</button>
+            <button class="btn-inc" id="h-sens-plus">+</button>
+        </div>
+        <label>V-Sensitivity <span id="v-val" class="val-display">100</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="v-sens" min="1" max="1000" step="0.001" value="100">
+            <input type="number" id="v-sens-num" step="0.001" value="100">
+            <button class="btn-inc" id="v-sens-minus">-</button>
+            <button class="btn-inc" id="v-sens-plus">+</button>
+        </div>
+        <label>Smoothing <span id="s-val" class="val-display">85%</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="s-sens" min="0" max="98" step="0.001" value="85">
+            <input type="number" id="s-sens-num" step="0.001" value="85">
+            <button class="btn-inc" id="s-sens-minus">-</button>
+            <button class="btn-inc" id="s-sens-plus">+</button>
+        </div>
+        <div class="section-title">Dead Zones</div>
+        <label>Iris X <span id="dz-ix-val" class="val-display">0.010</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="dz-ix" min="0.001" max="0.1" step="0.001" value="0.010">
+            <input type="number" id="dz-ix-num" step="0.001" value="0.010">
+            <button class="btn-inc" id="dz-ix-minus">-</button>
+            <button class="btn-inc" id="dz-ix-plus">+</button>
+        </div>
+        <label>Iris Y <span id="dz-iy-val" class="val-display">0.010</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="dz-iy" min="0.001" max="0.1" step="0.001" value="0.010">
+            <input type="number" id="dz-iy-num" step="0.001" value="0.010">
+            <button class="btn-inc" id="dz-iy-minus">-</button>
+            <button class="btn-inc" id="dz-iy-plus">+</button>
+        </div>
+        <label>Head Yaw <span id="dz-head-yaw-val" class="val-display">1.0</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="dz-head-yaw" min="0" max="10" step="0.1" value="1.0">
+            <input type="number" id="dz-head-yaw-num" step="0.1" value="1.0">
+            <button class="btn-inc" id="dz-head-yaw-minus">-</button>
+            <button class="btn-inc" id="dz-head-yaw-plus">+</button>
+        </div>
+        <label>Head Pitch <span id="dz-hp-val" class="val-display">1.0</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="dz-hp" min="0" max="10" step="0.1" value="1.0">
+            <input type="number" id="dz-hp-num" step="0.1" value="1.0">
+            <button class="btn-inc" id="dz-hp-minus">-</button>
+            <button class="btn-inc" id="dz-hp-plus">+</button>
+        </div>
+        <label>Hand X <span id="dz-hx-val" class="val-display">0.010</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="dz-hx" min="0.001" max="0.5" step="0.001" value="0.010">
+            <input type="number" id="dz-hx-num" step="0.001" value="0.010">
+            <button class="btn-inc" id="dz-hx-minus">-</button>
+            <button class="btn-inc" id="dz-hx-plus">+</button>
+        </div>
+        <label>Hand Y <span id="dz-hand-y-val" class="val-display">0.010</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="dz-hand-y" min="0.001" max="0.5" step="0.001" value="0.010">
+            <input type="number" id="dz-hand-y-num" step="0.001" value="0.010">
+            <button class="btn-inc" id="dz-hand-y-minus">-</button>
+            <button class="btn-inc" id="dz-hand-y-plus">+</button>
+        </div>
+        <div class="section-title">Head Acceleration</div>
+        <label>Head Slow X <span id="head-slow-x-val" class="val-display">0.100</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="head-slow-x" min="0.001" max="10" step="0.001" value="0.1">
+            <input type="number" id="head-slow-x-num" step="0.001" value="0.1">
+            <button class="btn-inc" id="head-slow-x-minus">-</button>
+            <button class="btn-inc" id="head-slow-x-plus">+</button>
+        </div>
+        <label>Head Fast X <span id="head-fast-x-val" class="val-display">1.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="head-fast-x" min="0.001" max="10" step="0.001" value="1">
+            <input type="number" id="head-fast-x-num" step="0.001" value="1">
+            <button class="btn-inc" id="head-fast-x-minus">-</button>
+            <button class="btn-inc" id="head-fast-x-plus">+</button>
+        </div>
+        <label>Head Transition X <span id="head-trans-x-val" class="val-display">5.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="head-trans-x" min="0.001" max="10" step="0.001" value="5">
+            <input type="number" id="head-trans-x-num" step="0.001" value="5">
+            <button class="btn-inc" id="head-trans-x-minus">-</button>
+            <button class="btn-inc" id="head-trans-x-plus">+</button>
+        </div>
+        <label>Head Slow Y <span id="head-slow-y-val" class="val-display">0.100</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="head-slow-y" min="0.001" max="10" step="0.001" value="0.1">
+            <input type="number" id="head-slow-y-num" step="0.001" value="0.1">
+            <button class="btn-inc" id="head-slow-y-minus">-</button>
+            <button class="btn-inc" id="head-slow-y-plus">+</button>
+        </div>
+        <label>Head Fast Y <span id="head-fast-y-val" class="val-display">1.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="head-fast-y" min="0.001" max="10" step="0.001" value="1">
+            <input type="number" id="head-fast-y-num" step="0.001" value="1">
+            <button class="btn-inc" id="head-fast-y-minus">-</button>
+            <button class="btn-inc" id="head-fast-y-plus">+</button>
+        </div>
+        <label>Head Transition Y <span id="head-trans-y-val" class="val-display">5.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="head-trans-y" min="0.001" max="10" step="0.001" value="5">
+            <input type="number" id="head-trans-y-num" step="0.001" value="5">
+            <button class="btn-inc" id="head-trans-y-minus">-</button>
+            <button class="btn-inc" id="head-trans-y-plus">+</button>
+        </div>
+        <div class="section-title">Hand Acceleration</div>
+        <label>Hand Slow X <span id="hand-slow-x-val" class="val-display">1.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="hand-slow-x" min="0.001" max="10" step="0.001" value="1">
+            <input type="number" id="hand-slow-x-num" step="0.001" value="1">
+            <button class="btn-inc" id="hand-slow-x-minus">-</button>
+            <button class="btn-inc" id="hand-slow-x-plus">+</button>
+        </div>
+        <label>Hand Fast X <span id="hand-fast-x-val" class="val-display">10.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="hand-fast-x" min="0.001" max="10" step="0.001" value="10">
+            <input type="number" id="hand-fast-x-num" step="0.001" value="10">
+            <button class="btn-inc" id="hand-fast-x-minus">-</button>
+            <button class="btn-inc" id="hand-fast-x-plus">+</button>
+        </div>
+        <label>Hand Transition X <span id="hand-trans-x-val" class="val-display">0.001</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="hand-trans-x" min="0.001" max="10" step="0.001" value="0.001">
+            <input type="number" id="hand-trans-x-num" step="0.001" value="0.001">
+            <button class="btn-inc" id="hand-trans-x-minus">-</button>
+            <button class="btn-inc" id="hand-trans-x-plus">+</button>
+        </div>
+        <label>Hand Slow Y <span id="hand-slow-y-val" class="val-display">1.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="hand-slow-y" min="0.001" max="10" step="0.001" value="1">
+            <input type="number" id="hand-slow-y-num" step="0.001" value="1">
+            <button class="btn-inc" id="hand-slow-y-minus">-</button>
+            <button class="btn-inc" id="hand-slow-y-plus">+</button>
+        </div>
+        <label>Hand Fast Y <span id="hand-fast-y-val" class="val-display">10.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="hand-fast-y" min="0.001" max="10" step="0.001" value="10">
+            <input type="number" id="hand-fast-y-num" step="0.001" value="10">
+            <button class="btn-inc" id="hand-fast-y-minus">-</button>
+            <button class="btn-inc" id="hand-fast-y-plus">+</button>
+        </div>
+        <label>Hand Transition Y <span id="hand-trans-y-val" class="val-display">0.001</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="hand-trans-y" min="0.001" max="10" step="0.001" value="0.001">
+            <input type="number" id="hand-trans-y-num" step="0.001" value="0.001">
+            <button class="btn-inc" id="hand-trans-y-minus">-</button>
+            <button class="btn-inc" id="hand-trans-y-plus">+</button>
+        </div>
+        <div class="section-title">Wink Detection</div>
+        <label>Left Closed Thresh <span id="lct-val" class="val-display">0.180</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="left-closed-thresh" min="0" max="1" step="0.001" value="0.180">
+            <input type="number" id="left-closed-thresh-num" step="0.001" value="0.180">
+            <button class="btn-inc" id="left-closed-thresh-minus">-</button>
+            <button class="btn-inc" id="left-closed-thresh-plus">+</button>
+        </div>
+        <label>Left Open Thresh <span id="lot-val" class="val-display">0.250</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="left-open-thresh" min="0" max="1" step="0.001" value="0.250">
+            <input type="number" id="left-open-thresh-num" step="0.001" value="0.250">
+            <button class="btn-inc" id="left-open-thresh-minus">-</button>
+            <button class="btn-inc" id="left-open-thresh-plus">+</button>
+        </div>
+        <label>Right Closed Thresh <span id="rct-val" class="val-display">0.180</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="right-closed-thresh" min="0" max="1" step="0.001" value="0.180">
+            <input type="number" id="right-closed-thresh-num" step="0.001" value="0.180">
+            <button class="btn-inc" id="right-closed-thresh-minus">-</button>
+            <button class="btn-inc" id="right-closed-thresh-plus">+</button>
+        </div>
+        <label>Right Open Thresh <span id="rot-val" class="val-display">0.250</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="right-open-thresh" min="0" max="1" step="0.001" value="0.250">
+            <input type="number" id="right-open-thresh-num" step="0.001" value="0.250">
+            <button class="btn-inc" id="right-open-thresh-minus">-</button>
+            <button class="btn-inc" id="right-open-thresh-plus">+</button>
+        </div>
+        <div class="section-title">Pinch Detection</div>
+        <label>Pinch Thresh <span id="pt-val" class="val-display">0.050</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="pinch-thresh" min="0.01" max="0.2" step="0.001" value="0.050">
+            <input type="number" id="pinch-thresh-num" step="0.001" value="0.050">
+            <button class="btn-inc" id="pinch-thresh-minus">-</button>
+            <button class="btn-inc" id="pinch-thresh-plus">+</button>
+        </div>
+        <button id="stop-connection" class="btn btn-small">Stop Connection</button>
+    </div>
+    <div id="client-panel">
+        <div class="section-title">Remote Configuration</div>
+        <label>Performance Mode</label>
+        <select id="perf-mode-client">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+        </select>
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+            <label>Full Screen</label>
+            <input type="checkbox" id="full-screen-client">
+        </div>
+        <div class="section-title">Data to Send</div>
+        <div><input type="checkbox" id="send-iris" checked> Iris Gaze (eye data only)</div>
+        <div><input type="checkbox" id="send-nose" checked> Nose Position (x,y)</div>
+        <div><input type="checkbox" id="send-yaw-pitch" checked> Yaw and Pitch</div>
+        <div><input type="checkbox" id="send-fingertips" checked> Index Tip and Thumb Tip</div>
+        <div><input type="checkbox" id="send-full-face"> Full Face</div>
+        <div><input type="checkbox" id="send-full-hand"> Full Hand</div>
+        <div><input type="checkbox" id="send-all" checked> All</div>
+        <div><input type="checkbox" id="send-none"> None</div>
+        <div id="client-stats">FPS: <span id="fps-span">0</span> | Latency: <span id="lat-span">0</span>ms | Bat: <span id="bat-level">N/A</span>% | Bat Rate: <span id="bat-rate">0.00</span>%/min</div>
+        <button id="stop-connection-client" class="btn btn-small">Stop Connection</button>
+    </div>
+    <div id="toggle-btns">
+        <button class="btn btn-capture" id="toggle-tracker-ui" style="width:120px;">HUD UI</button>
+    </div>
+    <div id="white-cursor"></div>
+    <div id="cal-dot"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="tracker.js"></script>
 </body>
 </html>
