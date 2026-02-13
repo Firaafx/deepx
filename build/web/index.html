@@ -46,6 +46,17 @@
   </style>
 </head>
 <body>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for(let registration of registrations) {
+          registration.unregister().then(function() {
+            console.log('Service worker unregistered');
+          });
+        }
+      });
+    }
+  </script>
   <script src="flutter_bootstrap.js" defer></script>
 </body>
 </html>
