@@ -936,124 +936,91 @@ function setupOnResults() {
             }
         }
     });
+}
+function updateTrackerTargets(lm) {
+    const s = parseFloat(document.getElementById('s-sens').value) / 100;
+    let rawRelX = currentFace.x - anchorFace.x;
+    let rawRelY = currentFace.y - anchorFace.y;
+    let rawRelZ = anchorFace.z - currentFace.z;
+    let finalRelX = rawRelX;
+    let finalRelY = rawRelY;
+    let finalRelZ = rawRelZ;
+    if (isMouseTracking) {
+        smoothedRel.x = finalRelX;
+        smoothedRel.y = finalRelY;
+        smoothedRel.z = finalRelZ;
+    } else {
+        smoothedRel.x = smoothedRel.x * s + finalRelX * (1 - s);
+        smoothedRel.y = smoothedRel.y * s + finalRelY * (1 - s);
+        smoothedRel.z = smoothedRel.z * s + finalRelZ * (1 - s);
     }
-    function updateTrackerTargets(lm) {
-        const s = parseFloat(document.getElementById('s-sens').value) / 100;
-        let rawRelX = currentFace.x - anchorFace.x;
-        let rawRelY = currentFace.y - anchorFace.y;
-        let rawRelZ = anchorFace.z - currentFace.z;
-        let finalRelX = rawRelX;
-        let finalRelY = rawRelY;
-        let finalRelZ = rawRelZ;
-        if (isMouseTracking) {
-            smoothedRel.x = finalRelX;
-            smoothedRel.y = finalRelY;
-            smoothedRel.z = finalRelZ;
-        } else {
-            smoothedRel.x = smoothedRel.x * s + finalRelX * (1 - s);
-            smoothedRel.y = smoothedRel.y * s + finalRelY * (1 - s);
-            smoothedRel.z = smoothedRel.z * s + finalRelZ * (1 - s);
+}
+function toggleUI() {
+    uiVisible = !uiVisible;
+    const display = uiVisible ? 'block' : 'none';
+    document.getElementById('tracker-panel').style.display = display;
+    document.getElementById('ui-video-box').style.display = display;
+    document.getElementById('client-panel').style.display = (isClient && uiVisible) ? 'block' : 'none';
+    document.getElementById('toggle-btns').style.display = display;
+    document.getElementById('ui-text-canvas').style.display = display;
+    document.getElementById('timer-overlay').style.display = 'none';
+    document.getElementById('cal-dot').style.display = 'none';
+}
+function frameUpdate() {
+    frameCount++;
+    const now = performance.now();
+    dt = now - prevTime;
+    prevTime = now;
+    if (now - lastFpsTime >= 1000) {
+        fps = (frameCount / ((now - lastFpsTime) / 1000)).toFixed(1);
+        frameCount = 0;
+        lastFpsTime = now;
+        if (isClient) {
+            document.getElementById('fps-span').innerText = fps;
+            document.getElementById('lat-span').innerText = latency.toFixed(0);
         }
     }
-    function toggleUI() {
-        uiVisible = !uiVisible;
-        const display = uiVisible ? 'block' : 'none';
-        document.getElementById('tracker-panel').style.display = display;
-        document.getElementById('ui-video-box').style.display = display;
-        document.getElementById('client-panel').style.display = (isClient && uiVisible) ? 'block' : 'none';
-        document.getElementById('toggle-btns').style.display = display;
-        document.getElementById('ui-text-canvas').style.display = display;
-        document.getElementById('timer-overlay').style.display = 'none';
-        document.getElementById('cal-dot').style.display = 'none';
+    if (currentMode === 'hand' && (now - lastHandDataTime > 1000)) {
+        hasHand = false;
+        activeTracker = 'face';
     }
-    function frameUpdate() {
-        frameCount++;
-        const now = performance.now();
-        dt = now - prevTime;
-        prevTime = now;
-        if (now - lastFpsTime >= 1000) {
-            fps = (frameCount / ((now - lastFpsTime) / 1000)).toFixed(1);
-            frameCount = 0;
-            lastFpsTime = now;
-            if (isClient) {
-                document.getElementById('fps-span').innerText = fps;
-                document.getElementById('lat-span').innerText = latency.toFixed(0);
-            }
-        }
-        if (currentMode === 'hand' && (now - lastHandDataTime > 1000)) {
-            hasHand = false;
-            activeTracker = 'face';
-        }
-        if (document.getElementById('tracking-toggle').checked && !isPaused) {
-            const mode = document.getElementById('cursor-mode').value;
-            const isHead = mode === 'head';
-            let rawRelYaw, rawRelPitch;
-            if (mode === 'hand') {
-                if (hasHand) {
-                    const deltaX = currentHandIndexX - prevHandIndexX;
-                    const deltaY = currentHandIndexY - prevHandIndexY;
-                    const velX = deltaX / (dt / 1000);
-                    const velY = deltaY / (dt / 1000);
-                    const speedX = Math.abs(velX);
-                    const speedY = Math.abs(velY);
-                    const baseSensH = parseFloat(document.getElementById('h-sens').value);
-                    const baseSensV = parseFloat(document.getElementById('v-sens').value);
-                    const baseThresholdX = 0.05;
-                    const baseThresholdY = 0.05;
-                    const thresholdX = baseThresholdX / handTransX;
-                    const thresholdY = baseThresholdY / handTransY;
-                    let accelX = handSlowX;
-                    if (speedX > thresholdX) {
-                        const normalizedX = (speedX - thresholdX) / (0.8 - thresholdX);
-                        accelX = handSlowX + (handFastX - handSlowX) * Math.pow(normalizedX, 1.5);
-                    }
-                    let accelY = handSlowY;
-                    if (speedY > thresholdY) {
-                        const normalizedY = (speedY - thresholdY) / (0.8 - thresholdY);
-                        accelY = handSlowY + (handFastY - handSlowY) * Math.pow(normalizedY, 1.5);
-                    }
-                    let cursorDeltaX = deltaX * baseSensH * accelX * -1;
-                    let cursorDeltaY = deltaY * baseSensV * accelY;
-                    targetX += cursorDeltaX;
-                    targetY += cursorDeltaY;
-                    targetX = Math.max(0, Math.min(window.innerWidth, targetX));
-                    targetY = Math.max(0, Math.min(window.innerHeight, targetY));
-                    prevHandIndexX = currentHandIndexX;
-                    prevHandIndexY = currentHandIndexY;
-                } else {
-                    const deltaYaw = currentHeadYaw - prevHeadYaw;
-                    const deltaPitch = currentHeadPitch - prevHeadPitch;
-                    const velYaw = deltaYaw / (dt / 1000);
-                    const velPitch = deltaPitch / (dt / 1000);
-                    const speedX = Math.abs(velYaw);
-                    const speedY = Math.abs(velPitch);
-                    const baseSensH = parseFloat(document.getElementById('h-sens').value);
-                    const baseSensV = parseFloat(document.getElementById('v-sens').value);
-                    const baseThresholdX = 5;
-                    const baseThresholdY = 3;
-                    const thresholdX = baseThresholdX / headTransX;
-                    const thresholdY = baseThresholdY / headTransY;
-                    let accelX = headSlowX;
-                    if (speedX > thresholdX) {
-                        const normalizedX = (speedX - thresholdX) / (90 - thresholdX);
-                        accelX = headSlowX + (headFastX - headSlowX) * Math.pow(normalizedX, 1.5);
-                    }
-                    let accelY = headSlowY;
-                    if (speedY > thresholdY) {
-                        const normalizedY = (speedY - thresholdY) / (30 - thresholdY);
-                        accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
-                    }
-                    let cursorDeltaX = deltaYaw * baseSensH * accelX * 1;
-                    let cursorDeltaY = deltaPitch * baseSensV * accelY;
-                    targetX += cursorDeltaX;
-                    targetY += cursorDeltaY;
-                    targetX = Math.max(0, Math.min(window.innerWidth, targetX));
-                    targetY = Math.max(0, Math.min(window.innerHeight, targetY));
-                    prevHeadYaw = currentHeadYaw;
-                    prevHeadPitch = currentHeadPitch;
-                    isWinking = false;
+    if (document.getElementById('tracking-toggle').checked && !isPaused) {
+        const mode = document.getElementById('cursor-mode').value;
+        const isHead = mode === 'head';
+        let rawRelYaw, rawRelPitch;
+        if (mode === 'hand') {
+            if (hasHand) {
+                const deltaX = currentHandIndexX - prevHandIndexX;
+                const deltaY = currentHandIndexY - prevHandIndexY;
+                const velX = deltaX / (dt / 1000);
+                const velY = deltaY / (dt / 1000);
+                const speedX = Math.abs(velX);
+                const speedY = Math.abs(velY);
+                const baseSensH = parseFloat(document.getElementById('h-sens').value);
+                const baseSensV = parseFloat(document.getElementById('v-sens').value);
+                const baseThresholdX = 0.05;
+                const baseThresholdY = 0.05;
+                const thresholdX = baseThresholdX / handTransX;
+                const thresholdY = baseThresholdY / handTransY;
+                let accelX = handSlowX;
+                if (speedX > thresholdX) {
+                    const normalizedX = (speedX - thresholdX) / (0.8 - thresholdX);
+                    accelX = handSlowX + (handFastX - handSlowX) * Math.pow(normalizedX, 1.5);
                 }
-            } else if (isHead) {
+                let accelY = handSlowY;
+                if (speedY > thresholdY) {
+                    const normalizedY = (speedY - thresholdY) / (0.8 - thresholdY);
+                    accelY = handSlowY + (handFastY - handSlowY) * Math.pow(normalizedY, 1.5);
+                }
+                let cursorDeltaX = deltaX * baseSensH * accelX * -1;
+                let cursorDeltaY = deltaY * baseSensV * accelY;
+                targetX += cursorDeltaX;
+                targetY += cursorDeltaY;
+                targetX = Math.max(0, Math.min(window.innerWidth, targetX));
+                targetY = Math.max(0, Math.min(window.innerHeight, targetY));
+                prevHandIndexX = currentHandIndexX;
+                prevHandIndexY = currentHandIndexY;
+            } else {
                 const deltaYaw = currentHeadYaw - prevHeadYaw;
                 const deltaPitch = currentHeadPitch - prevHeadPitch;
                 const velYaw = deltaYaw / (dt / 1000);
@@ -1076,723 +1043,756 @@ function setupOnResults() {
                     const normalizedY = (speedY - thresholdY) / (30 - thresholdY);
                     accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
                 }
-                let cursorDeltaX = deltaYaw * baseSensH * accelX * 2.5;
-                let cursorDeltaY = deltaPitch * baseSensV * accelY * 2.5;
+                let cursorDeltaX = deltaYaw * baseSensH * accelX * 1;
+                let cursorDeltaY = deltaPitch * baseSensV * accelY;
                 targetX += cursorDeltaX;
                 targetY += cursorDeltaY;
                 targetX = Math.max(0, Math.min(window.innerWidth, targetX));
                 targetY = Math.max(0, Math.min(window.innerHeight, targetY));
                 prevHeadYaw = currentHeadYaw;
                 prevHeadPitch = currentHeadPitch;
-            } else {
-                if (isIrisCalibrated) {
-                    const dx = currentDx;
-                    const dy = currentDy;
-                    const yaw = currentHeadYawNorm;
-                    const pitch = currentHeadPitchNorm;
-                    targetX = coeffX[0] + coeffX[1]*dx + coeffX[2]*dy + coeffX[3]*yaw + coeffX[4]*pitch + coeffX[5]*dx*dx + coeffX[6]*dx*dy + coeffX[7]*dy*dy;
-                    targetY = coeffY[0] + coeffY[1]*dx + coeffY[2]*dy + coeffY[3]*yaw + coeffY[4]*pitch + coeffY[5]*dx*dx + coeffY[6]*dx*dy + coeffY[7]*dy*dy;
-                    targetX = Math.max(0, Math.min(window.innerWidth, targetX));
-                    targetY = Math.max(0, Math.min(window.innerHeight, targetY));
-                } else {
-                    const scale = 1.0;
-                    rawRelYaw = currentIrisYaw;
-                    rawRelPitch = currentIrisPitch;
-                    targetX = (window.innerWidth / 2) + (rawRelYaw * scale * (parseFloat(document.getElementById('h-sens').value) / 10));
-                    targetY = (window.innerHeight / 2) + (rawRelPitch * scale * (parseFloat(document.getElementById('v-sens').value) / 10));
-                }
-                prevHeadYaw = currentHeadYaw;
-                prevHeadPitch = currentHeadPitch;
+                isWinking = false;
             }
-            const sFactor = parseFloat(document.getElementById('s-sens').value) / 100;
-            smoothX = (smoothX * sFactor) + (targetX * (1 - sFactor));
-            smoothY = (smoothY * sFactor) + (targetY * (1 - sFactor));
-            const centerX = smoothX;
-            const centerY = smoothY;
-            const finalX = Math.max(0, Math.min(window.innerWidth - cursorSize, centerX - halfSize));
-            const finalY = Math.max(0, Math.min(window.innerHeight - cursorSize, centerY - halfSize));
-            cursor.style.transform = `translate3d(${finalX}px, ${finalY}px, 0)`;
-        }
-        if (isMouseTracking && !isPaused) {
-            currentFace.x = (mouseX / window.innerWidth - 0.5) * 2;
-            currentFace.y = (mouseY / window.innerHeight - 0.5) * 2;
-            currentFace.z = anchorFace.z - mouseWheelZ;
-            updateTrackerTargets();
-            if (tCanvas.style.display !== 'none') {
-                if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
-                drawMouseHUD();
+        } else if (isHead) {
+            const deltaYaw = currentHeadYaw - prevHeadYaw;
+            const deltaPitch = currentHeadPitch - prevHeadPitch;
+            const velYaw = deltaYaw / (dt / 1000);
+            const velPitch = deltaPitch / (dt / 1000);
+            const speedX = Math.abs(velYaw);
+            const speedY = Math.abs(velPitch);
+            const baseSensH = parseFloat(document.getElementById('h-sens').value);
+            const baseSensV = parseFloat(document.getElementById('v-sens').value);
+            const baseThresholdX = 5;
+            const baseThresholdY = 3;
+            const thresholdX = baseThresholdX / headTransX;
+            const thresholdY = baseThresholdY / headTransY;
+            let accelX = headSlowX;
+            if (speedX > thresholdX) {
+                const normalizedX = (speedX - thresholdX) / (90 - thresholdX);
+                accelX = headSlowX + (headFastX - headSlowX) * Math.pow(normalizedX, 1.5);
             }
-        } else if (!document.getElementById('tracking-toggle').checked) {
-            tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
+            let accelY = headSlowY;
+            if (speedY > thresholdY) {
+                const normalizedY = (speedY - thresholdY) / (30 - thresholdY);
+                accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
+            }
+            let cursorDeltaX = deltaYaw * baseSensH * accelX * 2.5;
+            let cursorDeltaY = deltaPitch * baseSensV * accelY * 2.5;
+            targetX += cursorDeltaX;
+            targetY += cursorDeltaY;
+            targetX = Math.max(0, Math.min(window.innerWidth, targetX));
+            targetY = Math.max(0, Math.min(window.innerHeight, targetY));
+            prevHeadYaw = currentHeadYaw;
+            prevHeadPitch = currentHeadPitch;
         } else {
-            if (tCanvas.style.display !== 'none') {
-                if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
-                drawHUD();
+            if (isIrisCalibrated) {
+                const dx = currentDx;
+                const dy = currentDy;
+                const yaw = currentHeadYawNorm;
+                const pitch = currentHeadPitchNorm;
+                targetX = coeffX[0] + coeffX[1]*dx + coeffX[2]*dy + coeffX[3]*yaw + coeffX[4]*pitch + coeffX[5]*dx*dx + coeffX[6]*dx*dy + coeffX[7]*dy*dy;
+                targetY = coeffY[0] + coeffY[1]*dx + coeffY[2]*dy + coeffY[3]*yaw + coeffY[4]*pitch + coeffY[5]*dx*dx + coeffX[6]*dx*dy + coeffY[7]*dy*dy;
+                targetX = Math.max(0, Math.min(window.innerWidth, targetX));
+                targetY = Math.max(0, Math.min(window.innerHeight, targetY));
+            } else {
+                const scale = 1.0;
+                rawRelYaw = currentIrisYaw;
+                rawRelPitch = currentIrisPitch;
+                targetX = (window.innerWidth / 2) + (rawRelYaw * scale * (parseFloat(document.getElementById('h-sens').value) / 10));
+                targetY = (window.innerHeight / 2) + (rawRelPitch * scale * (parseFloat(document.getElementById('v-sens').value) / 10));
             }
+            prevHeadYaw = currentHeadYaw;
+            prevHeadPitch = currentHeadPitch;
         }
+        const sFactor = parseFloat(document.getElementById('s-sens').value) / 100;
+        smoothX = (smoothX * sFactor) + (targetX * (1 - sFactor));
+        smoothY = (smoothY * sFactor) + (targetY * (1 - sFactor));
         const centerX = smoothX;
         const centerY = smoothY;
-        const deltaX = Math.abs(centerX - prevCenterX);
-        const deltaY = Math.abs(centerY - prevCenterY);
-        const isMoving = (deltaX > 2 || deltaY > 2);
-        prevCenterX = centerX;
-        prevCenterY = centerY;
-        const hoveredElement = document.elementFromPoint(centerX, centerY);
-        if (hoveredElement !== prevHoveredElement) {
-            if (prevHoveredElement) {
-                prevHoveredElement.classList.remove('fake-hover');
-                const mouseOutEvent = new MouseEvent('mouseout', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    clientX: centerX,
-                    clientY: centerY
-                });
-                prevHoveredElement.dispatchEvent(mouseOutEvent);
-            }
-            if (hoveredElement) {
-                hoveredElement.classList.add('fake-hover');
-                const mouseOverEvent = new MouseEvent('mouseover', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    clientX: centerX,
-                    clientY: centerY
-                });
-                hoveredElement.dispatchEvent(mouseOverEvent);
-                if (isDraggableElement(hoveredElement)) {
-                    potentialDragTarget = hoveredElement;
-                    hoverRedStart = now;
-                    isHoverRed = true;
-                    isHoverBlue = false;
-                    potentialClickTarget = null;
-                } else if (!isHoverRed && isClickableElement(hoveredElement)) {
-                    potentialClickTarget = hoveredElement;
-                    hoverBlueStart = now;
-                    isHoverBlue = true;
-                }
-            }
-            prevHoveredElement = hoveredElement;
+        const finalX = Math.max(0, Math.min(window.innerWidth - cursorSize, centerX - halfSize));
+        const finalY = Math.max(0, Math.min(window.innerHeight - cursorSize, centerY - halfSize));
+        cursor.style.transform = `translate3d(${finalX}px, ${finalY}px, 0)`;
+    }
+    if (isMouseTracking && !isPaused) {
+        currentFace.x = (mouseX / window.innerWidth - 0.5) * 2;
+        currentFace.y = (mouseY / window.innerHeight - 0.5) * 2;
+        currentFace.z = anchorFace.z - mouseWheelZ;
+        updateTrackerTargets();
+        if (tCanvas.style.display !== 'none') {
+            if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
+            drawMouseHUD();
         }
-        if (isHoverRed && (now - hoverRedStart > 2000)) {
-            isHoverRed = false;
-            potentialDragTarget = null;
+    } else if (!document.getElementById('tracking-toggle').checked) {
+        tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
+    } else {
+        if (tCanvas.style.display !== 'none') {
+            if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
+            drawHUD();
         }
-        if (isHoverBlue && (now - hoverBlueStart > 1000)) {
-            isHoverBlue = false;
-            potentialClickTarget = null;
+    }
+    const centerX = smoothX;
+    const centerY = smoothY;
+    const deltaX = Math.abs(centerX - prevCenterX);
+    const deltaY = Math.abs(centerY - prevCenterY);
+    const isMoving = (deltaX > 2 || deltaY > 2);
+    prevCenterX = centerX;
+    prevCenterY = centerY;
+    const hoveredElement = document.elementFromPoint(centerX, centerY);
+    if (hoveredElement !== prevHoveredElement) {
+        if (prevHoveredElement) {
+            prevHoveredElement.classList.remove('fake-hover');
+            const mouseOutEvent = new MouseEvent('mouseout', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: centerX,
+                clientY: centerY
+            });
+            prevHoveredElement.dispatchEvent(mouseOutEvent);
         }
-        let cursorColor = 'white';
-        if (dragging) {
-            cursorColor = 'yellow';
-        } else if (isHoverRed) {
-            cursorColor = 'red';
-        } else if (isHoverBlue) {
-            cursorColor = 'blue';
-        } else if (isWinking) {
-            cursorColor = 'green';
-        }
-        cursor.style.backgroundColor = cursorColor;
-        const mode = document.getElementById('cursor-mode').value;
-        if (mode === 'hand' && hasHand) {
-            if (isPinching) {
-                if (now - lastPinchTime < doubleClickThreshold) {
-                    if (!uiVisible) toggleUI();
-                }
-                lastPinchTime = now;
-                lastPinchTrueTime = now;
-                isWinking = true;
-            } else {
-                const timeSince = now - lastPinchTrueTime;
-                if (timeSince < 500 && isMoving) {
-                    isWinking = true;
-                } else {
-                    isWinking = false;
-                }
+        if (hoveredElement) {
+            hoveredElement.classList.add('fake-hover');
+            const mouseOverEvent = new MouseEvent('mouseover', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: centerX,
+                clientY: centerY
+            });
+            hoveredElement.dispatchEvent(mouseOverEvent);
+            if (isDraggableElement(hoveredElement)) {
+                potentialDragTarget = hoveredElement;
+                hoverRedStart = now;
+                isHoverRed = true;
+                isHoverBlue = false;
+                potentialClickTarget = null;
+            } else if (!isHoverRed && isClickableElement(hoveredElement)) {
+                potentialClickTarget = hoveredElement;
+                hoverBlueStart = now;
+                isHoverBlue = true;
             }
         }
-        if (isWinking && !prevWinking) {
-            if (now - lastWinkTime < doubleClickThreshold) {
+        prevHoveredElement = hoveredElement;
+    }
+    if (isHoverRed && (now - hoverRedStart > 2000)) {
+        isHoverRed = false;
+        potentialDragTarget = null;
+    }
+    if (isHoverBlue && (now - hoverBlueStart > 1000)) {
+        isHoverBlue = false;
+        potentialClickTarget = null;
+    }
+    let cursorColor = 'white';
+    if (dragging) {
+        cursorColor = 'yellow';
+    } else if (isHoverRed) {
+        cursorColor = 'red';
+    } else if (isHoverBlue) {
+        cursorColor = 'blue';
+    } else if (isWinking) {
+        cursorColor = 'green';
+    }
+    cursor.style.backgroundColor = cursorColor;
+    const mode = document.getElementById('cursor-mode').value;
+    if (mode === 'hand' && hasHand) {
+        if (isPinching) {
+            if (now - lastPinchTime < doubleClickThreshold) {
                 if (!uiVisible) toggleUI();
             }
-            if (now - lastDoubleDragTime < doubleDragThreshold && isHoverRed && !dragging) {
-                let targetElem = document.elementFromPoint(centerX, centerY);
-                if (potentialDragTarget && isHoverRed) {
-                    targetElem = potentialDragTarget;
+            lastPinchTime = now;
+            lastPinchTrueTime = now;
+            isWinking = true;
+        } else {
+            const timeSince = now - lastPinchTrueTime;
+            if (timeSince < 500 && isMoving) {
+                isWinking = true;
+            } else {
+                isWinking = false;
+            }
+        }
+    }
+    if (isWinking && !prevWinking) {
+        if (now - lastWinkTime < doubleClickThreshold) {
+            if (!uiVisible) toggleUI();
+        }
+        if (now - lastDoubleDragTime < doubleDragThreshold && isHoverRed && !dragging) {
+            let targetElem = document.elementFromPoint(centerX, centerY);
+            if (potentialDragTarget && isHoverRed) {
+                targetElem = potentialDragTarget;
+            }
+            if (targetElem) {
+                const panel = document.getElementById('tracker-panel');
+                if (targetElem.classList.contains('section-title') && potentialDragTarget && hoveredElement !== potentialDragTarget) {
+                    panel.style.left = `${centerX - (panel.offsetWidth / 2)}px`;
+                    panel.style.top = `${centerY}px`;
                 }
-                if (targetElem) {
-                    const panel = document.getElementById('tracker-panel');
-                    if (targetElem.classList.contains('section-title') && potentialDragTarget && hoveredElement !== potentialDragTarget) {
-                        panel.style.left = `${centerX - (panel.offsetWidth / 2)}px`;
-                        panel.style.top = `${centerY}px`;
-                    }
-                    const downEvent = new MouseEvent('mousedown', {
+                const downEvent = new MouseEvent('mousedown', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: centerX,
+                    clientY: centerY,
+                    buttons: 1
+                });
+                targetElem.dispatchEvent(downEvent);
+                dragTarget = targetElem;
+                winkDownSent = true;
+                dragging = true;
+                potentialDragTarget = null;
+                isHoverRed = false;
+            }
+        } else if (dragging) {
+            if (dragTarget) {
+                const upEvent = new MouseEvent('mouseup', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: centerX,
+                    clientY: centerY
+                });
+                dragTarget.dispatchEvent(upEvent);
+            }
+            dragging = false;
+            dragTarget = null;
+            winkDownSent = false;
+        }
+        lastWinkTime = now;
+        lastDoubleDragTime = now;
+    }
+    if (isWinking) {
+        if (isDebouncingUnwink) {
+            isDebouncingUnwink = false;
+            winkStartTime = now - (now - unwinkStartTime);
+        }
+        if (!prevWinking) {
+            winkStartTime = now;
+            if (now - winkEndTime < 100) {
+                effectiveWinkStart = now - (winkEndTime - effectiveWinkStart);
+            } else {
+                effectiveWinkStart = now;
+            }
+            winkDownSent = false;
+        }
+        const winkDuration = now - effectiveWinkStart;
+        if (winkDuration > 1000 && !winkDownSent) {
+            let targetElem = document.elementFromPoint(centerX, centerY);
+            if (potentialDragTarget && isHoverRed) {
+                targetElem = potentialDragTarget;
+            }
+            if (targetElem) {
+                const panel = document.getElementById('tracker-panel');
+                if (targetElem.classList.contains('section-title') && potentialDragTarget && hoveredElement !== potentialDragTarget) {
+                    panel.style.left = `${centerX - (panel.offsetWidth / 2)}px`;
+                    panel.style.top = `${centerY}px`;
+                }
+                const downEvent = new MouseEvent('mousedown', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: centerX,
+                    clientY: centerY,
+                    buttons: 1
+                });
+                targetElem.dispatchEvent(downEvent);
+                dragTarget = targetElem;
+                winkDownSent = true;
+                dragging = true;
+                potentialDragTarget = null;
+                isHoverRed = false;
+            }
+        }
+    } else {
+        if (prevWinking) {
+            winkEndTime = now;
+            const winkDuration = winkEndTime - effectiveWinkStart;
+            if (winkDuration < 1000) {
+                let elem = document.elementFromPoint(centerX, centerY);
+                if (potentialClickTarget && isHoverBlue) {
+                    elem = potentialClickTarget;
+                }
+                if (elem) {
+                    const focusEvent = new FocusEvent('focus', {
                         bubbles: true,
                         cancelable: true,
-                        view: window,
-                        clientX: centerX,
-                        clientY: centerY,
-                        buttons: 1
+                        view: window
                     });
-                    targetElem.dispatchEvent(downEvent);
-                    dragTarget = targetElem;
-                    winkDownSent = true;
-                    dragging = true;
-                    potentialDragTarget = null;
-                    isHoverRed = false;
-                }
-            } else if (dragging) {
-                if (dragTarget) {
-                    const upEvent = new MouseEvent('mouseup', {
+                    elem.dispatchEvent(focusEvent);
+                    const clickEvent = new MouseEvent('click', {
                         bubbles: true,
                         cancelable: true,
                         view: window,
                         clientX: centerX,
                         clientY: centerY
                     });
-                    dragTarget.dispatchEvent(upEvent);
-                }
-                dragging = false;
-                dragTarget = null;
-                winkDownSent = false;
-            }
-            lastWinkTime = now;
-            lastDoubleDragTime = now;
-        }
-        if (isWinking) {
-            if (isDebouncingUnwink) {
-                isDebouncingUnwink = false;
-                winkStartTime = now - (now - unwinkStartTime);
-            }
-            if (!prevWinking) {
-                winkStartTime = now;
-                if (now - winkEndTime < 100) {
-                    effectiveWinkStart = now - (winkEndTime - effectiveWinkStart);
-                } else {
-                    effectiveWinkStart = now;
-                }
-                winkDownSent = false;
-            }
-            const winkDuration = now - effectiveWinkStart;
-            if (winkDuration > 1000 && !winkDownSent) {
-                let targetElem = document.elementFromPoint(centerX, centerY);
-                if (potentialDragTarget && isHoverRed) {
-                    targetElem = potentialDragTarget;
-                }
-                if (targetElem) {
-                    const panel = document.getElementById('tracker-panel');
-                    if (targetElem.classList.contains('section-title') && potentialDragTarget && hoveredElement !== potentialDragTarget) {
-                        panel.style.left = `${centerX - (panel.offsetWidth / 2)}px`;
-                        panel.style.top = `${centerY}px`;
-                    }
-                    const downEvent = new MouseEvent('mousedown', {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window,
-                        clientX: centerX,
-                        clientY: centerY,
-                        buttons: 1
-                    });
-                    targetElem.dispatchEvent(downEvent);
-                    dragTarget = targetElem;
-                    winkDownSent = true;
-                    dragging = true;
-                    potentialDragTarget = null;
-                    isHoverRed = false;
-                }
-            }
-        } else {
-            if (prevWinking) {
-                winkEndTime = now;
-                const winkDuration = winkEndTime - effectiveWinkStart;
-                if (winkDuration < 1000) {
-                    let elem = document.elementFromPoint(centerX, centerY);
-                    if (potentialClickTarget && isHoverBlue) {
-                        elem = potentialClickTarget;
-                    }
-                    if (elem) {
-                        const focusEvent = new FocusEvent('focus', {
+                    elem.dispatchEvent(clickEvent);
+                    if (elem.tagName === 'SELECT') {
+                        const inputEvent = new InputEvent('input', {
                             bubbles: true,
-                            cancelable: true,
-                            view: window
+                            cancelable: true
                         });
-                        elem.dispatchEvent(focusEvent);
-                        const clickEvent = new MouseEvent('click', {
+                        elem.dispatchEvent(inputEvent);
+                        const changeEvent = new Event('change', {
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        elem.dispatchEvent(changeEvent);
+                    }
+                }
+                potentialClickTarget = null;
+                isHoverBlue = false;
+            } else if (dragging && !isDebouncingUnwink) {
+                if (mode === 'hand' && hasHand) {
+                    if (dragTarget) {
+                        const upEvent = new MouseEvent('mouseup', {
                             bubbles: true,
                             cancelable: true,
                             view: window,
                             clientX: centerX,
                             clientY: centerY
                         });
-                        elem.dispatchEvent(clickEvent);
-                        if (elem.tagName === 'SELECT') {
-                            const inputEvent = new InputEvent('input', {
-                                bubbles: true,
-                                cancelable: true
-                            });
-                            elem.dispatchEvent(inputEvent);
-                            const changeEvent = new Event('change', {
-                                bubbles: true,
-                                cancelable: true
-                            });
-                            elem.dispatchEvent(changeEvent);
-                        }
+                        dragTarget.dispatchEvent(upEvent);
                     }
-                    potentialClickTarget = null;
-                    isHoverBlue = false;
-                } else if (dragging && !isDebouncingUnwink) {
-                    if (mode === 'hand' && hasHand) {
-                        if (dragTarget) {
-                            const upEvent = new MouseEvent('mouseup', {
-                                bubbles: true,
-                                cancelable: true,
-                                view: window,
-                                clientX: centerX,
-                                clientY: centerY
-                            });
-                            dragTarget.dispatchEvent(upEvent);
-                        }
-                        dragging = false;
-                        dragTarget = null;
-                        winkDownSent = false;
-                    } else {
-                        unwinkStartTime = now;
-                        isDebouncingUnwink = true;
-                    }
-                }
-            }
-            if (isDebouncingUnwink && (now - unwinkStartTime > 1000)) {
-                if (dragTarget) {
-                    const upEvent = new MouseEvent('mouseup', {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window,
-                        clientX: centerX,
-                        clientY: centerY
-                    });
-                    dragTarget.dispatchEvent(upEvent);
-                }
-                dragging = false;
-                dragTarget = null;
-                isDebouncingUnwink = false;
-                winkDownSent = false;
-            }
-        }
-        prevWinking = isWinking || isDebouncingUnwink;
-        if (dragging && dragTarget) {
-            const moveEvent = new MouseEvent('mousemove', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                clientX: centerX,
-                clientY: centerY,
-                buttons: 1
-            });
-            dragTarget.dispatchEvent(moveEvent);
-        }
-        // Send tracking data to parent (Flutter)
-        const trackingData = {
-            head: {
-                x: currentFace.x,
-                y: currentFace.y,
-                z: currentFace.z,
-                yaw: currentHeadYaw,
-                pitch: currentHeadPitch
-            },
-            iris: {
-                yaw: currentIrisYaw,
-                pitch: currentIrisPitch
-            },
-            wink: isWinking,
-            pinch: isPinching,
-            hand: hasHand ? {
-                indexX: currentHandIndexX,
-                indexY: currentHandIndexY,
-                dx: currentHandDx,
-                dy: currentHandDy
-            } : null
-            // Add more as needed, e.g., ear, etc.
-        };
-        window.parent.postMessage(JSON.stringify(trackingData), '*');
-        requestAnimationFrame(frameUpdate);
-    }
-    function drawHUD() {
-        tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
-        let stats = [
-            `Neural Link: Active`,
-            `Depth Z: ${currentFace.z.toFixed(3)}`,
-            `X Offset: ${(currentFace.x - anchorFace.x).toFixed(3)}`,
-            `Y Offset: ${(currentFace.y - anchorFace.y).toFixed(3)}`,
-            `Raw Iris X: ${currentAvgYawRatio.toFixed(3)} Y: ${currentAvgPitchRatio.toFixed(3)}`,
-            `Rel Iris X: ${currentDx.toFixed(3)} Y: ${currentDy.toFixed(3)}`,
-            `Head Yaw: ${currentHeadYaw.toFixed(2)} Pitch: ${currentHeadPitch.toFixed(2)}`,
-            `L EAR: ${currentLeftEAR.toFixed(3)} (Closed: ${leftClosed ? 'Yes' : 'No'})`,
-            `R EAR: ${currentRightEAR.toFixed(3)} (Closed: ${rightClosed ? 'Yes' : 'No'})`,
-            `Cursor X: ${targetX.toFixed(1)} Y: ${targetY.toFixed(1)}`,
-            `FPS: ${fps}`,
-            `Track Lat: ${latency.toFixed(0)}ms`,
-            `Transfer Lat: ${transferLat.toFixed(0)}ms`,
-            `Wink: ${isWinking ? 'Yes' : 'No'}`,
-            `Hold State: ${dragging ? 'Yes' : 'No'}`
-        ];
-        if (hasHand) {
-            stats.push(`Hand Detected: Yes`);
-            stats.push(`Index Tip X: ${currentHandIndexX.toFixed(3)} Y: ${currentHandIndexY.toFixed(3)}`);
-            stats.push(`Rel Hand X: ${currentHandDx.toFixed(3)} Y: ${currentHandDy.toFixed(3)}`);
-            stats.push(`Pinch: ${isPinching ? 'Yes' : 'No'}`);
-        }
-        tCtx.fillStyle = 'rgba(18,18,18,0.8)';
-        tCtx.fillRect(260, 10, 200, stats.length * 15 + 20);
-        tCtx.strokeStyle = '#333';
-        tCtx.strokeRect(260, 10, 200, stats.length * 15 + 20);
-        tCtx.fillStyle = '#e0e0e0';
-        tCtx.font = '10px Poppins';
-        stats.forEach((s, i) => tCtx.fillText(s, 275, 35 + (i * 15)));
-    }
-    function drawMouseHUD() {
-        tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
-        const z = anchorFace.z - mouseWheelZ;
-        const stats = [
-            `Mouse Tracking: Active`,
-            `Depth Z: ${z.toFixed(3)}`,
-            `X Offset: ${(currentFace.x - anchorFace.x).toFixed(3)}`,
-            `Y Offset: ${(currentFace.y - anchorFace.y).toFixed(3)}`,
-            `Cursor X: ${targetX.toFixed(1)} Y: ${targetY.toFixed(1)}`,
-            `FPS: ${fps}`
-        ];
-        tCtx.fillStyle = 'rgba(18,18,18,0.8)';
-        tCtx.fillRect(260, 10, 200, stats.length * 15 + 20);
-        tCtx.strokeStyle = '#333';
-        tCtx.strokeRect(260, 10, 200, stats.length * 15 + 20);
-        tCtx.fillStyle = '#e0e0e0';
-        tCtx.font = '10px Poppins';
-        stats.forEach((s, i) => tCtx.fillText(s, 275, 35 + (i * 15)));
-    }
-    function setupTrackerEvents() {
-        document.getElementById('toggle-tracker-ui').onclick = toggleUI;
-        document.addEventListener('dblclick', (e) => {
-            if (!uiVisible) toggleUI();
-        });
-        document.getElementById('btn-calibrate').onclick = async () => {
-            const mode = document.getElementById('cursor-mode').value;
-            const overlay = document.getElementById('timer-overlay');
-            const label = document.getElementById('timer-label');
-            const count = document.getElementById('timer-count');
-            overlay.style.display = 'block';
-            calibrationData = [];
-            if (mode === 'head' || mode === 'hand') {
-                label.innerText = mode === 'head' ? 'CENTER EYES' : 'CENTER INDEX FINGER';
-                for(let i=3; i>0; i--) { count.innerText = i; await new Promise(r => setTimeout(r, 1000)); }
-                label.innerText = 'SYNCING...';
-                isCapturing = true;
-                let samplesCursor = [];
-                let samplesCam = [];
-                let samplesHand = [];
-                const interval = setInterval(() => {
-                    if (mode === 'head' || !hasHand) {
-                        samplesCursor.push({
-                            y: currentHeadYaw,
-                            p: currentHeadPitch
-                        });
-                        samplesCam.push({
-                            x: currentFace.x,
-                            y: currentFace.y,
-                            z: currentFace.z
-                        });
-                    } else if (hasHand) {
-                        samplesHand.push({
-                            x: currentHandIndexX,
-                            y: currentHandIndexY
-                        });
-                    }
-                }, 50);
-                for(let i=5; i>0; i--) { count.innerText = i; await new Promise(r => setTimeout(r, 1000)); }
-                clearInterval(interval);
-                isCapturing = false;
-                if (mode === 'hand') {
-                    if (samplesHand.length > 0) {
-                        anchorHand.x = samplesHand.reduce((a, b) => a + b.x, 0) / samplesHand.length;
-                        anchorHand.y = samplesHand.reduce((a, b) => a + b.y, 0) / samplesHand.length;
-                    } else {
-                        alert('No hand detected during calibration.');
-                    }
+                    dragging = false;
+                    dragTarget = null;
+                    winkDownSent = false;
                 } else {
-                    if (samplesCursor.length > 0) {
-                        anchorYaw = samplesCursor.reduce((a, b) => a + b.y, 0) / samplesCursor.length;
-                        anchorPitch = samplesCursor.reduce((a, b) => a + b.p, 0) / samplesCursor.length;
-                    }
-                    if (samplesCam.length > 0) {
-                        anchorFace.x = samplesCam.reduce((a, b) => a + b.x, 0) / samplesCam.length;
-                        anchorFace.y = samplesCam.reduce((a, b) => a + b.y, 0) / samplesCam.length;
-                        anchorFace.z = samplesCam.reduce((a, b) => a + b.z, 0) / samplesCam.length;
-                    }
+                    unwinkStartTime = now;
+                    isDebouncingUnwink = true;
                 }
-                targetX = window.innerWidth / 2;
-                targetY = window.innerHeight / 2;
-                smoothX = targetX;
-                smoothY = targetY;
+            }
+        }
+        if (isDebouncingUnwink && (now - unwinkStartTime > 1000)) {
+            if (dragTarget) {
+                const upEvent = new MouseEvent('mouseup', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: centerX,
+                    clientY: centerY
+                });
+                dragTarget.dispatchEvent(upEvent);
+            }
+            dragging = false;
+            dragTarget = null;
+            isDebouncingUnwink = false;
+            winkDownSent = false;
+        }
+    }
+    prevWinking = isWinking || isDebouncingUnwink;
+    if (dragging && dragTarget) {
+        const moveEvent = new MouseEvent('mousemove', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: centerX,
+            clientY: centerY,
+            buttons: 1
+        });
+        dragTarget.dispatchEvent(moveEvent);
+    }
+    // Send tracking data to parent (Flutter)
+    const trackingData = {
+        head: {
+            x: currentFace.x,
+            y: currentFace.y,
+            z: currentFace.z,
+            yaw: currentHeadYaw,
+            pitch: currentHeadPitch
+        },
+        iris: {
+            yaw: currentIrisYaw,
+            pitch: currentIrisPitch
+        },
+        wink: isWinking,
+        pinch: isPinching,
+        hand: hasHand ? {
+            indexX: currentHandIndexX,
+            indexY: currentHandIndexY,
+            dx: currentHandDx,
+            dy: currentHandDy
+        } : null
+        // Add more as needed, e.g., ear, etc.
+    };
+    window.parent.postMessage(JSON.stringify(trackingData), '*');
+    requestAnimationFrame(frameUpdate);
+}
+function drawHUD() {
+    tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
+    let stats = [
+        `Neural Link: Active`,
+        `Depth Z: ${currentFace.z.toFixed(3)}`,
+        `X Offset: ${(currentFace.x - anchorFace.x).toFixed(3)}`,
+        `Y Offset: ${(currentFace.y - anchorFace.y).toFixed(3)}`,
+        `Raw Iris X: ${currentAvgYawRatio.toFixed(3)} Y: ${currentAvgPitchRatio.toFixed(3)}`,
+        `Rel Iris X: ${currentDx.toFixed(3)} Y: ${currentDy.toFixed(3)}`,
+        `Head Yaw: ${currentHeadYaw.toFixed(2)} Pitch: ${currentHeadPitch.toFixed(2)}`,
+        `L EAR: ${currentLeftEAR.toFixed(3)} (Closed: ${leftClosed ? 'Yes' : 'No'})`,
+        `R EAR: ${currentRightEAR.toFixed(3)} (Closed: ${rightClosed ? 'Yes' : 'No'})`,
+        `Cursor X: ${targetX.toFixed(1)} Y: ${targetY.toFixed(1)}`,
+        `FPS: ${fps}`,
+        `Track Lat: ${latency.toFixed(0)}ms`,
+        `Transfer Lat: ${transferLat.toFixed(0)}ms`,
+        `Wink: ${isWinking ? 'Yes' : 'No'}`,
+        `Hold State: ${dragging ? 'Yes' : 'No'}`
+    ];
+    if (hasHand) {
+        stats.push(`Hand Detected: Yes`);
+        stats.push(`Index Tip X: ${currentHandIndexX.toFixed(3)} Y: ${currentHandIndexY.toFixed(3)}`);
+        stats.push(`Rel Hand X: ${currentHandDx.toFixed(3)} Y: ${currentHandDy.toFixed(3)}`);
+        stats.push(`Pinch: ${isPinching ? 'Yes' : 'No'}`);
+    }
+    tCtx.fillStyle = 'rgba(18,18,18,0.8)';
+    tCtx.fillRect(260, 10, 200, stats.length * 15 + 20);
+    tCtx.strokeStyle = '#333';
+    tCtx.strokeRect(260, 10, 200, stats.length * 15 + 20);
+    tCtx.fillStyle = '#e0e0e0';
+    tCtx.font = '10px Poppins';
+    stats.forEach((s, i) => tCtx.fillText(s, 275, 35 + (i * 15)));
+}
+function drawMouseHUD() {
+    tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
+    const z = anchorFace.z - mouseWheelZ;
+    const stats = [
+        `Mouse Tracking: Active`,
+        `Depth Z: ${z.toFixed(3)}`,
+        `X Offset: ${(currentFace.x - anchorFace.x).toFixed(3)}`,
+        `Y Offset: ${(currentFace.y - anchorFace.y).toFixed(3)}`,
+        `Cursor X: ${targetX.toFixed(1)} Y: ${targetY.toFixed(1)}`,
+        `FPS: ${fps}`
+    ];
+    tCtx.fillStyle = 'rgba(18,18,18,0.8)';
+    tCtx.fillRect(260, 10, 200, stats.length * 15 + 20);
+    tCtx.strokeStyle = '#333';
+    tCtx.strokeRect(260, 10, 200, stats.length * 15 + 20);
+    tCtx.fillStyle = '#e0e0e0';
+    tCtx.font = '10px Poppins';
+    stats.forEach((s, i) => tCtx.fillText(s, 275, 35 + (i * 15)));
+}
+function setupTrackerEvents() {
+    document.getElementById('toggle-tracker-ui').onclick = toggleUI;
+    document.addEventListener('dblclick', (e) => {
+        if (!uiVisible) toggleUI();
+    });
+    document.getElementById('btn-calibrate').onclick = async () => {
+        const mode = document.getElementById('cursor-mode').value;
+        const overlay = document.getElementById('timer-overlay');
+        const label = document.getElementById('timer-label');
+        const count = document.getElementById('timer-count');
+        overlay.style.display = 'block';
+        calibrationData = [];
+        if (mode === 'head' || mode === 'hand') {
+            label.innerText = mode === 'head' ? 'CENTER EYES' : 'CENTER INDEX FINGER';
+            for(let i=3; i>0; i--) { count.innerText = i; await new Promise(r => setTimeout(r, 1000)); }
+            label.innerText = 'SYNCING...';
+            isCapturing = true;
+            let samplesCursor = [];
+            let samplesCam = [];
+            let samplesHand = [];
+            const interval = setInterval(() => {
+                if (mode === 'head' || !hasHand) {
+                    samplesCursor.push({
+                        y: currentHeadYaw,
+                        p: currentHeadPitch
+                    });
+                    samplesCam.push({
+                        x: currentFace.x,
+                        y: currentFace.y,
+                        z: currentFace.z
+                    });
+                } else if (hasHand) {
+                    samplesHand.push({
+                        x: currentHandIndexX,
+                        y: currentHandIndexY
+                    });
+                }
+            }, 50);
+            for(let i=5; i>0; i--) { count.innerText = i; await new Promise(r => setTimeout(r, 1000)); }
+            clearInterval(interval);
+            isCapturing = false;
+            if (mode === 'hand') {
+                if (samplesHand.length > 0) {
+                    anchorHand.x = samplesHand.reduce((a, b) => a + b.x, 0) / samplesHand.length;
+                    anchorHand.y = samplesHand.reduce((a, b) => a + b.y, 0) / samplesHand.length;
+                } else {
+                    alert('No hand detected during calibration.');
+                }
             } else {
-                label.innerText = 'PREPARE TO CALIBRATE';
-                for(let i=3; i>0; i--) { count.innerText = i; await new Promise(r => setTimeout(r, 1000)); }
-                const w = window.innerWidth;
-                const h = window.innerHeight;
-                calDot.style.display = 'block';
-                for (let i = 0; i < calibrationPoints.length; i++) {
-                    const p = calibrationPoints[i];
-                    calDot.style.left = (w * p.x) + 'px';
-                    calDot.style.top = (h * p.y) + 'px';
-                    label.innerText = 'LOOK AT DOT';
-                    for(let j=3; j>0; j--) { count.innerText = j; await new Promise(r => setTimeout(r, 1000)); }
-                    label.innerText = 'SAMPLING...';
-                    count.innerText = '';
-                    isCapturing = true;
-                    let samples = [];
-                    const startSample = performance.now();
-                    while (performance.now() - startSample < 2000) {
-                        await new Promise(r => setTimeout(r, 50));
-                        if (!eyesClosed) {
-                            samples.push({dx: currentDx, dy: currentDy, yaw: currentHeadYawNorm, pitch: currentHeadPitchNorm});
-                        }
-                        if (calibrationData.length >= 8) {
-                            const dx = currentDx;
-                            const dy = currentDy;
-                            const yaw = currentHeadYawNorm;
-                            const pitch = currentHeadPitchNorm;
-                            targetX = tempCoeffX[0] + tempCoeffX[1]*dx + tempCoeffX[2]*dy + tempCoeffX[3]*yaw + tempCoeffX[4]*pitch + tempCoeffX[5]*dx*dx + tempCoeffX[6]*dx*dy + tempCoeffX[7]*dy*dy;
-                            targetY = tempCoeffY[0] + tempCoeffY[1]*dx + tempCoeffY[2]*dy + tempCoeffY[3]*yaw + tempCoeffY[4]*pitch + tempCoeffY[5]*dx*dx + tempCoeffY[6]*dx*dy + tempCoeffY[7]*dy*dy;
-                            targetX = Math.max(0, Math.min(window.innerWidth, targetX));
-                            targetY = Math.max(0, Math.min(window.innerHeight, targetY));
-                        }
-                    }
-                    isCapturing = false;
-                    if (samples.length > 0) {
-                        const avgDx = samples.reduce((sum, s) => sum + s.dx, 0) / samples.length;
-                        const avgDy = samples.reduce((sum, s) => sum + s.dy, 0) / samples.length;
-                        const avgYaw = samples.reduce((sum, s) => sum + s.yaw, 0) / samples.length;
-                        const avgPitch = samples.reduce((sum, s) => sum + s.pitch, 0) / samples.length;
-                        calibrationData.push({dx: avgDx, dy: avgDy, yaw: avgYaw, pitch: avgPitch, screenX: w * p.x, screenY: h * p.y});
-                    } else {
-                        alert('No valid samples for this point. Retry calibration.');
-                        overlay.style.display = 'none';
-                        calDot.style.display = 'none';
-                        return;
+                if (samplesCursor.length > 0) {
+                    anchorYaw = samplesCursor.reduce((a, b) => a + b.y, 0) / samplesCursor.length;
+                    anchorPitch = samplesCursor.reduce((a, b) => a + b.p, 0) / samplesCursor.length;
+                }
+                if (samplesCam.length > 0) {
+                    anchorFace.x = samplesCam.reduce((a, b) => a + b.x, 0) / samplesCam.length;
+                    anchorFace.y = samplesCam.reduce((a, b) => a + b.y, 0) / samplesCam.length;
+                    anchorFace.z = samplesCam.reduce((a, b) => a + b.z, 0) / samplesCam.length;
+                }
+            }
+            targetX = window.innerWidth / 2;
+            targetY = window.innerHeight / 2;
+            smoothX = targetX;
+            smoothY = targetY;
+        } else {
+            label.innerText = 'PREPARE TO CALIBRATE';
+            for(let i=3; i>0; i--) { count.innerText = i; await new Promise(r => setTimeout(r, 1000)); }
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            calDot.style.display = 'block';
+            for (let i = 0; i < calibrationPoints.length; i++) {
+                const p = calibrationPoints[i];
+                calDot.style.left = (w * p.x) + 'px';
+                calDot.style.top = (h * p.y) + 'px';
+                label.innerText = 'LOOK AT DOT';
+                for(let j=3; j>0; j--) { count.innerText = j; await new Promise(r => setTimeout(r, 1000)); }
+                label.innerText = 'SAMPLING...';
+                count.innerText = '';
+                isCapturing = true;
+                let samples = [];
+                const startSample = performance.now();
+                while (performance.now() - startSample < 2000) {
+                    await new Promise(r => setTimeout(r, 50));
+                    if (!eyesClosed) {
+                        samples.push({dx: currentDx, dy: currentDy, yaw: currentHeadYawNorm, pitch: currentHeadPitchNorm});
                     }
                     if (calibrationData.length >= 8) {
-                        const A = calibrationData.map(d => [1, d.dx, d.dy, d.yaw, d.pitch, d.dx*d.dx, d.dx*d.dy, d.dy*d.dy]);
-                        const At = transpose(A);
-                        const AtA = matMul(At, A);
-                        for (let k = 0; k < AtA.length; k++) {
-                            AtA[k][k] += 0.001;
-                        }
-                        const Xt = calibrationData.map(d => [d.screenX]);
-                        const Yt = calibrationData.map(d => [d.screenY]);
-                        const AtX = matMul(At, Xt);
-                        const AtY = matMul(At, Yt);
-                        const augX = AtA.map((row, k) => [...row, AtX[k][0]]);
-                        const augY = AtA.map((row, k) => [...row, AtY[k][0]]);
-                        tempCoeffX = gaussianElimination(augX);
-                        tempCoeffY = gaussianElimination(augY);
+                        const dx = currentDx;
+                        const dy = currentDy;
+                        const yaw = currentHeadYawNorm;
+                        const pitch = currentHeadPitchNorm;
+                        targetX = tempCoeffX[0] + tempCoeffX[1]*dx + tempCoeffX[2]*dy + tempCoeffX[3]*yaw + tempCoeffX[4]*pitch + tempCoeffX[5]*dx*dx + tempCoeffX[6]*dx*dy + tempCoeffX[7]*dy*dy;
+                        targetY = tempCoeffY[0] + tempCoeffY[1]*dx + tempCoeffY[2]*dy + tempCoeffY[3]*yaw + tempCoeffY[4]*pitch + tempCoeffY[5]*dx*dx + tempCoeffY[6]*dx*dy + tempCoeffY[7]*dy*dy;
+                        targetX = Math.max(0, Math.min(window.innerWidth, targetX));
+                        targetY = Math.max(0, Math.min(window.innerHeight, targetY));
                     }
                 }
-                calDot.style.display = 'none';
-                const A = calibrationData.map(d => [1, d.dx, d.dy, d.yaw, d.pitch, d.dx*d.dx, d.dx*d.dy, d.dy*d.dy]);
-                const At = transpose(A);
-                const AtA = matMul(At, A);
-                for (let k = 0; k < AtA.length; k++) {
-                    AtA[k][k] += 0.001;
+                isCapturing = false;
+                if (samples.length > 0) {
+                    const avgDx = samples.reduce((sum, s) => sum + s.dx, 0) / samples.length;
+                    const avgDy = samples.reduce((sum, s) => sum + s.dy, 0) / samples.length;
+                    const avgYaw = samples.reduce((sum, s) => sum + s.yaw, 0) / samples.length;
+                    const avgPitch = samples.reduce((sum, s) => sum + s.pitch, 0) / samples.length;
+                    calibrationData.push({dx: avgDx, dy: avgDy, yaw: avgYaw, pitch: avgPitch, screenX: w * p.x, screenY: h * p.y});
+                } else {
+                    alert('No valid samples for this point. Retry calibration.');
+                    overlay.style.display = 'none';
+                    calDot.style.display = 'none';
+                    return;
                 }
-                const Xt = calibrationData.map(d => [d.screenX]);
-                const Yt = calibrationData.map(d => [d.screenY]);
-                const AtX = matMul(At, Xt);
-                const AtY = matMul(At, Yt);
-                const augX = AtA.map((row, k) => [...row, AtX[k][0]]);
-                const augY = AtA.map((row, k) => [...row, AtY[k][0]]);
-                coeffX = gaussianElimination(augX);
-                coeffY = gaussianElimination(augY);
-                isIrisCalibrated = true;
+                if (calibrationData.length >= 8) {
+                    const A = calibrationData.map(d => [1, d.dx, d.dy, d.yaw, d.pitch, d.dx*d.dx, d.dx*d.dy, d.dy*d.dy]);
+                    const At = transpose(A);
+                    const AtA = matMul(At, A);
+                    for (let k = 0; k < AtA.length; k++) {
+                        AtA[k][k] += 0.001;
+                    }
+                    const Xt = calibrationData.map(d => [d.screenX]);
+                    const Yt = calibrationData.map(d => [d.screenY]);
+                    const AtX = matMul(At, Xt);
+                    const AtY = matMul(At, Yt);
+                    const augX = AtA.map((row, k) => [...row, AtX[k][0]]);
+                    const augY = AtA.map((row, k) => [...row, AtY[k][0]]);
+                    tempCoeffX = gaussianElimination(augX);
+                    tempCoeffY = gaussianElimination(augY);
+                }
+            }
+            calDot.style.display = 'none';
+            const A = calibrationData.map(d => [1, d.dx, d.dy, d.yaw, d.pitch, d.dx*d.dx, d.dx*d.dy, d.dy*d.dy]);
+            const At = transpose(A);
+            const AtA = matMul(At, A);
+            for (let k = 0; k < AtA.length; k++) {
+                AtA[k][k] += 0.001;
+            }
+            const Xt = calibrationData.map(d => [d.screenX]);
+            const Yt = calibrationData.map(d => [d.screenY]);
+            const AtX = matMul(At, Xt);
+            const AtY = matMul(At, Yt);
+            const augX = AtA.map((row, k) => [...row, AtX[k][0]]);
+            const augY = AtA.map((row, k) => [...row, AtY[k][0]]);
+            coeffX = gaussianElimination(augX);
+            coeffY = gaussianElimination(augY);
+            isIrisCalibrated = true;
+        };
+        overlay.style.display = 'none';
+    };
+    document.getElementById('h-sens').oninput = (e) => { document.getElementById('h-val').innerText = e.target.value; localStorage.setItem('h-sens', e.target.value); };
+    document.getElementById('v-sens').oninput = (e) => { document.getElementById('v-val').innerText = e.target.value; localStorage.setItem('v-sens', e.target.value); };
+    document.getElementById('s-sens').oninput = (e) => { document.getElementById('s-val').innerText = e.target.value + '%'; localStorage.setItem('s-sens', e.target.value); };
+    document.getElementById('dz-ix').oninput = (e) => { document.getElementById('dz-ix-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-ix', e.target.value); };
+    document.getElementById('dz-iy').oninput = (e) => { document.getElementById('dz-iy-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-iy', e.target.value); };
+    document.getElementById('dz-head-yaw').oninput = (e) => { document.getElementById('dz-head-yaw-val').innerText = parseFloat(e.target.value).toFixed(1); localStorage.setItem('dz-head-yaw', e.target.value); };
+    document.getElementById('dz-hp').oninput = (e) => { document.getElementById('dz-hp-val').innerText = parseFloat(e.target.value).toFixed(1); localStorage.setItem('dz-hp', e.target.value); };
+    document.getElementById('dz-hx').oninput = (e) => { document.getElementById('dz-hx-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-hx', e.target.value); };
+    document.getElementById('dz-hand-y').oninput = (e) => { document.getElementById('dz-hand-y-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-hand-y', e.target.value); };
+    document.getElementById('left-closed-thresh').oninput = (e) => { document.getElementById('lct-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('left-closed-thresh', e.target.value); };
+    document.getElementById('left-open-thresh').oninput = (e) => { document.getElementById('lot-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('left-open-thresh', e.target.value); };
+    document.getElementById('right-closed-thresh').oninput = (e) => { document.getElementById('rct-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('right-closed-thresh', e.target.value); };
+    document.getElementById('right-open-thresh').oninput = (e) => { document.getElementById('rot-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('right-open-thresh', e.target.value); };
+    document.getElementById('pinch-thresh').oninput = (e) => { document.getElementById('pt-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('pinch-thresh', e.target.value); };
+    // Head acceleration sliders
+    document.getElementById('head-slow-x').oninput = (e) => {
+        headSlowX = parseFloat(e.target.value);
+        document.getElementById('head-slow-x-val').innerText = headSlowX.toFixed(3);
+        localStorage.setItem('head-slow-x', e.target.value);
+    };
+    document.getElementById('head-fast-x').oninput = (e) => {
+        headFastX = parseFloat(e.target.value);
+        document.getElementById('head-fast-x-val').innerText = headFastX.toFixed(3);
+        localStorage.setItem('head-fast-x', e.target.value);
+    };
+    document.getElementById('head-trans-x').oninput = (e) => {
+        headTransX = parseFloat(e.target.value);
+        document.getElementById('head-trans-x-val').innerText = headTransX.toFixed(3);
+        localStorage.setItem('head-trans-x', e.target.value);
+    };
+    document.getElementById('head-slow-y').oninput = (e) => {
+        headSlowY = parseFloat(e.target.value);
+        document.getElementById('head-slow-y-val').innerText = headSlowY.toFixed(3);
+        localStorage.setItem('head-slow-y', e.target.value);
+    };
+    document.getElementById('head-fast-y').oninput = (e) => {
+        headFastY = parseFloat(e.target.value);
+        document.getElementById('head-fast-y-val').innerText = headFastY.toFixed(3);
+        localStorage.setItem('head-fast-y', e.target.value);
+    };
+    document.getElementById('head-trans-y').oninput = (e) => {
+        headTransY = parseFloat(e.target.value);
+        document.getElementById('head-trans-y-val').innerText = headTransY.toFixed(3);
+        localStorage.setItem('head-trans-y', e.target.value);
+    };
+    // Hand acceleration sliders
+    document.getElementById('hand-slow-x').oninput = (e) => {
+        handSlowX = parseFloat(e.target.value);
+        document.getElementById('hand-slow-x-val').innerText = handSlowX.toFixed(3);
+        localStorage.setItem('hand-slow-x', e.target.value);
+    };
+    document.getElementById('hand-fast-x').oninput = (e) => {
+        handFastX = parseFloat(e.target.value);
+        document.getElementById('hand-fast-x-val').innerText = handFastX.toFixed(3);
+        localStorage.setItem('hand-fast-x', e.target.value);
+    };
+    document.getElementById('hand-trans-x').oninput = (e) => {
+        handTransX = parseFloat(e.target.value);
+        document.getElementById('hand-trans-x-val').innerText = handTransX.toFixed(3);
+        localStorage.setItem('hand-trans-x', e.target.value);
+    };
+    document.getElementById('hand-slow-y').oninput = (e) => {
+        handSlowY = parseFloat(e.target.value);
+        document.getElementById('hand-slow-y-val').innerText = handSlowY.toFixed(3);
+        localStorage.setItem('hand-slow-y', e.target.value);
+    };
+    document.getElementById('hand-fast-y').oninput = (e) => {
+        handFastY = parseFloat(e.target.value);
+        document.getElementById('hand-fast-y-val').innerText = handFastY.toFixed(3);
+        localStorage.setItem('hand-fast-y', e.target.value);
+    };
+    document.getElementById('hand-trans-y').oninput = (e) => {
+        handTransY = parseFloat(e.target.value);
+        document.getElementById('hand-trans-y-val').innerText = handTransY.toFixed(3);
+        localStorage.setItem('hand-trans-y', e.target.value);
+    };
+    // Number inputs for acceleration sliders (sync with range)
+    ['head-slow-x', 'head-fast-x', 'head-trans-x', 'head-slow-y', 'head-fast-y', 'head-trans-y',
+     'hand-slow-x', 'hand-fast-x', 'hand-trans-x', 'hand-slow-y', 'hand-fast-y', 'hand-trans-y'].forEach(id => {
+        const range = document.getElementById(id);
+        const num = document.getElementById(id + '-num');
+        if (num) {
+            num.oninput = (e) => {
+                range.value = e.target.value;
+                document.getElementById(id + '-val').innerText = parseFloat(e.target.value).toFixed(3);
+                localStorage.setItem(id, e.target.value);
+                window[id.replace(/-/g, '')] = parseFloat(e.target.value);
             };
-            overlay.style.display = 'none';
-        };
-        document.getElementById('h-sens').oninput = (e) => { document.getElementById('h-val').innerText = e.target.value; localStorage.setItem('h-sens', e.target.value); };
-        document.getElementById('v-sens').oninput = (e) => { document.getElementById('v-val').innerText = e.target.value; localStorage.setItem('v-sens', e.target.value); };
-        document.getElementById('s-sens').oninput = (e) => { document.getElementById('s-val').innerText = e.target.value + '%'; localStorage.setItem('s-sens', e.target.value); };
-        document.getElementById('dz-ix').oninput = (e) => { document.getElementById('dz-ix-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-ix', e.target.value); };
-        document.getElementById('dz-iy').oninput = (e) => { document.getElementById('dz-iy-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-iy', e.target.value); };
-        document.getElementById('dz-head-yaw').oninput = (e) => { document.getElementById('dz-head-yaw-val').innerText = parseFloat(e.target.value).toFixed(1); localStorage.setItem('dz-head-yaw', e.target.value); };
-        document.getElementById('dz-hp').oninput = (e) => { document.getElementById('dz-hp-val').innerText = parseFloat(e.target.value).toFixed(1); localStorage.setItem('dz-hp', e.target.value); };
-        document.getElementById('dz-hx').oninput = (e) => { document.getElementById('dz-hx-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-hx', e.target.value); };
-        document.getElementById('dz-hand-y').oninput = (e) => { document.getElementById('dz-hand-y-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-hand-y', e.target.value); };
-        document.getElementById('left-closed-thresh').oninput = (e) => { document.getElementById('lct-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('left-closed-thresh', e.target.value); };
-        document.getElementById('left-open-thresh').oninput = (e) => { document.getElementById('lot-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('left-open-thresh', e.target.value); };
-        document.getElementById('right-closed-thresh').oninput = (e) => { document.getElementById('rct-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('right-closed-thresh', e.target.value); };
-        document.getElementById('right-open-thresh').oninput = (e) => { document.getElementById('rot-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('right-open-thresh', e.target.value); };
-        document.getElementById('pinch-thresh').oninput = (e) => { document.getElementById('pt-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('pinch-thresh', e.target.value); };
-        // Head acceleration sliders
-        document.getElementById('head-slow-x').oninput = (e) => {
-            headSlowX = parseFloat(e.target.value);
-            document.getElementById('head-slow-x-val').innerText = headSlowX.toFixed(3);
-            localStorage.setItem('head-slow-x', e.target.value);
-        };
-        document.getElementById('head-fast-x').oninput = (e) => {
-            headFastX = parseFloat(e.target.value);
-            document.getElementById('head-fast-x-val').innerText = headFastX.toFixed(3);
-            localStorage.setItem('head-fast-x', e.target.value);
-        };
-        document.getElementById('head-trans-x').oninput = (e) => {
-            headTransX = parseFloat(e.target.value);
-            document.getElementById('head-trans-x-val').innerText = headTransX.toFixed(3);
-            localStorage.setItem('head-trans-x', e.target.value);
-        };
-        document.getElementById('head-slow-y').oninput = (e) => {
-            headSlowY = parseFloat(e.target.value);
-            document.getElementById('head-slow-y-val').innerText = headSlowY.toFixed(3);
-            localStorage.setItem('head-slow-y', e.target.value);
-        };
-        document.getElementById('head-fast-y').oninput = (e) => {
-            headFastY = parseFloat(e.target.value);
-            document.getElementById('head-fast-y-val').innerText = headFastY.toFixed(3);
-            localStorage.setItem('head-fast-y', e.target.value);
-        };
-        document.getElementById('head-trans-y').oninput = (e) => {
-            headTransY = parseFloat(e.target.value);
-            document.getElementById('head-trans-y-val').innerText = headTransY.toFixed(3);
-            localStorage.setItem('head-trans-y', e.target.value);
-        };
-        // Hand acceleration sliders
-        document.getElementById('hand-slow-x').oninput = (e) => {
-            handSlowX = parseFloat(e.target.value);
-            document.getElementById('hand-slow-x-val').innerText = handSlowX.toFixed(3);
-            localStorage.setItem('hand-slow-x', e.target.value);
-        };
-        document.getElementById('hand-fast-x').oninput = (e) => {
-            handFastX = parseFloat(e.target.value);
-            document.getElementById('hand-fast-x-val').innerText = handFastX.toFixed(3);
-            localStorage.setItem('hand-fast-x', e.target.value);
-        };
-        document.getElementById('hand-trans-x').oninput = (e) => {
-            handTransX = parseFloat(e.target.value);
-            document.getElementById('hand-trans-x-val').innerText = handTransX.toFixed(3);
-            localStorage.setItem('hand-trans-x', e.target.value);
-        };
-        document.getElementById('hand-slow-y').oninput = (e) => {
-            handSlowY = parseFloat(e.target.value);
-            document.getElementById('hand-slow-y-val').innerText = handSlowY.toFixed(3);
-            localStorage.setItem('hand-slow-y', e.target.value);
-        };
-        document.getElementById('hand-fast-y').oninput = (e) => {
-            handFastY = parseFloat(e.target.value);
-            document.getElementById('hand-fast-y-val').innerText = handFastY.toFixed(3);
-            localStorage.setItem('hand-fast-y', e.target.value);
-        };
-        document.getElementById('hand-trans-y').oninput = (e) => {
-            handTransY = parseFloat(e.target.value);
-            document.getElementById('hand-trans-y-val').innerText = handTransY.toFixed(3);
-            localStorage.setItem('hand-trans-y', e.target.value);
-        };
-        // Number inputs for acceleration sliders (sync with range)
-        ['head-slow-x', 'head-fast-x', 'head-trans-x', 'head-slow-y', 'head-fast-y', 'head-trans-y',
-         'hand-slow-x', 'hand-fast-x', 'hand-trans-x', 'hand-slow-y', 'hand-fast-y', 'hand-trans-y'].forEach(id => {
-            const range = document.getElementById(id);
-            const num = document.getElementById(id + '-num');
-            if (num) {
-                num.oninput = (e) => {
-                    range.value = e.target.value;
-                    document.getElementById(id + '-val').innerText = parseFloat(e.target.value).toFixed(3);
-                    localStorage.setItem(id, e.target.value);
-                    window[id.replace(/-/g, '')] = parseFloat(e.target.value);
-                };
-            }
-        });
-        document.querySelectorAll('input[type=range]').forEach(setupSlider);
-        window.addEventListener('keydown', (e) => {
-            if (e.code === 'Space') {
-                isPaused = !isPaused;
-                e.preventDefault();
-            }
-        });
-    }
-    function setupSlider(slider) {
-        if (!slider) return;
-        const id = slider.id;
-        const num = document.getElementById(`${id}-num`);
-        if (!num) return;
-        const valDisplay = document.getElementById(`${id.replace(/-[^-]+$/, '')}-val`) || document.getElementById(`v-${id}`);
-        const originalOnInput = slider.oninput || (() => {});
-        slider.oninput = (e) => {
-            originalOnInput(e);
-            const val = parseFloat(slider.value);
-            num.value = val.toFixed(3);
-            if (valDisplay) valDisplay.innerText = val.toFixed(id.includes('dz-head') || id.includes('dz-hp') ? 1 : 3);
-            localStorage.setItem(id, slider.value);
-        };
-        num.oninput = (e) => {
-            slider.value = parseFloat(e.target.value);
-            const displayVal = parseFloat(e.target.value);
+        }
+    });
+    document.querySelectorAll('input[type=range]').forEach(setupSlider);
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+            isPaused = !isPaused;
+            e.preventDefault();
+        }
+    });
+}
+function setupSlider(slider) {
+    if (!slider) return;
+    const id = slider.id;
+    const num = document.getElementById(`${id}-num`);
+    if (!num) return;
+    const valDisplay = document.getElementById(`${id.replace(/-[^-]+$/, '')}-val`) || document.getElementById(`v-${id}`);
+    const originalOnInput = slider.oninput || (() => {});
+    slider.oninput = (e) => {
+        originalOnInput(e);
+        const val = parseFloat(slider.value);
+        num.value = val.toFixed(3);
+        if (valDisplay) valDisplay.innerText = val.toFixed(id.includes('dz-head') || id.includes('dz-hp') ? 1 : 3);
+        localStorage.setItem(id, slider.value);
+    };
+    num.oninput = (e) => {
+        slider.value = parseFloat(e.target.value);
+        const displayVal = parseFloat(e.target.value);
+        if (valDisplay) valDisplay.innerText = displayVal.toFixed(id.includes('dz-head') || id.includes('dz-hp') ? 1 : 3);
+        originalOnInput({target: slider});
+    };
+    const minus = document.getElementById(`${id}-minus`);
+    const plus = document.getElementById(`${id}-plus`);
+    let holdTimer;
+    let holdInterval;
+    function startHold(dir) {
+        clearTimeout(holdTimer);
+        clearInterval(holdInterval);
+        const range = parseFloat(slider.max) - parseFloat(slider.min);
+        let incAmount = range > 100 ? 0.01 : 0.001;
+        let stepVal = incAmount * dir;
+        function inc() {
+            let newVal = parseFloat(slider.value) + stepVal;
+            newVal = Math.min(parseFloat(slider.max), Math.max(parseFloat(slider.min), newVal));
+            slider.value = newVal;
+            const displayVal = newVal;
+            num.value = displayVal.toFixed(3);
             if (valDisplay) valDisplay.innerText = displayVal.toFixed(id.includes('dz-head') || id.includes('dz-hp') ? 1 : 3);
             originalOnInput({target: slider});
-        };
-        const minus = document.getElementById(`${id}-minus`);
-        const plus = document.getElementById(`${id}-plus`);
-        let holdTimer;
-        let holdInterval;
-        function startHold(dir) {
-            clearTimeout(holdTimer);
-            clearInterval(holdInterval);
-            const range = parseFloat(slider.max) - parseFloat(slider.min);
-            let incAmount = range > 100 ? 0.01 : 0.001;
-            let stepVal = incAmount * dir;
-            function inc() {
-                let newVal = parseFloat(slider.value) + stepVal;
-                newVal = Math.min(parseFloat(slider.max), Math.max(parseFloat(slider.min), newVal));
-                slider.value = newVal;
-                const displayVal = newVal;
-                num.value = displayVal.toFixed(3);
-                if (valDisplay) valDisplay.innerText = displayVal.toFixed(id.includes('dz-head') || id.includes('dz-hp') ? 1 : 3);
-                originalOnInput({target: slider});
-            }
-            inc();
-            holdTimer = setTimeout(() => {
-                holdInterval = setInterval(inc, 50);
-            }, 400);
         }
-        function stopHold() {
-            clearTimeout(holdTimer);
-            clearInterval(holdInterval);
-        }
-        if (minus) {
-            minus.onmousedown = () => startHold(-1);
-            minus.onmouseup = stopHold;
-            minus.onmouseleave = stopHold;
-        }
-        if (plus) {
-            plus.onmousedown = () => startHold(1);
-            plus.onmouseup = stopHold;
-            plus.onmouseleave = stopHold;
-        }
+        inc();
+        holdTimer = setTimeout(() => {
+            holdInterval = setInterval(inc, 50);
+        }, 400);
     }
-    const MESH_SILHOUETTE = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
-    const MESH_EYELASHES = [33, 160, 158, 133, 153, 144, 362, 385, 387, 263, 373, 380];
-    const MESH_IRIS = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
-    const MESH_EYEBROWS = [70, 63, 105, 66, 107, 336, 296, 334, 293, 300];
-    const MESH_LIPS = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146];
-    const MESH_NOSE = [168, 6, 197, 195, 5, 4, 1, 19, 94, 2, 98, 97, 326, 327];
-    const FILTERED_INDICES = [...MESH_SILHOUETTE, ...MESH_EYELASHES, ...MESH_IRIS, ...MESH_EYEBROWS, ...MESH_LIPS, ...MESH_NOSE];
-    const IRIS_INDICES = [33, 133, 159, 145, 158, 153, 362, 263, 386, 374, 385, 380, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
-    const YAW_PITCH_INDICES = [1, 10, 152, 234, 454];
-    init();
-    window.addEventListener('resize', () => {
-        if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
-        if (isIrisCalibrated) {
-            isIrisCalibrated = false;
-            alert('Screen resized. Please recalibrate for iris mode.');
-        }
-    });
-    window.addEventListener('mousemove', (e) => {
-        mouseX = e.clientX;
-        mouseY = e.clientY;
-    });
-    window.addEventListener('wheel', (e) => {
-        if (isMouseTracking) {
-            mouseWheelZ += e.deltaY * wheelSens;
-        }
-    });
+    function stopHold() {
+        clearTimeout(holdTimer);
+        clearInterval(holdInterval);
+    }
+    if (minus) {
+        minus.onmousedown = () => startHold(-1);
+        minus.onmouseup = stopHold;
+        minus.onmouseleave = stopHold;
+    }
+    if (plus) {
+        plus.onmousedown = () => startHold(1);
+        plus.onmouseup = stopHold;
+        plus.onmouseleave = stopHold;
+    }
+}
+const MESH_SILHOUETTE = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+const MESH_EYELASHES = [33, 160, 158, 133, 153, 144, 362, 385, 387, 263, 373, 380];
+const MESH_IRIS = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
+const MESH_EYEBROWS = [70, 63, 105, 66, 107, 336, 296, 334, 293, 300];
+const MESH_LIPS = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146];
+const MESH_NOSE = [168, 6, 197, 195, 5, 4, 1, 19, 94, 2, 98, 97, 326, 327];
+const FILTERED_INDICES = [...MESH_SILHOUETTE, ...MESH_EYELASHES, ...MESH_IRIS, ...MESH_EYEBROWS, ...MESH_LIPS, ...MESH_NOSE];
+const IRIS_INDICES = [33, 133, 159, 145, 158, 153, 362, 263, 386, 374, 385, 380, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
+const YAW_PITCH_INDICES = [1, 10, 152, 234, 454];
+init();
+window.addEventListener('resize', () => {
+    if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
+    if (isIrisCalibrated) {
+        isIrisCalibrated = false;
+        alert('Screen resized. Please recalibrate for iris mode.');
+    }
+});
+window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+});
+window.addEventListener('wheel', (e) => {
+    if (isMouseTracking) {
+        mouseWheelZ += e.deltaY * wheelSens;
+    }
+});
