@@ -712,15 +712,6 @@ function gaussianElimination(a) {
     }
     return x;
 }
-    let x = new Array(n).fill(0);
-    for (let i = n - 1; i >= 0; i--) {
-        x[i] = aa[i][n] / aa[i][i];
-        for (let k = i - 1; k >= 0; k--) {
-            aa[k][n] -= aa[k][i] * x[i];
-        }
-    }
-    return x;
-
 function isDraggableElement(elem) {
     if (!elem) return false;
     if (elem.closest('#tracker-panel .section-title')) return true;
@@ -1725,7 +1716,7 @@ function setupSlider(slider) {
     const id = slider.id;
     const num = document.getElementById(`${id}-num`);
     if (!num) return;
-    const valDisplay = document.getElementById(`${id}-val`) || document.getElementById(`v-${id}`);
+    const valDisplay = document.getElementById(`${id.replace(/-[^-]+$/, '')}-val`) || document.getElementById(`v-${id}`);
     const originalOnInput = slider.oninput || (() => {});
     slider.oninput = (e) => {
         originalOnInput(e);
