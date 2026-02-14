@@ -7,6 +7,7 @@ import 'dart:ui_web' as ui_web;
 import 'dart:js_interop';
 
 import 'services/app_repository.dart';
+import 'services/web_file_upload.dart';
 
 class Engine3DPage extends StatefulWidget {
   const Engine3DPage({
@@ -542,6 +543,31 @@ class _Engine3DPageState extends State<Engine3DPage> {
                         }
                         return;
                     }
+                    if (data.type === 'external_add_model') {
+                        if (data.url) {
+                            addModel(data.url).then(() => pushStateSnapshot());
+                        }
+                        return;
+                    }
+                    if (data.type === 'external_add_audio') {
+                        if (data.url) {
+                            addSpatialAudio(data.url);
+                            pushStateSnapshot();
+                        }
+                        return;
+                    }
+                    if (data.type === 'external_set_sky') {
+                        if (data.url) {
+                            loadEnv(data.url, tex => { skyTex = tex; scene.background = tex; pushStateSnapshot(); });
+                        }
+                        return;
+                    }
+                    if (data.type === 'external_set_env') {
+                        if (data.url) {
+                            loadEnv(data.url, tex => { envTex = tex; scene.environment = tex; pushStateSnapshot(); });
+                        }
+                        return;
+                    }
                     if (data.head) {
                         headX = data.head.x;
                         headY = data.head.y;
@@ -808,9 +834,9 @@ class _Engine3DPageState extends State<Engine3DPage> {
             };
         }
         // --- SPATIAL AUDIO SYSTEM ---
-        function addSpatialAudio() {
+        function addSpatialAudio(explicitUrl) {
             if (!AUDIO_ENABLED) return;
-            const url = prompt('Enter audio URL:');
+            const url = explicitUrl || prompt('Enter audio URL:');
             if (!url) return;
             const id = Date.now();
             const audio = new Audio(url);
@@ -1501,7 +1527,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
 ''';
     content = content
         .replaceAll('__CLEAN_VIEW__', widget.cleanView ? 'true' : 'false')
-        .replaceAll('__AUDIO_ENABLED__', widget.disableAudio ? 'false' : 'true');
+        .replaceAll(
+            '__AUDIO_ENABLED__', widget.disableAudio ? 'false' : 'true');
 
     ui_web.platformViewRegistry.registerViewFactory(viewID, (int viewId) {
       final web.HTMLIFrameElement iframe = web.HTMLIFrameElement();
@@ -1620,7 +1647,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
       final modeState = await _repository.fetchModeState('3d');
       if (modeState != null) {
         _modeState = modeState;
-        final settings = (modeState['settings'] as Map?)?.cast<String, dynamic>();
+        final settings =
+            (modeState['settings'] as Map?)?.cast<String, dynamic>();
         deadZoneX = _toDouble(settings?['dz-x'], deadZoneX);
         deadZoneY = _toDouble(settings?['dz-y'], deadZoneY);
         deadZoneZ = _toDouble(settings?['dz-z'], deadZoneZ);
@@ -1667,9 +1695,12 @@ class _Engine3DPageState extends State<Engine3DPage> {
     if (key == 'show-tracker') {
       setState(() => showTracker = value.toString() == 'true');
     }
-    if (key == 'dz-x') deadZoneX = double.tryParse(value.toString()) ?? deadZoneX;
-    if (key == 'dz-y') deadZoneY = double.tryParse(value.toString()) ?? deadZoneY;
-    if (key == 'dz-z') deadZoneZ = double.tryParse(value.toString()) ?? deadZoneZ;
+    if (key == 'dz-x')
+      deadZoneX = double.tryParse(value.toString()) ?? deadZoneX;
+    if (key == 'dz-y')
+      deadZoneY = double.tryParse(value.toString()) ?? deadZoneY;
+    if (key == 'dz-z')
+      deadZoneZ = double.tryParse(value.toString()) ?? deadZoneZ;
     if (key == 'dz-yaw') {
       deadZoneYaw = double.tryParse(value.toString()) ?? deadZoneYaw;
     }
@@ -1795,7 +1826,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
         ((_modeState['settings'] as Map?)?.cast<String, dynamic>()) ??
             <String, dynamic>{};
     Map<String, dynamic>? sceneState;
-    final dynamic rawScene = widget.initialPresetPayload ?? _modeState['sceneState'];
+    final dynamic rawScene =
+        widget.initialPresetPayload ?? _modeState['sceneState'];
     if (rawScene is Map<String, dynamic>) {
       sceneState = rawScene;
     } else if (rawScene is Map) {
@@ -1814,6 +1846,35 @@ class _Engine3DPageState extends State<Engine3DPage> {
     final element = web.document.getElementById('3d-iframe');
     if (element is! web.HTMLIFrameElement) return;
     element.contentWindow?.postMessage(jsonEncode(message).toJS, '*'.toJS);
+  }
+
+  Future<void> _uploadToEngine({
+    required String accept,
+    required String folder,
+    required String messageType,
+    required String successLabel,
+  }) async {
+    final file = await pickDeviceFile(accept: accept);
+    if (file == null) return;
+
+    try {
+      final String url = await _repository.uploadAssetBytes(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: folder,
+      );
+      _postToEngine(<String, dynamic>{'type': messageType, 'url': url});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$successLabel uploaded and injected.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Upload failed: $e')),
+      );
+    }
   }
 
   double _toDouble(dynamic value, double fallback) {
@@ -1872,6 +1933,69 @@ class _Engine3DPageState extends State<Engine3DPage> {
                   ),
                 ),
               ],
+            ),
+          ),
+        if (!widget.cleanView)
+          Positioned(
+            top: 16,
+            left: 16,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () => _uploadToEngine(
+                        accept: '.glb,.gltf,.fbx,.obj,.usdz,model/*',
+                        folder: 'models',
+                        messageType: 'external_add_model',
+                        successLabel: '3D model',
+                      ),
+                      icon: const Icon(Icons.view_in_ar_outlined, size: 16),
+                      label: const Text('Upload Model'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: widget.disableAudio
+                          ? null
+                          : () => _uploadToEngine(
+                                accept: 'audio/*',
+                                folder: 'audio',
+                                messageType: 'external_add_audio',
+                                successLabel: 'Audio',
+                              ),
+                      icon: const Icon(Icons.graphic_eq_outlined, size: 16),
+                      label: const Text('Upload Audio'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () => _uploadToEngine(
+                        accept: '.hdr,.exr,image/*',
+                        folder: 'sky',
+                        messageType: 'external_set_sky',
+                        successLabel: 'Sky texture',
+                      ),
+                      icon: const Icon(Icons.wb_sunny_outlined, size: 16),
+                      label: const Text('Upload Sky'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () => _uploadToEngine(
+                        accept: '.hdr,.exr,image/*',
+                        folder: 'env',
+                        messageType: 'external_set_env',
+                        successLabel: 'Environment map',
+                      ),
+                      icon: const Icon(Icons.landscape_outlined, size: 16),
+                      label: const Text('Upload Env'),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
       ],

@@ -181,3 +181,941 @@ BEGIN
       USING (auth.uid() = user_id);
   END IF;
 END $$;
+-- ==========================================
+-- Social + profile + chat + settings schema
+-- ==========================================
+
+create table if not exists public.profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
+  username text unique
+    check (username is null or char_length(trim(username)) between 3 and 32),
+  full_name text,
+  avatar_url text,
+  bio text not null default '',
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.follows (
+  follower_id uuid not null references auth.users(id) on delete cascade,
+  following_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default timezone('utc', now()),
+  primary key (follower_id, following_id),
+  check (follower_id <> following_id)
+);
+
+create table if not exists public.preset_reactions (
+  preset_id uuid not null references public.presets(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  reaction smallint not null check (reaction in (-1, 1)),
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  primary key (preset_id, user_id)
+);
+
+create table if not exists public.preset_comments (
+  id uuid primary key default gen_random_uuid(),
+  preset_id uuid not null references public.presets(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  content text not null check (char_length(trim(content)) > 0),
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.saved_presets (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  preset_id uuid not null references public.presets(id) on delete cascade,
+  created_at timestamptz not null default timezone('utc', now()),
+  primary key (user_id, preset_id)
+);
+
+create table if not exists public.view_history (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  preset_id uuid not null references public.presets(id) on delete cascade,
+  view_count integer not null default 1 check (view_count >= 1),
+  first_viewed_at timestamptz not null default timezone('utc', now()),
+  last_viewed_at timestamptz not null default timezone('utc', now()),
+  primary key (user_id, preset_id)
+);
+
+create table if not exists public.chats (
+  id uuid primary key default gen_random_uuid(),
+  created_by uuid references auth.users(id) on delete set null,
+  name text,
+  is_group boolean not null default false,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.chat_members (
+  chat_id uuid not null references public.chats(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'member'
+    check (role in ('owner', 'admin', 'member')),
+  joined_at timestamptz not null default timezone('utc', now()),
+  primary key (chat_id, user_id)
+);
+
+create table if not exists public.chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  chat_id uuid not null references public.chats(id) on delete cascade,
+  sender_id uuid not null references auth.users(id) on delete cascade,
+  body text not null default '',
+  shared_preset_id uuid references public.presets(id) on delete set null,
+  created_at timestamptz not null default timezone('utc', now()),
+  check (
+    char_length(trim(coalesce(body, ''))) > 0
+    or shared_preset_id is not null
+  )
+);
+
+create table if not exists public.user_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  theme_mode text not null default 'dark'
+    check (theme_mode in ('light', 'dark', 'system')),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_profiles_username on public.profiles(username);
+create index if not exists idx_follows_following_id on public.follows(following_id);
+create index if not exists idx_preset_reactions_preset on public.preset_reactions(preset_id);
+create index if not exists idx_preset_comments_preset_created on public.preset_comments(preset_id, created_at desc);
+create index if not exists idx_saved_presets_preset on public.saved_presets(preset_id);
+create index if not exists idx_view_history_last_viewed on public.view_history(user_id, last_viewed_at desc);
+create index if not exists idx_chat_members_user on public.chat_members(user_id, chat_id);
+create index if not exists idx_chat_messages_chat_created on public.chat_messages(chat_id, created_at);
+create index if not exists idx_chat_messages_shared_preset on public.chat_messages(shared_preset_id);
+
+drop trigger if exists trg_profiles_updated_at on public.profiles;
+create trigger trg_profiles_updated_at
+before update on public.profiles
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_preset_reactions_updated_at on public.preset_reactions;
+create trigger trg_preset_reactions_updated_at
+before update on public.preset_reactions
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_preset_comments_updated_at on public.preset_comments;
+create trigger trg_preset_comments_updated_at
+before update on public.preset_comments
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_chats_updated_at on public.chats;
+create trigger trg_chats_updated_at
+before update on public.chats
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_user_settings_updated_at on public.user_settings;
+create trigger trg_user_settings_updated_at
+before update on public.user_settings
+for each row execute function public.set_updated_at();
+
+-- Keep profile row and settings synced with auth users.
+create or replace function public.handle_new_user_profile()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (user_id, email)
+  values (new.id, coalesce(new.email, ''))
+  on conflict (user_id) do update
+    set email = excluded.email;
+
+  insert into public.user_settings (user_id)
+  values (new.id)
+  on conflict (user_id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created_deepx on auth.users;
+create trigger on_auth_user_created_deepx
+after insert on auth.users
+for each row execute function public.handle_new_user_profile();
+
+-- Backfill for existing users.
+insert into public.profiles (user_id, email)
+select id, coalesce(email, '')
+from auth.users
+on conflict (user_id) do update
+  set email = excluded.email;
+
+insert into public.user_settings (user_id)
+select id from auth.users
+on conflict (user_id) do nothing;
+
+-- RLS
+alter table public.profiles enable row level security;
+alter table public.follows enable row level security;
+alter table public.preset_reactions enable row level security;
+alter table public.preset_comments enable row level security;
+alter table public.saved_presets enable row level security;
+alter table public.view_history enable row level security;
+alter table public.chats enable row level security;
+alter table public.chat_members enable row level security;
+alter table public.chat_messages enable row level security;
+alter table public.user_settings enable row level security;
+
+DO $$
+BEGIN
+  -- profiles
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'profiles'
+      AND policyname = 'profiles_select_all_authenticated'
+  ) THEN
+    CREATE POLICY profiles_select_all_authenticated
+      ON public.profiles
+      FOR SELECT
+      TO authenticated
+      USING (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'profiles'
+      AND policyname = 'profiles_insert_own'
+  ) THEN
+    CREATE POLICY profiles_insert_own
+      ON public.profiles
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'profiles'
+      AND policyname = 'profiles_update_own'
+  ) THEN
+    CREATE POLICY profiles_update_own
+      ON public.profiles
+      FOR UPDATE
+      TO authenticated
+      USING (auth.uid() = user_id)
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  -- follows
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'follows'
+      AND policyname = 'follows_select_all_authenticated'
+  ) THEN
+    CREATE POLICY follows_select_all_authenticated
+      ON public.follows
+      FOR SELECT
+      TO authenticated
+      USING (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'follows'
+      AND policyname = 'follows_insert_own'
+  ) THEN
+    CREATE POLICY follows_insert_own
+      ON public.follows
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = follower_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'follows'
+      AND policyname = 'follows_delete_own'
+  ) THEN
+    CREATE POLICY follows_delete_own
+      ON public.follows
+      FOR DELETE
+      TO authenticated
+      USING (auth.uid() = follower_id);
+  END IF;
+
+  -- preset_reactions
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'preset_reactions'
+      AND policyname = 'preset_reactions_select_all_authenticated'
+  ) THEN
+    CREATE POLICY preset_reactions_select_all_authenticated
+      ON public.preset_reactions
+      FOR SELECT
+      TO authenticated
+      USING (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'preset_reactions'
+      AND policyname = 'preset_reactions_insert_own'
+  ) THEN
+    CREATE POLICY preset_reactions_insert_own
+      ON public.preset_reactions
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'preset_reactions'
+      AND policyname = 'preset_reactions_update_own'
+  ) THEN
+    CREATE POLICY preset_reactions_update_own
+      ON public.preset_reactions
+      FOR UPDATE
+      TO authenticated
+      USING (auth.uid() = user_id)
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'preset_reactions'
+      AND policyname = 'preset_reactions_delete_own'
+  ) THEN
+    CREATE POLICY preset_reactions_delete_own
+      ON public.preset_reactions
+      FOR DELETE
+      TO authenticated
+      USING (auth.uid() = user_id);
+  END IF;
+
+  -- preset_comments
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'preset_comments'
+      AND policyname = 'preset_comments_select_all_authenticated'
+  ) THEN
+    CREATE POLICY preset_comments_select_all_authenticated
+      ON public.preset_comments
+      FOR SELECT
+      TO authenticated
+      USING (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'preset_comments'
+      AND policyname = 'preset_comments_insert_own'
+  ) THEN
+    CREATE POLICY preset_comments_insert_own
+      ON public.preset_comments
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'preset_comments'
+      AND policyname = 'preset_comments_update_own'
+  ) THEN
+    CREATE POLICY preset_comments_update_own
+      ON public.preset_comments
+      FOR UPDATE
+      TO authenticated
+      USING (auth.uid() = user_id)
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'preset_comments'
+      AND policyname = 'preset_comments_delete_own'
+  ) THEN
+    CREATE POLICY preset_comments_delete_own
+      ON public.preset_comments
+      FOR DELETE
+      TO authenticated
+      USING (auth.uid() = user_id);
+  END IF;
+
+  -- saved_presets
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'saved_presets'
+      AND policyname = 'saved_presets_select_all_authenticated'
+  ) THEN
+    CREATE POLICY saved_presets_select_all_authenticated
+      ON public.saved_presets
+      FOR SELECT
+      TO authenticated
+      USING (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'saved_presets'
+      AND policyname = 'saved_presets_insert_own'
+  ) THEN
+    CREATE POLICY saved_presets_insert_own
+      ON public.saved_presets
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'saved_presets'
+      AND policyname = 'saved_presets_delete_own'
+  ) THEN
+    CREATE POLICY saved_presets_delete_own
+      ON public.saved_presets
+      FOR DELETE
+      TO authenticated
+      USING (auth.uid() = user_id);
+  END IF;
+
+  -- view_history
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'view_history'
+      AND policyname = 'view_history_select_own'
+  ) THEN
+    CREATE POLICY view_history_select_own
+      ON public.view_history
+      FOR SELECT
+      TO authenticated
+      USING (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'view_history'
+      AND policyname = 'view_history_insert_own'
+  ) THEN
+    CREATE POLICY view_history_insert_own
+      ON public.view_history
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'view_history'
+      AND policyname = 'view_history_update_own'
+  ) THEN
+    CREATE POLICY view_history_update_own
+      ON public.view_history
+      FOR UPDATE
+      TO authenticated
+      USING (auth.uid() = user_id)
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'view_history'
+      AND policyname = 'view_history_delete_own'
+  ) THEN
+    CREATE POLICY view_history_delete_own
+      ON public.view_history
+      FOR DELETE
+      TO authenticated
+      USING (auth.uid() = user_id);
+  END IF;
+
+  -- chats
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chats'
+      AND policyname = 'chats_select_member'
+  ) THEN
+    CREATE POLICY chats_select_member
+      ON public.chats
+      FOR SELECT
+      TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM public.chat_members m
+          WHERE m.chat_id = chats.id
+            AND m.user_id = auth.uid()
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chats'
+      AND policyname = 'chats_insert_own'
+  ) THEN
+    CREATE POLICY chats_insert_own
+      ON public.chats
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = created_by);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chats'
+      AND policyname = 'chats_update_admin'
+  ) THEN
+    CREATE POLICY chats_update_admin
+      ON public.chats
+      FOR UPDATE
+      TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM public.chat_members m
+          WHERE m.chat_id = chats.id
+            AND m.user_id = auth.uid()
+            AND m.role in ('owner', 'admin')
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chats'
+      AND policyname = 'chats_delete_owner'
+  ) THEN
+    CREATE POLICY chats_delete_owner
+      ON public.chats
+      FOR DELETE
+      TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM public.chat_members m
+          WHERE m.chat_id = chats.id
+            AND m.user_id = auth.uid()
+            AND m.role = 'owner'
+        )
+      );
+  END IF;
+
+  -- chat_members
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chat_members'
+      AND policyname = 'chat_members_select_chat_member'
+  ) THEN
+    CREATE POLICY chat_members_select_chat_member
+      ON public.chat_members
+      FOR SELECT
+      TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM public.chat_members me
+          WHERE me.chat_id = chat_members.chat_id
+            AND me.user_id = auth.uid()
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chat_members'
+      AND policyname = 'chat_members_insert_owner_or_self'
+  ) THEN
+    CREATE POLICY chat_members_insert_owner_or_self
+      ON public.chat_members
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (
+        auth.uid() = user_id
+        OR EXISTS (
+          SELECT 1 FROM public.chats c
+          WHERE c.id = chat_members.chat_id
+            AND c.created_by = auth.uid()
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.chat_members me
+          WHERE me.chat_id = chat_members.chat_id
+            AND me.user_id = auth.uid()
+            AND me.role in ('owner', 'admin')
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chat_members'
+      AND policyname = 'chat_members_update_admin'
+  ) THEN
+    CREATE POLICY chat_members_update_admin
+      ON public.chat_members
+      FOR UPDATE
+      TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM public.chat_members me
+          WHERE me.chat_id = chat_members.chat_id
+            AND me.user_id = auth.uid()
+            AND me.role in ('owner', 'admin')
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chat_members'
+      AND policyname = 'chat_members_delete_self_or_admin'
+  ) THEN
+    CREATE POLICY chat_members_delete_self_or_admin
+      ON public.chat_members
+      FOR DELETE
+      TO authenticated
+      USING (
+        auth.uid() = user_id
+        OR EXISTS (
+          SELECT 1 FROM public.chat_members me
+          WHERE me.chat_id = chat_members.chat_id
+            AND me.user_id = auth.uid()
+            AND me.role in ('owner', 'admin')
+        )
+      );
+  END IF;
+
+  -- chat_messages
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chat_messages'
+      AND policyname = 'chat_messages_select_chat_member'
+  ) THEN
+    CREATE POLICY chat_messages_select_chat_member
+      ON public.chat_messages
+      FOR SELECT
+      TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM public.chat_members m
+          WHERE m.chat_id = chat_messages.chat_id
+            AND m.user_id = auth.uid()
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chat_messages'
+      AND policyname = 'chat_messages_insert_own'
+  ) THEN
+    CREATE POLICY chat_messages_insert_own
+      ON public.chat_messages
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (
+        auth.uid() = sender_id
+        AND EXISTS (
+          SELECT 1 FROM public.chat_members m
+          WHERE m.chat_id = chat_messages.chat_id
+            AND m.user_id = auth.uid()
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'chat_messages'
+      AND policyname = 'chat_messages_delete_sender'
+  ) THEN
+    CREATE POLICY chat_messages_delete_sender
+      ON public.chat_messages
+      FOR DELETE
+      TO authenticated
+      USING (auth.uid() = sender_id);
+  END IF;
+
+  -- user_settings
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'user_settings'
+      AND policyname = 'user_settings_select_own'
+  ) THEN
+    CREATE POLICY user_settings_select_own
+      ON public.user_settings
+      FOR SELECT
+      TO authenticated
+      USING (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'user_settings'
+      AND policyname = 'user_settings_insert_own'
+  ) THEN
+    CREATE POLICY user_settings_insert_own
+      ON public.user_settings
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'user_settings'
+      AND policyname = 'user_settings_update_own'
+  ) THEN
+    CREATE POLICY user_settings_update_own
+      ON public.user_settings
+      FOR UPDATE
+      TO authenticated
+      USING (auth.uid() = user_id)
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+create or replace view public.preset_stats as
+select
+  p.id as preset_id,
+  coalesce((
+    select count(*)
+    from public.preset_reactions r
+    where r.preset_id = p.id and r.reaction = 1
+  ), 0)::bigint as likes_count,
+  coalesce((
+    select count(*)
+    from public.preset_reactions r
+    where r.preset_id = p.id and r.reaction = -1
+  ), 0)::bigint as dislikes_count,
+  coalesce((
+    select count(*)
+    from public.preset_comments c
+    where c.preset_id = p.id
+  ), 0)::bigint as comments_count,
+  coalesce((
+    select count(*)
+    from public.saved_presets s
+    where s.preset_id = p.id
+  ), 0)::bigint as saves_count
+from public.presets p;
+
+create or replace view public.profile_stats as
+select
+  pr.user_id,
+  coalesce((
+    select count(*)
+    from public.follows f
+    where f.following_id = pr.user_id
+  ), 0)::bigint as followers_count,
+  coalesce((
+    select count(*)
+    from public.follows f
+    where f.follower_id = pr.user_id
+  ), 0)::bigint as following_count,
+  coalesce((
+    select count(*)
+    from public.presets p
+    where p.user_id = pr.user_id
+  ), 0)::bigint as posts_count
+from public.profiles pr;
+
+create or replace function public.record_preset_view(p_preset_id uuid)
+returns void
+language plpgsql
+as $$
+declare
+  v_user uuid := auth.uid();
+begin
+  if v_user is null then
+    return;
+  end if;
+
+  insert into public.view_history (user_id, preset_id, view_count)
+  values (v_user, p_preset_id, 1)
+  on conflict (user_id, preset_id) do update
+    set view_count = public.view_history.view_count + 1,
+        last_viewed_at = timezone('utc', now());
+end;
+$$;
+
+create or replace function public.create_or_get_direct_chat(other_user_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_id uuid := auth.uid();
+  existing_chat uuid;
+begin
+  if current_id is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  if other_user_id is null or other_user_id = current_id then
+    raise exception 'Invalid direct chat target';
+  end if;
+
+  select c.id into existing_chat
+  from public.chats c
+  join public.chat_members m_self
+    on m_self.chat_id = c.id and m_self.user_id = current_id
+  join public.chat_members m_other
+    on m_other.chat_id = c.id and m_other.user_id = other_user_id
+  where c.is_group = false
+    and (
+      select count(*)
+      from public.chat_members m
+      where m.chat_id = c.id
+    ) = 2
+  limit 1;
+
+  if existing_chat is not null then
+    return existing_chat;
+  end if;
+
+  insert into public.chats (created_by, is_group, name)
+  values (current_id, false, null)
+  returning id into existing_chat;
+
+  insert into public.chat_members (chat_id, user_id, role)
+  values
+    (existing_chat, current_id, 'owner'),
+    (existing_chat, other_user_id, 'member')
+  on conflict do nothing;
+
+  return existing_chat;
+end;
+$$;
+
+grant execute on function public.record_preset_view(uuid) to authenticated;
+grant execute on function public.create_or_get_direct_chat(uuid) to authenticated;
+
+-- Storage buckets for uploads.
+insert into storage.buckets (id, name, public)
+values ('deepx-assets', 'deepx-assets', true)
+on conflict (id) do nothing;
+
+insert into storage.buckets (id, name, public)
+values ('deepx-avatars', 'deepx-avatars', true)
+on conflict (id) do nothing;
+
+DO $$
+BEGIN
+  -- deepx-assets
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'deepx_assets_select_public'
+  ) THEN
+    CREATE POLICY deepx_assets_select_public
+      ON storage.objects
+      FOR SELECT
+      TO authenticated
+      USING (bucket_id = 'deepx-assets');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'deepx_assets_insert_own_folder'
+  ) THEN
+    CREATE POLICY deepx_assets_insert_own_folder
+      ON storage.objects
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (
+        bucket_id = 'deepx-assets'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'deepx_assets_update_own_folder'
+  ) THEN
+    CREATE POLICY deepx_assets_update_own_folder
+      ON storage.objects
+      FOR UPDATE
+      TO authenticated
+      USING (
+        bucket_id = 'deepx-assets'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'deepx_assets_delete_own_folder'
+  ) THEN
+    CREATE POLICY deepx_assets_delete_own_folder
+      ON storage.objects
+      FOR DELETE
+      TO authenticated
+      USING (
+        bucket_id = 'deepx-assets'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+      );
+  END IF;
+
+  -- deepx-avatars
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'deepx_avatars_select_public'
+  ) THEN
+    CREATE POLICY deepx_avatars_select_public
+      ON storage.objects
+      FOR SELECT
+      TO authenticated
+      USING (bucket_id = 'deepx-avatars');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'deepx_avatars_insert_own_folder'
+  ) THEN
+    CREATE POLICY deepx_avatars_insert_own_folder
+      ON storage.objects
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (
+        bucket_id = 'deepx-avatars'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'deepx_avatars_update_own_folder'
+  ) THEN
+    CREATE POLICY deepx_avatars_update_own_folder
+      ON storage.objects
+      FOR UPDATE
+      TO authenticated
+      USING (
+        bucket_id = 'deepx-avatars'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'deepx_avatars_delete_own_folder'
+  ) THEN
+    CREATE POLICY deepx_avatars_delete_own_folder
+      ON storage.objects
+      FOR DELETE
+      TO authenticated
+      USING (
+        bucket_id = 'deepx-avatars'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+      );
+  END IF;
+END $$;
+

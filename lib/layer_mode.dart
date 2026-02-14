@@ -11,6 +11,7 @@ import 'dart:ui_web' as ui_web;
 import 'dart:js_interop';
 
 import 'services/app_repository.dart';
+import 'services/web_file_upload.dart';
 
 class LayerConfig {
   double x, y, scale;
@@ -191,11 +192,13 @@ class LayerMode extends StatefulWidget {
     this.initialPresetPayload,
     this.cleanView = false,
     this.externalHeadPose,
+    this.embedded = false,
   });
   final double? width, height;
   final Map<String, dynamic>? initialPresetPayload;
   final bool cleanView;
   final Map<String, double>? externalHeadPose;
+  final bool embedded;
   @override
   State<LayerMode> createState() => _LayerModeState();
 }
@@ -303,8 +306,7 @@ class _LayerModeState extends State<LayerMode> {
       selectedAspect = null;
     }
 
-    final savedLayers =
-        (modeState?['layers'] as Map?)?.cast<String, dynamic>();
+    final savedLayers = (modeState?['layers'] as Map?)?.cast<String, dynamic>();
     await _initLayers(
       savedMap: widget.initialPresetPayload ?? savedLayers,
     );
@@ -325,8 +327,8 @@ class _LayerModeState extends State<LayerMode> {
 
     _messageSubscription = web.window.onMessage.listen((event) {
       final data = event.data;
-      if (data.isA<JSString>()) {
-        final JSString jsString = data as JSString;
+      if (data is JSString) {
+        final JSString jsString = data;
         final jsonString = jsString.toDart;
         try {
           final Map<String, dynamic> messageData = jsonDecode(jsonString);
@@ -353,8 +355,7 @@ class _LayerModeState extends State<LayerMode> {
 
   void _applyHeadTrackingMap(Map<String, dynamic> data) {
     final Map<String, dynamic> headData =
-        (data['head'] as Map?)?.cast<String, dynamic>() ??
-            <String, dynamic>{};
+        (data['head'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
     final double rawHeadX = (headData['x'] ?? 0.0).toDouble();
     final double rawHeadY = (headData['y'] ?? 0.0).toDouble();
     final double rawZ = (headData['z'] ?? 0.0).toDouble();
@@ -419,8 +420,10 @@ class _LayerModeState extends State<LayerMode> {
       tiltSens = ((map['tilt'] ?? 0.0) as num).toDouble().clamp(0.0, 1.0);
       tiltSensitivity =
           ((map['tiltSensitivity'] ?? 1.0) as num).toDouble().clamp(0.0, 1.0);
-      deadZoneX = ((map['deadZoneX'] ?? 0.0) as num).toDouble().clamp(0.001, 0.1);
-      deadZoneY = ((map['deadZoneY'] ?? 0.0) as num).toDouble().clamp(0.001, 0.1);
+      deadZoneX =
+          ((map['deadZoneX'] ?? 0.0) as num).toDouble().clamp(0.001, 0.1);
+      deadZoneY =
+          ((map['deadZoneY'] ?? 0.0) as num).toDouble().clamp(0.001, 0.1);
       deadZoneZ = ((map['deadZoneZ'] ?? 0.0) as num).toDouble().clamp(0.0, 0.1);
       deadZoneYaw =
           ((map['deadZoneYaw'] ?? 0.0) as num).toDouble().clamp(0.0, 10.0);
@@ -520,13 +523,9 @@ class _LayerModeState extends State<LayerMode> {
     setState(() => presets = loaded);
   }
 
-  Future<void> _savePresets() async {
-    // Presets are persisted per-item in Supabase.
-  }
-
   Future<void> _initLayers({Map<String, dynamic>? savedMap}) async {
-    final Map<String, dynamic> safeSavedMap =
-        savedMap ?? Map<String, dynamic>.from(jsonDecode(manualSaveJson) as Map);
+    final Map<String, dynamic> safeSavedMap = savedMap ??
+        Map<String, dynamic>.from(jsonDecode(manualSaveJson) as Map);
     List<LayerConfig> loaded = [];
     final List<String> rawLayers = [
       "background.jpg",
@@ -760,7 +759,11 @@ class _LayerModeState extends State<LayerMode> {
   }
 
   Future<void> _addImage() async {
-    String url = urlController.text.trim();
+    final String url = urlController.text.trim();
+    await _addImageFromUrl(url);
+  }
+
+  Future<void> _addImageFromUrl(String url) async {
     if (url.isEmpty) return;
     String name = url.split('/').last.split('?').first;
     if (name.isEmpty) name = "Image_${DateTime.now().millisecondsSinceEpoch}";
@@ -781,6 +784,32 @@ class _LayerModeState extends State<LayerMode> {
         setState(() => isLoaded = true);
       }
     }).catchError((e) {});
+  }
+
+  Future<void> _uploadImageFromDevice() async {
+    final file = await pickDeviceFile(accept: 'image/*');
+    if (file == null) return;
+
+    try {
+      final String url = await _repository.uploadAssetBytes(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: 'images',
+      );
+      if (!mounted) return;
+      urlController.text = url;
+      await _addImageFromUrl(url);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Image uploaded and added to layers.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Upload failed: $e')),
+      );
+    }
   }
 
   Color _fromHex(String hex) {
@@ -810,7 +839,7 @@ class _LayerModeState extends State<LayerMode> {
   @override
   Widget build(BuildContext context) {
     if (!isLoaded) {
-      if (widget.cleanView) {
+      if (widget.cleanView || widget.embedded) {
         return const ColoredBox(color: Colors.black);
       }
       return const Scaffold(
@@ -828,79 +857,78 @@ class _LayerModeState extends State<LayerMode> {
       controlPanelPos = Offset(MediaQuery.of(context).size.width - 320, 100);
     }
     final stack = Stack(
-        clipBehavior: Clip.none,
-        children: [
-          _buildLayersStack(),
-          if (!widget.cleanView && widget.externalHeadPose == null)
-            Positioned(
-              left: showTracker ? 0 : -300.0,
-              top: showTracker ? 0 : -300.0,
-              right: showTracker ? 0 : null,
-              bottom: showTracker ? 0 : null,
-              child: SizedBox(
-                width: showTracker ? MediaQuery.of(context).size.width : 240.0,
-                height: showTracker ? MediaQuery.of(context).size.height : 240.0,
-                child: HtmlElementView(viewType: viewID),
-              ),
+      clipBehavior: Clip.none,
+      children: [
+        _buildLayersStack(),
+        if (!widget.cleanView && widget.externalHeadPose == null)
+          Positioned(
+            left: showTracker ? 0 : -300.0,
+            top: showTracker ? 0 : -300.0,
+            right: showTracker ? 0 : null,
+            bottom: showTracker ? 0 : null,
+            child: SizedBox(
+              width: showTracker ? MediaQuery.of(context).size.width : 240.0,
+              height: showTracker ? MediaQuery.of(context).size.height : 240.0,
+              child: HtmlElementView(viewType: viewID),
             ),
-          if (!widget.cleanView && !isClearMode)
-            const Positioned(left: 20, bottom: 20, child: SizedBox()),
-          if (!widget.cleanView && !isClearMode)
-            Positioned(
-                bottom: 20,
-                left: 0,
-                right: 0,
-                child: Center(child: _buildBottomCenterToggle())),
-          if (!widget.cleanView && isEditMode && !isClearMode)
-            Positioned(
-                right: 20, bottom: 20, child: _buildBottomRightControls()),
-          if (!widget.cleanView && isEditMode && !isClearMode) ...[
-            if (showLayerPanel) _buildDraggableLayerManager(),
-            _buildEditHeader(),
-            if (showPropPanel && layerConfigs.isNotEmpty)
-              _buildDraggablePropertiesPanel(),
-            _buildPanelToggles(),
-            Positioned(top: 60, left: 20, child: _aspectDropdown()),
-          ] else if (!widget.cleanView && !isClearMode) ...[
-            _buildDraggableControlPanel(),
-          ],
-          if (!widget.cleanView)
-            Positioned(right: 20, bottom: 20, child: _buildClearToggle()),
-          if (!widget.cleanView)
-            Positioned(
+          ),
+        if (!widget.cleanView && !isClearMode)
+          const Positioned(left: 20, bottom: 20, child: SizedBox()),
+        if (!widget.cleanView && !isClearMode)
+          Positioned(
               bottom: 20,
-              left: 20,
-              child: Row(
-                children: [
-                  ElevatedButton(
-                    onPressed: () {
-                      Navigator.pushReplacementNamed(context, '/3d');
-                    },
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.cyanAccent),
-                    child: const Text(
-                      '3D mode',
-                      style: TextStyle(color: Colors.black),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: () {
-                      Navigator.pushReplacementNamed(context, '/feed');
-                    },
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white),
-                    child: const Text(
-                      'Feed',
-                      style: TextStyle(color: Colors.black),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+              left: 0,
+              right: 0,
+              child: Center(child: _buildBottomCenterToggle())),
+        if (!widget.cleanView && isEditMode && !isClearMode)
+          Positioned(right: 20, bottom: 20, child: _buildBottomRightControls()),
+        if (!widget.cleanView && isEditMode && !isClearMode) ...[
+          if (showLayerPanel) _buildDraggableLayerManager(),
+          _buildEditHeader(),
+          if (showPropPanel && layerConfigs.isNotEmpty)
+            _buildDraggablePropertiesPanel(),
+          _buildPanelToggles(),
+          Positioned(top: 60, left: 20, child: _aspectDropdown()),
+        ] else if (!widget.cleanView && !isClearMode) ...[
+          _buildDraggableControlPanel(),
         ],
-      );
-    if (widget.cleanView) {
+        if (!widget.cleanView)
+          Positioned(right: 20, bottom: 20, child: _buildClearToggle()),
+        if (!widget.cleanView && !widget.embedded)
+          Positioned(
+            bottom: 20,
+            left: 20,
+            child: Row(
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushReplacementNamed(context, '/3d');
+                  },
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.cyanAccent),
+                  child: const Text(
+                    '3D mode',
+                    style: TextStyle(color: Colors.black),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushReplacementNamed(context, '/feed');
+                  },
+                  style:
+                      ElevatedButton.styleFrom(backgroundColor: Colors.white),
+                  child: const Text(
+                    'Feed',
+                    style: TextStyle(color: Colors.black),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (widget.cleanView || widget.embedded) {
       return ColoredBox(color: Colors.black, child: stack);
     }
     return Scaffold(backgroundColor: Colors.black, body: stack);
@@ -1163,12 +1191,26 @@ class _LayerModeState extends State<LayerMode> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _addImage,
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.cyanAccent),
-                  child: const Text("Add Image",
-                      style: TextStyle(color: Colors.black)),
+                Column(
+                  children: [
+                    ElevatedButton(
+                      onPressed: _addImage,
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.cyanAccent),
+                      child: const Text("Add Image",
+                          style: TextStyle(color: Colors.black)),
+                    ),
+                    const SizedBox(height: 6),
+                    ElevatedButton(
+                      onPressed: _uploadImageFromDevice,
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.amberAccent),
+                      child: const Text(
+                        "Upload",
+                        style: TextStyle(color: Colors.black),
+                      ),
+                    ),
+                  ],
                 ),
               ]),
             ),
