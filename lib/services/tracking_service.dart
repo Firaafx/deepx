@@ -49,6 +49,8 @@ class TrackingService {
       iframe.id = 'global-tracker-iframe';
       iframe.src = 'assets/tracker.html?global=1&headless=1';
       iframe.style.setProperty('border', 'none');
+      iframe.style.setProperty('width', '100%');
+      iframe.style.setProperty('height', '100%');
       iframe.allow = 'camera *; microphone *; fullscreen *';
       return iframe;
     });
@@ -219,10 +221,10 @@ class TrackingService {
         final Color color = frame.wink || frame.pinch
             ? const Color(0xFF38BDF8)
             : const Color(0xFFF8FAFC);
-        return IgnorePointer(
-          child: Positioned(
-            left: frame.cursorX - 10,
-            top: frame.cursorY - 10,
+        return Positioned(
+          left: frame.cursorX - 10,
+          top: frame.cursorY - 10,
+          child: IgnorePointer(
             child: Container(
               width: 20,
               height: 20,
@@ -244,14 +246,13 @@ class TrackingService {
       },
     );
 
-    final trackerHost = IgnorePointer(
-      ignoring: !_trackerUiVisible,
-      child: Positioned(
-        left: _trackerUiVisible ? 0 : -10000,
-        top: _trackerUiVisible ? 0 : -10000,
-        width: _trackerUiVisible ? html.window.innerWidth?.toDouble() ?? 0 : 1,
-        height:
-            _trackerUiVisible ? html.window.innerHeight?.toDouble() ?? 0 : 1,
+    final trackerHost = Positioned(
+      left: _trackerUiVisible ? 0 : -10000,
+      top: _trackerUiVisible ? 0 : -10000,
+      width: _trackerUiVisible ? html.window.innerWidth?.toDouble() ?? 1 : 1,
+      height: _trackerUiVisible ? html.window.innerHeight?.toDouble() ?? 1 : 1,
+      child: IgnorePointer(
+        ignoring: !_trackerUiVisible,
         child: HtmlElementView(viewType: _viewId),
       ),
     );
