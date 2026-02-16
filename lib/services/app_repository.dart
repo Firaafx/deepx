@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/app_user_profile.dart';
 import '../models/chat_models.dart';
+import '../models/collection_models.dart';
 import '../models/feed_post.dart';
 import '../models/preset_comment.dart';
 import '../models/profile_stats.dart';
@@ -28,7 +29,24 @@ class AppRepository {
     required String email,
     required String password,
   }) {
-    return _client.auth.signUp(email: email, password: password);
+    return _client.auth.signUp(
+      email: email,
+      password: password,
+      emailRedirectTo: '${Uri.base.origin}/',
+    );
+  }
+
+  Future<AuthResponse> verifySignUpOtp({
+    required String email,
+    required String token,
+  }) async {
+    final response = await _client.auth.verifyOTP(
+      email: email,
+      token: token,
+      type: OtpType.signup,
+    );
+    await ensureCurrentProfile();
+    return response;
   }
 
   Future<AuthResponse> signIn({
@@ -61,6 +79,7 @@ class AppRepository {
           'user_id': user.id,
           'email': user.email ?? '',
           'bio': '',
+          'onboarding_completed': false,
         },
         onConflict: 'user_id',
       );
@@ -72,8 +91,15 @@ class AppRepository {
     }
 
     await _client.from('user_settings').upsert(
-      <String, dynamic>{'user_id': user.id},
+      <String, dynamic>{
+        'user_id': user.id,
+        'theme_mode': 'dark',
+        'tracker_enabled': true,
+        'tracker_ui_visible': false,
+      },
       onConflict: 'user_id',
+      ignoreDuplicates: true,
+      defaultToNull: false,
     );
 
     if (row == null) return null;
@@ -96,11 +122,28 @@ class AppRepository {
     return AppUserProfile.fromMap(row);
   }
 
-  Future<void> updateCurrentProfile({
+  Future<bool> isUsernameAvailable(String rawUsername) async {
+    final user = currentUser;
+    if (user == null) return false;
+
+    final username = rawUsername.trim().toLowerCase();
+    if (username.length < 3) return false;
+
+    final row = await _client
+        .from('profiles')
+        .select('user_id')
+        .eq('username', username)
+        .maybeSingle();
+
+    if (row == null) return true;
+    return row['user_id']?.toString() == user.id;
+  }
+
+  Future<void> completeOnboarding({
     required String username,
-    required String fullName,
-    required String bio,
-    String? avatarUrl,
+    required String gender,
+    required DateTime birthDate,
+    String? fullName,
   }) async {
     final user = currentUser;
     if (user == null) return;
@@ -108,12 +151,54 @@ class AppRepository {
     await _client.from('profiles').update(
       <String, dynamic>{
         'email': user.email ?? '',
-        'username': username.trim().isEmpty ? null : username.trim(),
-        'full_name': fullName.trim().isEmpty ? null : fullName.trim(),
-        'bio': bio.trim(),
-        if (avatarUrl != null) 'avatar_url': avatarUrl,
+        'username': username.trim().toLowerCase(),
+        'full_name': fullName?.trim().isEmpty == true ? null : fullName?.trim(),
+        'gender': gender,
+        'birth_date': birthDate.toIso8601String().split('T').first,
+        'onboarding_completed': true,
       },
     ).eq('user_id', user.id);
+  }
+
+  Future<void> updateCurrentProfile({
+    String? username,
+    String? fullName,
+    String? bio,
+    String? avatarUrl,
+    String? gender,
+    DateTime? birthDate,
+    bool? onboardingCompleted,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+
+    final Map<String, dynamic> values = <String, dynamic>{
+      'email': user.email ?? '',
+    };
+
+    if (username != null) {
+      values['username'] = username.trim().isEmpty ? null : username.trim();
+    }
+    if (fullName != null) {
+      values['full_name'] = fullName.trim().isEmpty ? null : fullName.trim();
+    }
+    if (bio != null) {
+      values['bio'] = bio.trim();
+    }
+    if (avatarUrl != null) {
+      values['avatar_url'] = avatarUrl;
+    }
+    if (gender != null) {
+      values['gender'] = gender;
+    }
+    if (birthDate != null) {
+      values['birth_date'] = birthDate.toIso8601String().split('T').first;
+    }
+    if (onboardingCompleted != null) {
+      values['onboarding_completed'] = onboardingCompleted;
+    }
+
+    await _client.from('profiles').update(values).eq('user_id', user.id);
   }
 
   Future<List<AppUserProfile>> searchProfiles(
@@ -811,6 +896,188 @@ class AppRepository {
     return chatId;
   }
 
+  Future<List<CollectionSummary>> fetchPublishedCollections({
+    int limit = 120,
+  }) async {
+    final List<dynamic> rows = await _client
+        .from('collections')
+        .select('*')
+        .eq('published', true)
+        .order('updated_at', ascending: false)
+        .limit(limit);
+    return _hydrateCollectionSummaries(rows);
+  }
+
+  Future<List<CollectionSummary>> fetchCollectionsForCurrentUser() async {
+    final user = currentUser;
+    if (user == null) return const <CollectionSummary>[];
+
+    final List<dynamic> rows = await _client
+        .from('collections')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('updated_at', ascending: false);
+    return _hydrateCollectionSummaries(rows);
+  }
+
+  Future<CollectionDetail?> fetchCollectionById(String collectionId) async {
+    final row = await _client
+        .from('collections')
+        .select('*')
+        .eq('id', collectionId)
+        .maybeSingle();
+    if (row == null) return null;
+
+    final List<dynamic> itemRows = await _client
+        .from('collection_items')
+        .select('*')
+        .eq('collection_id', collectionId)
+        .order('position', ascending: true);
+
+    final profile = await fetchProfileById(row['user_id'].toString());
+    final items = itemRows
+        .map((dynamic e) =>
+            CollectionItemSnapshot.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList();
+
+    return CollectionDetail(
+      summary: CollectionSummary(
+        id: row['id'].toString(),
+        userId: row['user_id'].toString(),
+        name: row['name']?.toString() ?? 'Untitled collection',
+        description: row['description']?.toString() ?? '',
+        published: row['published'] == true,
+        itemsCount: items.length,
+        createdAt: DateTime.tryParse(row['created_at']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        firstItem: items.isEmpty ? null : items.first,
+        author: profile,
+      ),
+      items: items,
+    );
+  }
+
+  Future<String> saveCollectionWithItems({
+    String? collectionId,
+    required String name,
+    String description = '',
+    required bool publish,
+    required List<CollectionDraftItem> items,
+  }) async {
+    final user = currentUser;
+    if (user == null) throw Exception('Not authenticated');
+    if (items.isEmpty) throw Exception('Collection needs at least one preset.');
+
+    String id = collectionId ?? '';
+
+    if (id.isEmpty) {
+      final inserted = await _client
+          .from('collections')
+          .insert(
+            <String, dynamic>{
+              'user_id': user.id,
+              'name': name.trim().isEmpty ? 'Untitled collection' : name.trim(),
+              'description': description,
+              'published': publish,
+            },
+          )
+          .select('*')
+          .single();
+      id = inserted['id'].toString();
+    } else {
+      await _client.from('collections').update(
+        <String, dynamic>{
+          'name': name.trim().isEmpty ? 'Untitled collection' : name.trim(),
+          'description': description,
+          'published': publish,
+        },
+      ).eq('id', id).eq('user_id', user.id);
+
+      await _client.from('collection_items').delete().eq('collection_id', id);
+    }
+
+    final rows = <Map<String, dynamic>>[];
+    for (int i = 0; i < items.length; i++) {
+      rows.add(
+        <String, dynamic>{
+          'collection_id': id,
+          'position': i,
+          'mode': items[i].mode,
+          'preset_name': items[i].name,
+          'preset_snapshot': items[i].snapshot,
+        },
+      );
+    }
+    await _client.from('collection_items').insert(rows);
+    return id;
+  }
+
+  Future<void> deleteCollection(String collectionId) async {
+    final user = currentUser;
+    if (user == null) return;
+    await _client
+        .from('collections')
+        .delete()
+        .eq('id', collectionId)
+        .eq('user_id', user.id);
+  }
+
+  Future<List<CollectionSummary>> _hydrateCollectionSummaries(
+    List<dynamic> rows,
+  ) async {
+    if (rows.isEmpty) return const <CollectionSummary>[];
+
+    final collectionIds = rows
+        .map((dynamic e) => (e as Map)['id']?.toString() ?? '')
+        .where((String id) => id.isNotEmpty)
+        .toList();
+    final userIds = rows
+        .map((dynamic e) => (e as Map)['user_id']?.toString() ?? '')
+        .where((String id) => id.isNotEmpty)
+        .toSet();
+
+    final profileById = await _fetchProfilesByIds(userIds);
+
+    final List<dynamic> itemRows = await _client
+        .from('collection_items')
+        .select('*')
+        .inFilter('collection_id', collectionIds)
+        .order('position', ascending: true);
+
+    final Map<String, List<CollectionItemSnapshot>> itemsByCollection =
+        <String, List<CollectionItemSnapshot>>{};
+    for (final dynamic raw in itemRows) {
+      final map = Map<String, dynamic>.from(raw as Map);
+      final String collectionId = map['collection_id']?.toString() ?? '';
+      if (collectionId.isEmpty) continue;
+      itemsByCollection
+          .putIfAbsent(collectionId, () => <CollectionItemSnapshot>[])
+          .add(CollectionItemSnapshot.fromMap(map));
+    }
+
+    return rows.map((dynamic raw) {
+      final map = Map<String, dynamic>.from(raw as Map);
+      final id = map['id']?.toString() ?? '';
+      final items = itemsByCollection[id] ?? const <CollectionItemSnapshot>[];
+      return CollectionSummary(
+        id: id,
+        userId: map['user_id']?.toString() ?? '',
+        name: map['name']?.toString() ?? 'Untitled collection',
+        description: map['description']?.toString() ?? '',
+        published: map['published'] == true,
+        itemsCount: items.length,
+        createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        updatedAt: DateTime.tryParse(map['updated_at']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        firstItem: items.isEmpty ? null : items.first,
+        author: profileById[map['user_id']?.toString() ?? ''],
+      );
+    }).toList();
+  }
+
   Future<String> fetchThemeModeForCurrentUser() async {
     final user = currentUser;
     if (user == null) return 'dark';
@@ -844,7 +1111,51 @@ class AppRepository {
         'theme_mode': normalized,
       },
       onConflict: 'user_id',
+      defaultToNull: false,
     );
+  }
+
+  Future<Map<String, bool>> fetchTrackerPreferencesForCurrentUser() async {
+    final user = currentUser;
+    if (user == null) {
+      return <String, bool>{
+        'trackerEnabled': true,
+        'trackerUiVisible': false,
+      };
+    }
+
+    final row = await _client
+        .from('user_settings')
+        .select('tracker_enabled,tracker_ui_visible')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+    return <String, bool>{
+      'trackerEnabled': row?['tracker_enabled'] != false,
+      'trackerUiVisible': row?['tracker_ui_visible'] == true,
+    };
+  }
+
+  Future<void> updateTrackerPreferencesForCurrentUser({
+    bool? trackerEnabled,
+    bool? trackerUiVisible,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+
+    final values = <String, dynamic>{'user_id': user.id};
+    if (trackerEnabled != null) {
+      values['tracker_enabled'] = trackerEnabled;
+    }
+    if (trackerUiVisible != null) {
+      values['tracker_ui_visible'] = trackerUiVisible;
+    }
+
+    await _client.from('user_settings').upsert(
+          values,
+          onConflict: 'user_id',
+          defaultToNull: false,
+        );
   }
 
   Future<String> uploadAssetBytes({
@@ -856,24 +1167,34 @@ class AppRepository {
   }) async {
     final user = currentUser;
     if (user == null) {
-      throw Exception('Not authenticated.');
+      throw Exception('Upload failed: not authenticated.');
+    }
+    if (bytes.isEmpty) {
+      throw Exception('Upload failed: selected file is empty.');
     }
 
     final String safeName = _sanitizeFileName(fileName);
     final String path =
         '${user.id}/$folder/${DateTime.now().millisecondsSinceEpoch}_$safeName';
 
-    await _client.storage.from(bucket).uploadBinary(
-          path,
-          bytes,
-          fileOptions: FileOptions(
-            upsert: true,
-            contentType:
-                contentType.isEmpty ? 'application/octet-stream' : contentType,
-          ),
-        );
-
-    return _client.storage.from(bucket).getPublicUrl(path);
+    try {
+      await _client.storage.from(bucket).uploadBinary(
+            path,
+            bytes,
+            fileOptions: FileOptions(
+              upsert: true,
+              contentType:
+                  contentType.isEmpty ? 'application/octet-stream' : contentType,
+            ),
+          );
+      return _client.storage.from(bucket).getPublicUrl(path);
+    } on StorageException catch (e) {
+      throw Exception('Upload failed in storage: ${e.message}');
+    } on PostgrestException catch (e) {
+      throw Exception('Upload failed by database policy: ${e.message}');
+    } catch (e) {
+      throw Exception('Upload failed: $e');
+    }
   }
 
   Future<String> uploadProfileAvatar({

@@ -7,6 +7,7 @@ import 'auth.dart';
 import 'engine3d.dart';
 import 'layer_mode.dart';
 import 'services/app_repository.dart';
+import 'services/tracking_service.dart';
 import 'show_feed.dart';
 import 'supabase_config.dart';
 
@@ -33,14 +34,17 @@ class _MyAppState extends State<MyApp> {
 
   String _themeMode = 'dark';
   StreamSubscription<AuthState>? _authSub;
+  bool _trackerReady = false;
 
   @override
   void initState() {
     super.initState();
+    _initTracking();
     if (SupabaseConfig.isConfigured) {
       _loadThemeMode();
       _authSub = _repository.authChanges.listen((_) {
         _loadThemeMode();
+        TrackingService.instance.refreshPreferences();
       });
     }
   }
@@ -63,6 +67,12 @@ class _MyAppState extends State<MyApp> {
     setState(() => _themeMode = mode);
   }
 
+  Future<void> _initTracking() async {
+    await TrackingService.instance.initialize();
+    if (!mounted) return;
+    setState(() => _trackerReady = true);
+  }
+
   ThemeMode get _resolvedTheme {
     switch (_themeMode) {
       case 'light':
@@ -83,7 +93,19 @@ class _MyAppState extends State<MyApp> {
       theme: ThemeData(
         brightness: Brightness.light,
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF006E90)),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0A6FB7),
+          brightness: Brightness.light,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF3F6FB),
+        cardColor: Colors.white,
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
       ),
       darkTheme: ThemeData(
         brightness: Brightness.dark,
@@ -92,9 +114,22 @@ class _MyAppState extends State<MyApp> {
           brightness: Brightness.dark,
           seedColor: const Color(0xFF00B8D4),
         ),
-        scaffoldBackgroundColor: Colors.black,
+        scaffoldBackgroundColor: const Color(0xFF060A10),
+        cardColor: const Color(0xFF111824),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFF111824),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
       ),
       initialRoute: SupabaseConfig.isConfigured ? '/auth' : '/config',
+      builder: (context, child) {
+        final safeChild = child ?? const SizedBox.shrink();
+        if (!_trackerReady) return safeChild;
+        return TrackingService.instance.buildGlobalOverlay(child: safeChild);
+      },
       routes: {
         '/auth': (context) => const AuthPage(),
         '/feed': (context) => ShowFeedPage(

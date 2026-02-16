@@ -6,6 +6,9 @@ class AppUserProfile {
     this.fullName,
     this.avatarUrl,
     required this.bio,
+    this.gender,
+    this.birthDate,
+    required this.onboardingCompleted,
   });
 
   final String userId;
@@ -14,6 +17,9 @@ class AppUserProfile {
   final String? fullName;
   final String? avatarUrl;
   final String bio;
+  final String? gender;
+  final DateTime? birthDate;
+  final bool onboardingCompleted;
 
   String get displayName {
     final String full = (fullName ?? '').trim();
@@ -32,6 +38,11 @@ class AppUserProfile {
       fullName: map['full_name']?.toString(),
       avatarUrl: map['avatar_url']?.toString(),
       bio: map['bio']?.toString() ?? '',
+      gender: map['gender']?.toString(),
+      birthDate: map['birth_date'] == null
+          ? null
+          : DateTime.tryParse(map['birth_date'].toString()),
+      onboardingCompleted: map['onboarding_completed'] == true,
     );
   }
 
@@ -43,6 +54,9 @@ class AppUserProfile {
       'full_name': fullName,
       'avatar_url': avatarUrl,
       'bio': bio,
+      'gender': gender,
+      'birth_date': birthDate?.toIso8601String(),
+      'onboarding_completed': onboardingCompleted,
     };
   }
 }

@@ -1,5 +1,6 @@
 // ignore_for_file: avoid_web_libraries_in_flutter,deprecated_member_use
 
+import 'dart:async';
 import 'dart:html' as html;
 import 'dart:typed_data';
 
@@ -27,7 +28,11 @@ Future<PickedDeviceFile?> pickDeviceFile({
     ..multiple = false;
 
   input.click();
-  await input.onChange.first;
+  try {
+    await input.onChange.first.timeout(const Duration(seconds: 45));
+  } on TimeoutException {
+    return null;
+  }
 
   final html.File? file = (input.files != null && input.files!.isNotEmpty)
       ? input.files!.first
@@ -36,7 +41,7 @@ Future<PickedDeviceFile?> pickDeviceFile({
 
   final html.FileReader reader = html.FileReader();
   reader.readAsArrayBuffer(file);
-  await reader.onLoadEnd.first;
+  await reader.onLoadEnd.first.timeout(const Duration(seconds: 45));
 
   final Object? result = reader.result;
   if (result is! ByteBuffer) return null;

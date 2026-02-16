@@ -6,6 +6,7 @@ import 'package:web/web.dart' as web;
 import 'dart:ui_web' as ui_web;
 import 'dart:js_interop';
 
+import 'models/preset_payload_v2.dart';
 import 'services/app_repository.dart';
 import 'services/web_file_upload.dart';
 
@@ -15,15 +16,21 @@ class Engine3DPage extends StatefulWidget {
     this.initialPresetPayload,
     this.cleanView = false,
     this.embedded = false,
+    this.embeddedStudio = false,
+    this.persistPresets = true,
     this.disableAudio = false,
     this.externalHeadPose,
+    this.onPresetSaved,
   });
 
   final Map<String, dynamic>? initialPresetPayload;
   final bool cleanView;
   final bool embedded;
+  final bool embeddedStudio;
+  final bool persistPresets;
   final bool disableAudio;
   final Map<String, double>? externalHeadPose;
+  final void Function(String name, Map<String, dynamic> payload)? onPresetSaved;
 
   @override
   State<Engine3DPage> createState() => _Engine3DPageState();
@@ -1568,6 +1575,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
             });
             if (!widget.cleanView) _queueSaveModeState();
           } else if (type == 'switch_2d') {
+            if (!mounted) return;
             Navigator.pushReplacementNamed(context, '/2d');
           } else if (type == 'engine_ready') {
             _iframeReady = true;
@@ -1635,10 +1643,17 @@ class _Engine3DPageState extends State<Engine3DPage> {
     }
   }
 
+  PresetPayloadV2? _adaptPresetPayload(Map<String, dynamic>? payload) {
+    if (payload == null) return null;
+    return PresetPayloadV2.fromMap(payload, fallbackMode: '3d');
+  }
+
   Future<void> _bootstrap() async {
     if (widget.cleanView) {
-      if (widget.initialPresetPayload != null) {
-        _modeState['sceneState'] = widget.initialPresetPayload;
+      final adapted = _adaptPresetPayload(widget.initialPresetPayload);
+      if (adapted != null) {
+        _modeState['sceneState'] = adapted.scene;
+        _modeState['presetControls'] = adapted.controls;
       }
       return;
     }
@@ -1661,18 +1676,24 @@ class _Engine3DPageState extends State<Engine3DPage> {
       debugPrint('Failed to load 3D mode state: $e');
     }
 
-    if (widget.initialPresetPayload != null) {
-      _modeState['sceneState'] = widget.initialPresetPayload;
+    final adaptedInitial = _adaptPresetPayload(widget.initialPresetPayload);
+    if (adaptedInitial != null) {
+      _modeState['sceneState'] = adaptedInitial.scene;
+      _modeState['presetControls'] = adaptedInitial.controls;
     }
 
-    try {
-      final items = await _repository.fetchUserPresets(mode: '3d');
-      presets.clear();
-      for (final item in items) {
-        presets[item.name] = item.payload;
+    if (widget.persistPresets) {
+      try {
+        final items = await _repository.fetchUserPresets(mode: '3d');
+        presets.clear();
+        for (final item in items) {
+          final adapted =
+              PresetPayloadV2.fromMap(item.payload, fallbackMode: '3d');
+          presets[item.name] = adapted.scene;
+        }
+      } catch (e) {
+        debugPrint('Failed to load 3D presets: $e');
       }
-    } catch (e) {
-      debugPrint('Failed to load 3D presets: $e');
     }
 
     _hydrateEngine();
@@ -1695,12 +1716,15 @@ class _Engine3DPageState extends State<Engine3DPage> {
     if (key == 'show-tracker') {
       setState(() => showTracker = value.toString() == 'true');
     }
-    if (key == 'dz-x')
+    if (key == 'dz-x') {
       deadZoneX = double.tryParse(value.toString()) ?? deadZoneX;
-    if (key == 'dz-y')
+    }
+    if (key == 'dz-y') {
       deadZoneY = double.tryParse(value.toString()) ?? deadZoneY;
-    if (key == 'dz-z')
+    }
+    if (key == 'dz-z') {
       deadZoneZ = double.tryParse(value.toString()) ?? deadZoneZ;
+    }
     if (key == 'dz-yaw') {
       deadZoneYaw = double.tryParse(value.toString()) ?? deadZoneYaw;
     }
@@ -1742,9 +1766,23 @@ class _Engine3DPageState extends State<Engine3DPage> {
         ? stateData
         : Map<String, dynamic>.from(stateData);
 
-    await _repository.savePreset(mode: '3d', name: name, payload: state);
+    final payload = PresetPayloadV2(
+      mode: '3d',
+      scene: state,
+      controls: ((_modeState['settings'] as Map?)?.cast<String, dynamic>()) ??
+          <String, dynamic>{},
+      meta: <String, dynamic>{
+        'savedAt': DateTime.now().toUtc().toIso8601String(),
+        'editor': 'engine3d',
+      },
+    ).toMap();
+
+    if (widget.persistPresets) {
+      await _repository.savePreset(mode: '3d', name: name, payload: payload);
+    }
     presets[name] = state;
     currentPresetName = name;
+    widget.onPresetSaved?.call(name, payload);
     _postToEngine(<String, dynamic>{
       'type': 'hydrate_engine',
       'settings': _modeState['settings'] ?? <String, dynamic>{},
@@ -1825,14 +1863,14 @@ class _Engine3DPageState extends State<Engine3DPage> {
     final Map<String, dynamic> settings =
         ((_modeState['settings'] as Map?)?.cast<String, dynamic>()) ??
             <String, dynamic>{};
-    Map<String, dynamic>? sceneState;
-    final dynamic rawScene =
-        widget.initialPresetPayload ?? _modeState['sceneState'];
-    if (rawScene is Map<String, dynamic>) {
-      sceneState = rawScene;
-    } else if (rawScene is Map) {
-      sceneState = Map<String, dynamic>.from(rawScene);
+    final adaptedInitial = _adaptPresetPayload(widget.initialPresetPayload);
+    if (adaptedInitial != null && adaptedInitial.controls.isNotEmpty) {
+      settings.addAll(adaptedInitial.controls);
     }
+    Map<String, dynamic>? sceneState;
+    final dynamic rawScene = adaptedInitial?.scene ?? _modeState['sceneState'];
+    if (rawScene is Map<String, dynamic>) sceneState = rawScene;
+    if (rawScene is Map) sceneState = Map<String, dynamic>.from(rawScene);
 
     _postToEngine(<String, dynamic>{
       'type': 'hydrate_engine',
@@ -1892,15 +1930,16 @@ class _Engine3DPageState extends State<Engine3DPage> {
           child: HtmlElementView(viewType: viewID),
         ),
         if (!widget.cleanView && widget.externalHeadPose == null)
-          Positioned(
-            left: showTracker ? 0 : -300.0,
-            top: showTracker ? 0 : -300.0,
-            right: showTracker ? 0 : null,
-            bottom: showTracker ? 0 : null,
-            child: SizedBox(
-              width: showTracker ? MediaQuery.of(context).size.width : 240.0,
-              height: showTracker ? MediaQuery.of(context).size.height : 240.0,
-              child: HtmlElementView(viewType: trackerViewID),
+          IgnorePointer(
+            ignoring: !showTracker,
+            child: Positioned(
+              left: showTracker ? 0 : -10000.0,
+              top: showTracker ? 0 : -10000.0,
+              child: SizedBox(
+                width: showTracker ? MediaQuery.of(context).size.width : 1.0,
+                height: showTracker ? MediaQuery.of(context).size.height : 1.0,
+                child: HtmlElementView(viewType: trackerViewID),
+              ),
             ),
           ),
         if (!widget.cleanView && !widget.embedded)
@@ -1935,7 +1974,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
               ],
             ),
           ),
-        if (!widget.cleanView)
+        if (!widget.cleanView && !widget.embeddedStudio)
           Positioned(
             top: 16,
             left: 16,

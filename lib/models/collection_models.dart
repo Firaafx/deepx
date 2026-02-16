@@ -1,0 +1,95 @@
+import 'app_user_profile.dart';
+
+class CollectionItemSnapshot {
+  CollectionItemSnapshot({
+    required this.id,
+    required this.mode,
+    required this.name,
+    required this.position,
+    required this.snapshot,
+  });
+
+  final String id;
+  final String mode;
+  final String name;
+  final int position;
+  final Map<String, dynamic> snapshot;
+
+  factory CollectionItemSnapshot.fromMap(Map<String, dynamic> map) {
+    return CollectionItemSnapshot(
+      id: map['id']?.toString() ?? '',
+      mode: map['mode']?.toString() ?? '2d',
+      name: map['preset_name']?.toString() ?? 'Untitled preset',
+      position: _toInt(map['position']),
+      snapshot: map['preset_snapshot'] is Map
+          ? Map<String, dynamic>.from(map['preset_snapshot'] as Map)
+          : <String, dynamic>{},
+    );
+  }
+}
+
+class CollectionSummary {
+  CollectionSummary({
+    required this.id,
+    required this.userId,
+    required this.name,
+    required this.description,
+    required this.published,
+    required this.itemsCount,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.firstItem,
+    required this.author,
+  });
+
+  final String id;
+  final String userId;
+  final String name;
+  final String description;
+  final bool published;
+  final int itemsCount;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final CollectionItemSnapshot? firstItem;
+  final AppUserProfile? author;
+}
+
+class CollectionDetail {
+  CollectionDetail({
+    required this.summary,
+    required this.items,
+  });
+
+  final CollectionSummary summary;
+  final List<CollectionItemSnapshot> items;
+}
+
+class CollectionDraftItem {
+  CollectionDraftItem({
+    required this.mode,
+    required this.name,
+    required this.snapshot,
+  });
+
+  final String mode;
+  final String name;
+  final Map<String, dynamic> snapshot;
+
+  CollectionDraftItem copyWith({
+    String? mode,
+    String? name,
+    Map<String, dynamic>? snapshot,
+  }) {
+    return CollectionDraftItem(
+      mode: mode ?? this.mode,
+      name: name ?? this.name,
+      snapshot: snapshot ?? this.snapshot,
+    );
+  }
+}
+
+int _toInt(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}

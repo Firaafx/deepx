@@ -15,6 +15,7 @@ dependencies:
   supabase_flutter: ^2.10.3
   url_launcher: ^6.3.2
   url_launcher_web: ^2.4.2
+  swipable_stack: ^2.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

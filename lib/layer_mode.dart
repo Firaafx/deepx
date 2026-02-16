@@ -10,6 +10,7 @@ import 'package:web/web.dart' as web;
 import 'dart:ui_web' as ui_web;
 import 'dart:js_interop';
 
+import 'models/preset_payload_v2.dart';
 import 'services/app_repository.dart';
 import 'services/web_file_upload.dart';
 
@@ -193,12 +194,18 @@ class LayerMode extends StatefulWidget {
     this.cleanView = false,
     this.externalHeadPose,
     this.embedded = false,
+    this.embeddedStudio = false,
+    this.persistPresets = true,
+    this.onPresetSaved,
   });
   final double? width, height;
   final Map<String, dynamic>? initialPresetPayload;
   final bool cleanView;
   final Map<String, double>? externalHeadPose;
   final bool embedded;
+  final bool embeddedStudio;
+  final bool persistPresets;
+  final void Function(String name, Map<String, dynamic> payload)? onPresetSaved;
   @override
   State<LayerMode> createState() => _LayerModeState();
 }
@@ -257,8 +264,6 @@ class _LayerModeState extends State<LayerMode> {
   Map<String, String> presets = {}; // name -> json string
   TextEditingController urlController = TextEditingController();
   TextEditingController presetNameController = TextEditingController();
-  final String manualSaveJson =
-      '{"background.jpg":{"x":0,"y":0,"scale":0.4,"order":0,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/background.jpg","name":"background.jpg"},"sun_rays-min.png":{"x":269,"y":33,"scale":0.88,"order":15,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":false,"canZoom":false,"canTilt":false,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/sun_rays-min.png","name":"sun_rays-min.png"},"mountain_10-min.png":{"x":189,"y":124,"scale":0.64,"order":1,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_10-min.png","name":"mountain_10-min.png"},"mountain_9-min.png":{"x":-251,"y":283,"scale":0.76,"order":4,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_9-min.png","name":"mountain_9-min.png"},"mountain_8-min.png":{"x":-38,"y":204,"scale":0.52,"order":3,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_8-min.png","name":"mountain_8-min.png"},"mountain_7-min.png":{"x":928,"y":212,"scale":0.52,"order":5,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_7-min.png","name":"mountain_7-min.png"},"mountain_6-min.png":{"x":-867,"y":209,"scale":0.52,"order":9,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_6-min.png","name":"mountain_6-min.png"},"mountain_5-min.png":{"x":22,"y":238,"scale":0.64,"order":7,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_5-min.png","name":"mountain_5-min.png"},"mountain_4-min.png":{"x":414,"y":277,"scale":0.52,"order":8,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_4-min.png","name":"mountain_4-min.png"},"mountain_3-min.png":{"x":1330,"y":136,"scale":0.4,"order":18,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_3-min.png","name":"mountain_3-min.png"},"mountain_2-min.png":{"x":-519,"y":430,"scale":0.5270642201834863,"order":16,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_2-min.png","name":"mountain_2-min.png"},"mountain_1-min.png":{"x":-1404,"y":65,"scale":0.4,"order":20,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_1-min.png","name":"mountain_1-min.png"},"fog_7-min.png":{"x":0,"y":0,"scale":1,"order":10,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_7-min.png","name":"fog_7-min.png"},"fog_6-min.png":{"x":0,"y":0,"scale":1,"order":2,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_6-min.png","name":"fog_6-min.png"},"fog_5-min.png":{"x":556,"y":195,"scale":1,"order":11,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_5-min.png","name":"fog_5-min.png"},"fog_4-min.png":{"x":0,"y":0,"scale":1,"order":6,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_4-min.png","name":"fog_4-min.png"},"fog_3-min.png":{"x":-18,"y":88,"scale":1,"order":13,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_3-min.png","name":"fog_3-min.png"},"fog_2-min.png":{"x":0,"y":0,"scale":1,"order":19,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_2-min.png","name":"fog_2-min.png"},"fog_1-min.png":{"x":0,"y":0,"scale":1,"order":17,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_1-min.png","name":"fog_1-min.png"},"black_shadow-min.png":{"x":0,"y":0,"scale":1,"order":21,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":false,"canZoom":false,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/black_shadow-min.png","name":"black_shadow-min.png"},"Text_1766263666111_copy":{"x":400,"y":176,"scale":1.12,"order":12,"isVisible":true,"isLocked":false,"isText":true,"textValue":"Shanghai","fontSize":148.348623853211,"fontWeightIndex":3,"isItalic":false,"shadowBlur":50,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Pacifico","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":false,"canZoom":true,"canTilt":false,"shiftSensMult":1,"zoomSensMult":1,"url":null,"name":"Text_1766263666111_copy"}}';
   Timer? _debounceTimer;
   late String viewID;
   final AppRepository _repository = AppRepository.instance;
@@ -285,10 +290,18 @@ class _LayerModeState extends State<LayerMode> {
     }
   }
 
+  PresetPayloadV2? _adaptPresetPayload(Map<String, dynamic>? payload) {
+    if (payload == null) return null;
+    return PresetPayloadV2.fromMap(payload, fallbackMode: '2d');
+  }
+
   Future<void> _bootstrap() async {
     if (widget.cleanView) {
-      final Map<String, dynamic>? preset = widget.initialPresetPayload;
-      await _initLayers(savedMap: preset);
+      final adapted = _adaptPresetPayload(widget.initialPresetPayload);
+      if (adapted != null) {
+        _applyControlSettingsMap(adapted.controls);
+      }
+      await _initLayers(savedMap: adapted?.scene ?? widget.initialPresetPayload);
       return;
     }
 
@@ -307,8 +320,12 @@ class _LayerModeState extends State<LayerMode> {
     }
 
     final savedLayers = (modeState?['layers'] as Map?)?.cast<String, dynamic>();
+    final adaptedPreset = _adaptPresetPayload(widget.initialPresetPayload);
+    if (adaptedPreset != null) {
+      _applyControlSettingsMap(adaptedPreset.controls);
+    }
     await _initLayers(
-      savedMap: widget.initialPresetPayload ?? savedLayers,
+      savedMap: adaptedPreset?.scene ?? widget.initialPresetPayload ?? savedLayers,
     );
     await _loadPresets();
   }
@@ -461,10 +478,57 @@ class _LayerModeState extends State<LayerMode> {
     return <String, dynamic>{
       'selectedAspect': selectedAspect,
       'controls': _controlSettingsMap(),
-      'layers': <String, dynamic>{
-        for (final LayerConfig layer in layerConfigs) layer.name: layer.toMap(),
-      },
+      'layers': _buildSceneLayersMap(),
     };
+  }
+
+  Map<String, dynamic> _buildSceneLayersMap() {
+    return <String, dynamic>{
+      for (final LayerConfig layer in layerConfigs) layer.name: layer.toMap(),
+    };
+  }
+
+  Map<String, dynamic> _buildPresetPayload() {
+    return PresetPayloadV2(
+      mode: '2d',
+      scene: _buildSceneLayersMap(),
+      controls: <String, dynamic>{
+        ..._controlSettingsMap(),
+        'selectedAspect': selectedAspect,
+      },
+      meta: <String, dynamic>{
+        'savedAt': DateTime.now().toUtc().toIso8601String(),
+        'editor': 'layer_mode',
+      },
+    ).toMap();
+  }
+
+  void _applyPresetControls(Map<String, dynamic>? controls) {
+    if (controls == null) return;
+    _applyControlSettingsMap(controls);
+    final dynamic presetAspect = controls['selectedAspect'];
+    if (presetAspect == null) return;
+    final String value = presetAspect.toString();
+    if (value.isEmpty) return;
+    setState(() => selectedAspect = value);
+  }
+
+  Map<String, dynamic> _extractSceneMapFromPayload(Map<String, dynamic> payload) {
+    final adapted = PresetPayloadV2.fromMap(payload, fallbackMode: '2d');
+    _applyPresetControls(adapted.controls);
+    return adapted.scene;
+  }
+
+  Future<void> _loadFromPayload(Map<String, dynamic> payload,
+      {String? presetName}) async {
+    final scene = _extractSceneMapFromPayload(payload);
+    await _initLayers(savedMap: scene);
+    if (!mounted) return;
+    setState(() {
+      selectedLayerIndex = 0;
+      showPropPanel = false;
+      currentPresetName = presetName;
+    });
   }
 
   Future<void> _saveControlSettings() async {
@@ -513,7 +577,7 @@ class _LayerModeState extends State<LayerMode> {
   }
 
   Future<void> _loadPresets() async {
-    if (widget.cleanView) return;
+    if (widget.cleanView || !widget.persistPresets) return;
     final items = await _repository.fetchUserPresets(mode: '2d');
     final Map<String, String> loaded = <String, String>{};
     for (final item in items) {
@@ -524,54 +588,27 @@ class _LayerModeState extends State<LayerMode> {
   }
 
   Future<void> _initLayers({Map<String, dynamic>? savedMap}) async {
-    final Map<String, dynamic> safeSavedMap = savedMap ??
-        Map<String, dynamic>.from(jsonDecode(manualSaveJson) as Map);
-    List<LayerConfig> loaded = [];
-    final List<String> rawLayers = [
-      "background.jpg",
-      "sun_rays-min.png",
-      "mountain_10-min.png",
-      "mountain_9-min.png",
-      "mountain_8-min.png",
-      "mountain_7-min.png",
-      "mountain_6-min.png",
-      "mountain_5-min.png",
-      "mountain_4-min.png",
-      "mountain_3-min.png",
-      "mountain_2-min.png",
-      "mountain_1-min.png",
-      "fog_7-min.png",
-      "fog_6-min.png",
-      "fog_5-min.png",
-      "fog_4-min.png",
-      "fog_3-min.png",
-      "fog_2-min.png",
-      "fog_1-min.png",
-      "black_shadow-min.png"
-    ];
-    int defaultOrder = 0;
-    for (int i = 0; i < rawLayers.length; i++) {
-      String name = rawLayers[i];
-      String defaultUrl =
-          "https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/$name";
-      if (safeSavedMap.containsKey(name)) {
-        var cfgMap = safeSavedMap[name];
-        loaded.add(LayerConfig.fromMap(
-            cfgMap, cfgMap['url'] ?? defaultUrl, name, cfgMap['order'] ?? i));
-      } else {
-        loaded.add(LayerConfig(order: i, url: defaultUrl, name: name));
-      }
-      defaultOrder++;
+    final Map<String, dynamic> safeSavedMap = savedMap ?? <String, dynamic>{};
+    final List<LayerConfig> loaded = <LayerConfig>[];
+
+    int order = 0;
+    for (final entry in safeSavedMap.entries) {
+      final String key = entry.key;
+      final dynamic rawValue = entry.value;
+      if (rawValue is! Map) continue;
+      final Map<String, dynamic> value = rawValue.cast<String, dynamic>();
+      loaded.add(
+        LayerConfig.fromMap(
+          value,
+          value['url']?.toString(),
+          key,
+          value['order'] is num ? (value['order'] as num).toInt() : order,
+        ),
+      );
+      order++;
     }
-    // Add other layers from JSON (texts, bezels, etc.)
-    safeSavedMap.forEach((key, value) {
-      if (!rawLayers.contains(key) && !loaded.any((l) => l.name == key)) {
-        loaded.add(LayerConfig.fromMap(
-            value, value['url'], key, value['order'] ?? defaultOrder));
-        defaultOrder++;
-      }
-    });
-    // Add bezel layers if not exist
+
+    // Add structural layers if missing.
     if (!loaded.any((l) => l.name == 'top_bezel')) {
       loaded.add(LayerConfig(
         name: 'top_bezel',
@@ -610,7 +647,8 @@ class _LayerModeState extends State<LayerMode> {
       loaded.firstWhere((l) => l.name == 'turning_point').isLocked = true;
       loaded.firstWhere((l) => l.name == 'turning_point').isVisible = false;
     }
-    // Place turning_point in the middle order if not already positioned properly
+
+    // Place turning_point in middle depth and normalize ordering.
     if (loaded.any((l) => l.name == 'turning_point')) {
       var turning = loaded.firstWhere((l) => l.name == 'turning_point');
       loaded.remove(turning);
@@ -621,6 +659,7 @@ class _LayerModeState extends State<LayerMode> {
         loaded[i].order = i;
       }
     }
+
     int totalImages = 0;
     for (var config in loaded) {
       if (config.url != null) {
@@ -645,7 +684,9 @@ class _LayerModeState extends State<LayerMode> {
     if (totalImages == 0) {
       isLoaded = true;
     }
-    setState(() => layerConfigs = loaded);
+    if (mounted) {
+      setState(() => layerConfigs = loaded);
+    }
   }
 
   Future<void> _saveAllConfigs() async {
@@ -658,96 +699,25 @@ class _LayerModeState extends State<LayerMode> {
 
   Future<void> _savePreset(String name) async {
     if (name.isEmpty) return;
-    Map<String, dynamic> data = {for (var c in layerConfigs) c.name: c.toMap()};
-    String jsonStr = jsonEncode(data);
+    final Map<String, dynamic> payload = _buildPresetPayload();
+    final String jsonStr = jsonEncode(payload);
     setState(() {
       presets[name] = jsonStr;
       currentPresetName = name;
     });
-    if (!widget.cleanView) {
-      await _repository.savePreset(mode: '2d', name: name, payload: data);
+    if (!widget.cleanView && widget.persistPresets) {
+      await _repository.savePreset(mode: '2d', name: name, payload: payload);
       await _loadPresets();
     }
+    widget.onPresetSaved?.call(name, payload);
   }
 
   Future<void> _loadPreset(String name) async {
     if (!presets.containsKey(name)) return;
-    String jsonStr = presets[name]!;
-    Map<String, dynamic> savedMap = jsonDecode(jsonStr);
-    List<LayerConfig> loaded = [];
-    int defaultOrder = 0;
-    savedMap.forEach((key, value) {
-      loaded.add(LayerConfig.fromMap(value, value['url'], key, defaultOrder++));
-    });
-    // Ensure bezels and turning point are present
-    if (!loaded.any((l) => l.name == 'top_bezel')) {
-      loaded.add(LayerConfig(
-        name: 'top_bezel',
-        order: loaded.length,
-        isRect: true,
-        bezelType: 'top',
-        isVisible: true,
-        canShift: false,
-        canZoom: false,
-        canTilt: false,
-      ));
-    }
-    if (!loaded.any((l) => l.name == 'bottom_bezel')) {
-      loaded.add(LayerConfig(
-        name: 'bottom_bezel',
-        order: loaded.length,
-        isRect: true,
-        bezelType: 'bottom',
-        isVisible: true,
-        canShift: false,
-        canZoom: false,
-        canTilt: false,
-      ));
-    }
-    if (!loaded.any((l) => l.name == 'turning_point')) {
-      loaded.add(LayerConfig(
-        name: 'turning_point',
-        order: loaded.length,
-        isVisible: false,
-        isLocked: true,
-        canShift: false,
-        canZoom: false,
-        canTilt: false,
-      ));
-    }
-    // Re-order
-    loaded.sort((a, b) => a.order.compareTo(b.order));
-    setState(() {
-      layerConfigs = loaded;
-      selectedLayerIndex = 0;
-      showPropPanel = false;
-      currentPresetName = name;
-    });
-    // Precache images
-    imagesLoadedCount = 0;
-    isLoaded = false;
-    int total = 0;
-    for (var config in loaded) {
-      if (config.url != null) {
-        total++;
-        precacheImage(NetworkImage(config.url!), context).then((_) {
-          if (mounted) {
-            setState(() {
-              imagesLoadedCount++;
-              if (imagesLoadedCount >= total) isLoaded = true;
-            });
-          }
-        }).catchError((e) {
-          if (mounted) {
-            setState(() {
-              imagesLoadedCount++;
-              if (imagesLoadedCount >= total) isLoaded = true;
-            });
-          }
-        });
-      }
-    }
-    if (total == 0) isLoaded = true;
+    final String jsonStr = presets[name]!;
+    final Map<String, dynamic> payload =
+        Map<String, dynamic>.from(jsonDecode(jsonStr) as Map);
+    await _loadFromPayload(payload, presetName: name);
   }
 
   void _clearLayers() {
@@ -861,15 +831,16 @@ class _LayerModeState extends State<LayerMode> {
       children: [
         _buildLayersStack(),
         if (!widget.cleanView && widget.externalHeadPose == null)
-          Positioned(
-            left: showTracker ? 0 : -300.0,
-            top: showTracker ? 0 : -300.0,
-            right: showTracker ? 0 : null,
-            bottom: showTracker ? 0 : null,
-            child: SizedBox(
-              width: showTracker ? MediaQuery.of(context).size.width : 240.0,
-              height: showTracker ? MediaQuery.of(context).size.height : 240.0,
-              child: HtmlElementView(viewType: viewID),
+          IgnorePointer(
+            ignoring: !showTracker,
+            child: Positioned(
+              left: showTracker ? 0 : -10000.0,
+              top: showTracker ? 0 : -10000.0,
+              child: SizedBox(
+                width: showTracker ? MediaQuery.of(context).size.width : 1.0,
+                height: showTracker ? MediaQuery.of(context).size.height : 1.0,
+                child: HtmlElementView(viewType: viewID),
+              ),
             ),
           ),
         if (!widget.cleanView && !isClearMode)
@@ -1162,7 +1133,7 @@ class _LayerModeState extends State<LayerMode> {
           width: 320,
           height: 600,
           decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.9),
+              color: Colors.black.withValues(alpha: 0.9),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.cyanAccent, width: 0.5)),
           child: Column(children: [
@@ -1312,7 +1283,7 @@ class _LayerModeState extends State<LayerMode> {
       key: ValueKey(c.name),
       dense: true,
       selected: isSel,
-      selectedTileColor: Colors.cyanAccent.withOpacity(0.1),
+      selectedTileColor: Colors.cyanAccent.withValues(alpha: 0.1),
       leading: Icon(
           c.isText
               ? Icons.text_fields
@@ -1387,7 +1358,7 @@ class _LayerModeState extends State<LayerMode> {
           height: MediaQuery.of(context).size.height * 0.7,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.95),
+              color: Colors.black.withValues(alpha: 0.95),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.cyanAccent, width: 1)),
           child: SingleChildScrollView(
@@ -1539,7 +1510,7 @@ class _LayerModeState extends State<LayerMode> {
             height: MediaQuery.of(context).size.height * 0.7,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.85),
+                color: Colors.black.withValues(alpha: 0.85),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.white12)),
             child: SingleChildScrollView(

@@ -129,17 +129,77 @@ let handSlowY = 1.0;
 let handFastY = 10.0;
 let handTransY = 0.001;
 let uiVisible = true;
+const params = new URLSearchParams(window.location.search);
+const GLOBAL_TRACKER = params.get('global') === '1';
+let headlessMode = params.get('headless') === '1';
+let trackerRuntimeEnabled = true;
+let runtimeShowCursor = true;
 let lastWinkTime = 0;
 let lastPinchTime = 0;
 let doubleClickThreshold = 600; // Changed to 600ms
 let doubleDragThreshold = 300;
 let lastDoubleDragTime = 0;
 const inputSmooth = 0.7;
+
+function applyRuntimeVisibility() {
+    const showUi = uiVisible && !headlessMode;
+    const panelDisplay = showUi ? 'block' : 'none';
+    document.getElementById('tracker-panel').style.display = panelDisplay;
+    document.getElementById('ui-video-box').style.display = panelDisplay;
+    document.getElementById('client-panel').style.display = (isClient && showUi) ? 'block' : 'none';
+    document.getElementById('toggle-btns').style.display = showUi ? 'flex' : 'none';
+    document.getElementById('ui-text-canvas').style.display = showUi ? 'block' : 'none';
+    document.getElementById('timer-overlay').style.display = 'none';
+    document.getElementById('cal-dot').style.display = 'none';
+    if (cursor) {
+        cursor.style.display = showUi && runtimeShowCursor ? 'block' : 'none';
+    }
+}
+
+function applyTrackerConfig(config) {
+    if (!config || typeof config !== 'object') return;
+    if (typeof config.enabled === 'boolean') {
+        const toggle = document.getElementById('tracking-toggle');
+        const nextEnabled = config.enabled;
+        if (toggle && trackerRuntimeEnabled !== nextEnabled) {
+            toggle.checked = nextEnabled;
+            toggle.dispatchEvent(new Event('change'));
+        } else {
+            trackerRuntimeEnabled = nextEnabled;
+            if (toggle) toggle.checked = nextEnabled;
+        }
+    }
+    if (typeof config.uiVisible === 'boolean') {
+        uiVisible = config.uiVisible;
+    }
+    if (typeof config.showCursor === 'boolean') {
+        runtimeShowCursor = config.showCursor;
+    }
+    if (typeof config.headless === 'boolean') {
+        headlessMode = config.headless;
+    }
+    applyRuntimeVisibility();
+}
 async function init() {
     const urlParams = new URLSearchParams(window.parent.location.search);
     const mode = urlParams.get('mode');
     const remotePeerId = urlParams.get('peer');
     isClient = (mode === 'client');
+    if (GLOBAL_TRACKER) {
+        runtimeShowCursor = false;
+    }
+    if (headlessMode) {
+        uiVisible = false;
+    }
+    applyRuntimeVisibility();
+    window.addEventListener('message', (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'tracker_config') {
+                applyTrackerConfig(data);
+            }
+        } catch (_) {}
+    });
     faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`});
     hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`});
     setupDraggablePanel();
@@ -494,6 +554,9 @@ async function init() {
             }
         };
         document.getElementById('hide-tracker').onchange = (e) => {
+            headlessMode = e.target.checked;
+            uiVisible = !headlessMode;
+            applyRuntimeVisibility();
             if (e.target.checked) {
                 window.parent.postMessage(JSON.stringify({type: 'hide_tracker'}), '*');
             }
@@ -531,6 +594,7 @@ function connectToHost(remotePeerId) {
     });
 }
 function drawFaceDots(drawLm) {
+    if (headlessMode) return;
     const overlay = document.getElementById('face-dots-overlay');
     const oCtx = overlay.getContext('2d');
     const vidSize = overlay.width;
@@ -548,6 +612,7 @@ function drawFaceDots(drawLm) {
     }
 }
 function drawHandDots(lmArray) {
+    if (headlessMode) return;
     const overlay = document.getElementById('face-dots-overlay');
     const oCtx = overlay.getContext('2d');
     const vidSize = overlay.width;
@@ -880,7 +945,7 @@ function setupOnResults() {
             if (activeTracker !== 'face') return;
             oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
             if (!document.getElementById('tracking-toggle').checked) { cursor.style.display = 'none'; return; }
-            cursor.style.display = document.getElementById('show-cursor').checked ? 'block' : 'none';
+            cursor.style.display = (!headlessMode && runtimeShowCursor && document.getElementById('show-cursor').checked) ? 'block' : 'none';
             if (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) {
                 faceLm = results.multiFaceLandmarks[0];
                 processFace(faceLm);
@@ -957,14 +1022,8 @@ function updateTrackerTargets(lm) {
 }
 function toggleUI() {
     uiVisible = !uiVisible;
-    const display = uiVisible ? 'block' : 'none';
-    document.getElementById('tracker-panel').style.display = display;
-    document.getElementById('ui-video-box').style.display = display;
-    document.getElementById('client-panel').style.display = (isClient && uiVisible) ? 'block' : 'none';
-    document.getElementById('toggle-btns').style.display = display;
-    document.getElementById('ui-text-canvas').style.display = display;
-    document.getElementById('timer-overlay').style.display = 'none';
-    document.getElementById('cal-dot').style.display = 'none';
+    headlessMode = !uiVisible;
+    applyRuntimeVisibility();
 }
 function frameUpdate() {
     frameCount++;
@@ -1111,7 +1170,12 @@ function frameUpdate() {
         const centerY = smoothY;
         const finalX = Math.max(0, Math.min(window.innerWidth - cursorSize, centerX - halfSize));
         const finalY = Math.max(0, Math.min(window.innerHeight - cursorSize, centerY - halfSize));
-        cursor.style.transform = `translate3d(${finalX}px, ${finalY}px, 0)`;
+        if (!headlessMode && runtimeShowCursor) {
+            cursor.style.transform = `translate3d(${finalX}px, ${finalY}px, 0)`;
+            cursor.style.display = document.getElementById('show-cursor').checked ? 'block' : 'none';
+        } else {
+            cursor.style.display = 'none';
+        }
     }
     if (isMouseTracking && !isPaused) {
         currentFace.x = (mouseX / window.innerWidth - 0.5) * 2;
@@ -1410,13 +1474,18 @@ function frameUpdate() {
             indexY: currentHandIndexY,
             dx: currentHandDx,
             dy: currentHandDy
-        } : null
+        } : null,
+        cursor: {
+            x: smoothX,
+            y: smoothY
+        }
         // Add more as needed, e.g., ear, etc.
     };
     window.parent.postMessage(JSON.stringify(trackingData), '*');
     requestAnimationFrame(frameUpdate);
 }
 function drawHUD() {
+    if (headlessMode || !uiVisible) return;
     tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
     let stats = [
         `Neural Link: Active`,
@@ -1450,6 +1519,7 @@ function drawHUD() {
     stats.forEach((s, i) => tCtx.fillText(s, 275, 35 + (i * 15)));
 }
 function drawMouseHUD() {
+    if (headlessMode || !uiVisible) return;
     tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
     const z = anchorFace.z - mouseWheelZ;
     const stats = [
@@ -1470,6 +1540,20 @@ function drawMouseHUD() {
 }
 function setupTrackerEvents() {
     document.getElementById('toggle-tracker-ui').onclick = toggleUI;
+    document.getElementById('tracking-toggle').onchange = async (e) => {
+        trackerRuntimeEnabled = e.target.checked;
+        localStorage.setItem('tracking-toggle', trackerRuntimeEnabled);
+        if (trackerRuntimeEnabled) {
+            await updatePerformanceSettings();
+        } else if (cameraSvc) {
+            await cameraSvc.stop();
+        }
+    };
+    document.getElementById('show-cursor').onchange = (e) => {
+        runtimeShowCursor = e.target.checked;
+        localStorage.setItem('show-cursor', runtimeShowCursor);
+        applyRuntimeVisibility();
+    };
     document.addEventListener('dblclick', (e) => {
         if (!uiVisible) toggleUI();
     });
