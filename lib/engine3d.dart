@@ -39,9 +39,15 @@ class Engine3DPage extends StatefulWidget {
 class _Engine3DPageState extends State<Engine3DPage> {
   late String viewID;
   late String trackerViewID;
+  late String _engineFrameElementId;
+  late String _trackerFrameElementId;
+  late String _bridgeChannel;
+  web.HTMLIFrameElement? _engineIframe;
+  web.HTMLIFrameElement? _trackerIframe;
   final StreamController<Map<String, dynamic>> _dataController =
       StreamController.broadcast();
   StreamSubscription? _messageSubscription;
+  StreamSubscription<Map<String, dynamic>>? _trackingDataSubscription;
   bool showTracker = false;
   String? currentPresetName;
   final Map<String, Map<String, dynamic>> presets = {};
@@ -50,6 +56,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
   Timer? _saveDebounce;
   bool _iframeReady = false;
   TextEditingController presetNameController = TextEditingController();
+  bool _uploadingAsset = false;
   double headX = 0, headY = 0, yaw = 0, pitch = 0, zValue = 0.2;
   double deadZoneX = 0.0,
       deadZoneY = 0.0,
@@ -60,9 +67,14 @@ class _Engine3DPageState extends State<Engine3DPage> {
   @override
   void initState() {
     super.initState();
+    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowUs = DateTime.now().microsecondsSinceEpoch;
+    viewID = 'cyber-engine-$nowMs';
+    trackerViewID = 'cyber-tracker-3d-$nowMs';
+    _engineFrameElementId = 'engine-iframe-$nowMs';
+    _trackerFrameElementId = 'engine-tracker-iframe-$nowMs';
+    _bridgeChannel = 'engine-bridge-$nowUs';
     _bootstrap();
-    viewID = 'cyber-engine-${DateTime.now().millisecondsSinceEpoch}';
-    trackerViewID = 'cyber-tracker-3d-${DateTime.now().millisecondsSinceEpoch}';
     String content = r'''
 <!DOCTYPE html>
 <html>
@@ -422,6 +434,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
         import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
         const CLEAN_VIEW = __CLEAN_VIEW__;
         const AUDIO_ENABLED = __AUDIO_ENABLED__;
+        const BRIDGE_CHANNEL = '__BRIDGE_CHANNEL__';
         // --- GLOBAL VARIABLES ---
         let scene, camera, renderer, bloomComposer, finalComposer, clock;
         let currentModels = [];
@@ -456,15 +469,35 @@ class _Engine3DPageState extends State<Engine3DPage> {
         let cameraMode = 'orbit';
         let presets = {};
         let currentPreset = null;
+        let disposed = false;
+        function emitToParent(payload) {
+            window.parent.postMessage(JSON.stringify({ ...payload, channel: BRIDGE_CHANNEL }), '*');
+        }
         function getStore(key) {
             return Object.prototype.hasOwnProperty.call(persistedSettings, key) ? persistedSettings[key] : null;
         }
         function setStore(key, value) {
             persistedSettings[key] = String(value);
-            window.parent.postMessage(JSON.stringify({ type: 'engine_setting', key, value: String(value) }), '*');
+            emitToParent({ type: 'engine_setting', key, value: String(value) });
         }
         function pushStateSnapshot() {
-            window.parent.postMessage(JSON.stringify({ type: 'engine_snapshot', state: getCurrentState() }), '*');
+            emitToParent({ type: 'engine_snapshot', state: getCurrentState() });
+        }
+        function disposeEngine() {
+            if (disposed) return;
+            disposed = true;
+            try {
+                if (renderer) {
+                    renderer.setAnimationLoop(null);
+                    renderer.dispose();
+                }
+            } catch (_) {}
+            try {
+                if (audioCtx && audioCtx.state !== 'closed') {
+                    audioCtx.close();
+                }
+            } catch (_) {}
+            emitToParent({ type: 'engine_disposed' });
         }
         // Target for orbit mode
         const orbitTarget = new THREE.Vector3(0, 0, 0);
@@ -533,7 +566,16 @@ class _Engine3DPageState extends State<Engine3DPage> {
             updateModelList();
             window.addEventListener('message', (event) => {
                 try {
-                    const data = JSON.parse(event.data);
+                    let data = event.data;
+                    if (typeof data === 'string') {
+                        data = JSON.parse(data);
+                    }
+                    if (!data || typeof data !== 'object') return;
+                    if (data.channel && data.channel !== BRIDGE_CHANNEL) return;
+                    if (data.type === 'dispose_engine') {
+                        disposeEngine();
+                        return;
+                    }
                     if (data.type === 'hydrate_engine') {
                         persistedSettings = data.settings || {};
                         presets = data.presets || {};
@@ -575,16 +617,21 @@ class _Engine3DPageState extends State<Engine3DPage> {
                         }
                         return;
                     }
-                    if (data.head) {
-                        headX = data.head.x;
-                        headY = data.head.y;
-                        zValue = data.head.z;
-                        yaw = data.head.yaw;
-                        pitch = data.head.pitch;
+                    if (data.head && typeof data.head === 'object') {
+                        const nextX = Number(data.head.x);
+                        const nextY = Number(data.head.y);
+                        const nextZ = Number(data.head.z);
+                        const nextYaw = Number(data.head.yaw);
+                        const nextPitch = Number(data.head.pitch);
+                        if (Number.isFinite(nextX)) headX = nextX;
+                        if (Number.isFinite(nextY)) headY = nextY;
+                        if (Number.isFinite(nextZ)) zValue = nextZ;
+                        if (Number.isFinite(nextYaw)) yaw = nextYaw;
+                        if (Number.isFinite(nextPitch)) pitch = nextPitch;
                     }
-                } catch (e) {}
+                } catch (_) {}
             });
-            window.parent.postMessage(JSON.stringify({type: 'engine_ready'}), '*');
+            emitToParent({type: 'engine_ready'});
         }
         function loadSettings() {
             document.querySelectorAll('input[type=range], input[type=number], input[type=text], input[type=checkbox], select').forEach(el => {
@@ -1172,7 +1219,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
             };
             document.getElementById('show-tracker').onchange = (e) => {
                 showTracker = e.target.checked;
-                window.parent.postMessage(JSON.stringify({type: 'toggle_tracker', show: showTracker}), '*');
+                emitToParent({type: 'toggle_tracker', show: showTracker});
                 setStore('show-tracker', showTracker);
                 saveSettings();
             };
@@ -1186,10 +1233,10 @@ class _Engine3DPageState extends State<Engine3DPage> {
                     if (id === 'dz-pitch') deadZonePitch = value;
                     document.getElementById(id + '-val').innerText = e.target.value;
                     setStore(id, e.target.value);
-                    window.parent.postMessage(JSON.stringify({
+                    emitToParent({
                         type: 'deadzone_update',
                         deadZoneX, deadZoneY, deadZoneZ, deadZoneYaw, deadZonePitch
-                    }), '*');
+                    });
                 };
             });
             document.getElementById('anchor-center').onclick = () => {
@@ -1207,7 +1254,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
                 };
             });
             document.getElementById('switch-2d').onclick = () => {
-                window.parent.postMessage(JSON.stringify({type: 'switch_2d'}), '*');
+                emitToParent({type: 'switch_2d'});
             };
             // Preset
             document.getElementById('save-preset-btn').onclick = () => {
@@ -1215,11 +1262,11 @@ class _Engine3DPageState extends State<Engine3DPage> {
                 if (name) {
                     const state = getCurrentState();
                     presets[name] = state;
-                    window.parent.postMessage(JSON.stringify({
+                    emitToParent({
                         type: 'save_preset',
                         name,
                         state
-                    }), '*');
+                    });
                     updatePresetSelect();
                     document.getElementById('preset-name').value = '';
                 }
@@ -1230,10 +1277,10 @@ class _Engine3DPageState extends State<Engine3DPage> {
                     if (presets[name]) {
                         applyState(presets[name]);
                     } else {
-                        window.parent.postMessage(JSON.stringify({
+                        emitToParent({
                             type: 'load_preset_request',
                             name
-                        }), '*');
+                        });
                     }
                 }
             };
@@ -1291,47 +1338,55 @@ class _Engine3DPageState extends State<Engine3DPage> {
             spatialAudios = [];
             document.getElementById('lights-container').innerHTML = '';
             document.getElementById('audios-container').innerHTML = '';
+            const models = Array.isArray(state.models) ? state.models : [];
+            const lights = Array.isArray(state.lights) ? state.lights : [];
+            const audios = Array.isArray(state.audios) ? state.audios : [];
             // Load models
-            for (const m of (state.models || [])) {
+            for (const m of models) {
                 const model = await addModel(m.url);
                 if (!model) continue;
-                model.position.fromArray(m.position);
-                model.rotation.fromArray(m.rotation);
-                model.scale.fromArray(m.scale);
+                if (Array.isArray(m.position)) model.position.fromArray(m.position);
+                if (Array.isArray(m.rotation)) model.rotation.fromArray(m.rotation);
+                if (Array.isArray(m.scale)) model.scale.fromArray(m.scale);
                 model.visible = m.visible;
             }
             // Load lights
-            (state.lights || []).forEach(() => addPointLight());
-            (state.lights || []).forEach((l, i) => {
+            lights.forEach(() => addPointLight());
+            lights.forEach((l, i) => {
                 const lightData = dynamicLights[i];
+                if (!lightData) return;
                 lightData.light.color.setHex('0x' + l.color);
                 lightData.light.intensity = l.intensity;
-                lightData.light.position.fromArray(l.position);
+                if (Array.isArray(l.position)) {
+                    lightData.light.position.fromArray(l.position);
+                }
                 lightData.helper.scale.setScalar(l.scale);
                 lightData.helper.visible = !l.ghost;
             });
             // Load audios
             if (AUDIO_ENABLED) {
-                (state.audios || []).forEach(a => addSpatialAudio(a.url));
-                (state.audios || []).forEach((a, i) => {
+                audios.forEach(a => addSpatialAudio(a.url));
+                audios.forEach((a, i) => {
                     const audioData = spatialAudios[i];
                     if (!audioData) return;
                     audioData.volume = a.volume;
-                    audioData.helper.position.fromArray(a.position);
+                    if (Array.isArray(a.position)) {
+                        audioData.helper.position.fromArray(a.position);
+                    }
                     audioData.helper.visible = !a.ghost;
                 });
             }
             // Load other settings
-            sun.intensity = state.sunIntensity;
-            ambientLight.intensity = state.ambLight;
-            bloomPass.strength = state.bloomIntensity;
-            document.getElementById('shadowQuality').value = state.shadowQuality;
-            sun.shadow.radius = state.shadowSoftness;
-            loadEnv(state.skyUrl, tex => { skyTex = tex; scene.background = tex; });
-            loadEnv(state.envUrl, tex => { envTex = tex; scene.environment = tex; });
-            scene.backgroundRotation.y = state.envRot;
-            initPos.fromArray(state.initPos);
-            initRot.fromArray(state.initRot);
+            if (Number.isFinite(state.sunIntensity)) sun.intensity = state.sunIntensity;
+            if (Number.isFinite(state.ambLight)) ambientLight.intensity = state.ambLight;
+            if (Number.isFinite(state.bloomIntensity)) bloomPass.strength = state.bloomIntensity;
+            if (state.shadowQuality != null) document.getElementById('shadowQuality').value = state.shadowQuality;
+            if (Number.isFinite(state.shadowSoftness)) sun.shadow.radius = state.shadowSoftness;
+            if (state.skyUrl) loadEnv(state.skyUrl, tex => { skyTex = tex; scene.background = tex; });
+            if (state.envUrl) loadEnv(state.envUrl, tex => { envTex = tex; scene.environment = tex; });
+            if (Number.isFinite(state.envRot)) scene.backgroundRotation.y = state.envRot;
+            if (Array.isArray(state.initPos)) initPos.fromArray(state.initPos);
+            if (Array.isArray(state.initRot)) initRot.fromArray(state.initRot);
             camera.position.copy(initPos);
             camera.setRotationFromEuler(initRot);
             updatePlaybackVisibility();
@@ -1405,6 +1460,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
             camera.updateMatrixWorld(true);
         }
         function animate() {
+            if (disposed) return;
             frameCount++;
             const now = performance.now();
             if (now - lastFpsTime >= 1000) {
@@ -1458,6 +1514,14 @@ class _Engine3DPageState extends State<Engine3DPage> {
                 }
             });
             finalComposer.render();
+        }
+        function handleResize() {
+            if (disposed || !camera || !renderer || !bloomComposer || !finalComposer) return;
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            bloomComposer.setSize(window.innerWidth, window.innerHeight);
+            finalComposer.setSize(window.innerWidth, window.innerHeight);
         }
         function setupSlider(slider) {
             if (!slider) return;
@@ -1522,12 +1586,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
             }
         }
         init();
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            bloomComposer.setSize(window.innerWidth, window.innerHeight);
-            finalComposer.setSize(window.innerWidth, window.innerHeight);
-        });
+        window.addEventListener('resize', handleResize);
     </script>
 </body>
 </html>
@@ -1535,16 +1594,19 @@ class _Engine3DPageState extends State<Engine3DPage> {
     content = content
         .replaceAll('__CLEAN_VIEW__', widget.cleanView ? 'true' : 'false')
         .replaceAll(
-            '__AUDIO_ENABLED__', widget.disableAudio ? 'false' : 'true');
+            '__AUDIO_ENABLED__', widget.disableAudio ? 'false' : 'true')
+        .replaceAll('__BRIDGE_CHANNEL__', _bridgeChannel);
 
     ui_web.platformViewRegistry.registerViewFactory(viewID, (int viewId) {
       final web.HTMLIFrameElement iframe = web.HTMLIFrameElement();
-      iframe.id = '3d-iframe';
+      iframe.id = _engineFrameElementId;
       iframe.width = '100%';
       iframe.height = '100%';
       iframe.srcdoc = content;
       iframe.style.setProperty('border', 'none');
+      iframe.style.setProperty('background', 'transparent');
       iframe.allow = 'camera *; microphone *';
+      _engineIframe = iframe;
       return iframe;
     });
 
@@ -1552,63 +1614,96 @@ class _Engine3DPageState extends State<Engine3DPage> {
       ui_web.platformViewRegistry.registerViewFactory(trackerViewID,
           (int viewId) {
         final web.HTMLIFrameElement iframe = web.HTMLIFrameElement();
-        iframe.id = 'tracker-iframe';
+        iframe.id = _trackerFrameElementId;
         iframe.setAttribute('width', '100%');
         iframe.setAttribute('height', '100%');
-        iframe.src = 'assets/tracker.html';
+        iframe.src = 'assets/tracker.html?channel=$_bridgeChannel';
         iframe.style.setProperty('border', 'none');
+        iframe.style.setProperty('background', 'transparent');
         iframe.allow = 'camera *; microphone *; fullscreen *';
+        _trackerIframe = iframe;
+        scheduleMicrotask(_postTrackerConfig);
         return iframe;
       });
     }
 
     _messageSubscription = web.window.onMessage.listen((event) {
-      final data = event.data;
-      if (data is JSString) {
-        final String jsonString = data.toDart;
-        try {
-          final Map<String, dynamic> messageData = jsonDecode(jsonString);
-          final String? type = messageData['type'] as String?;
-          if (type == 'toggle_tracker') {
-            setState(() {
-              showTracker = messageData['show'] == true;
-            });
-            if (!widget.cleanView) _queueSaveModeState();
-          } else if (type == 'switch_2d') {
-            if (!mounted) return;
-            Navigator.pushReplacementNamed(context, '/2d');
-          } else if (type == 'engine_ready') {
-            _iframeReady = true;
-            _hydrateEngine();
-          } else if (type == 'engine_setting') {
-            _onEngineSetting(messageData);
-          } else if (type == 'engine_snapshot') {
-            _onEngineSnapshot(messageData);
-          } else if (type == 'deadzone_update') {
-            _onDeadzoneUpdate(messageData);
-          } else if (type == 'save_preset') {
-            _onSavePresetFromEngine(messageData);
-          } else if (type == 'load_preset_request') {
-            _onLoadPresetRequestFromEngine(messageData);
-          } else {
-            _dataController.add(messageData);
-          }
-        } catch (e) {
-          debugPrint('Error parsing message data: $e');
+      final Map<String, dynamic>? messageData = _extractPayload(event.data);
+      if (messageData == null) return;
+      if (messageData['channel'] != null &&
+          messageData['channel'].toString() != _bridgeChannel) {
+        return;
+      }
+      final bool fromEngine = _isFromEngine(event);
+      final bool fromTracker = _isFromTracker(event);
+      if (!fromEngine && !fromTracker) return;
+
+      final String? type = messageData['type']?.toString();
+      if (fromEngine) {
+        if (type == 'toggle_tracker') {
+          setState(() {
+            showTracker = messageData['show'] == true;
+          });
+          _postTrackerConfig();
+          if (!widget.cleanView) _queueSaveModeState();
+          return;
+        }
+        if (type == 'switch_2d') {
+          if (!mounted) return;
+          Navigator.pushReplacementNamed(context, '/2d');
+          return;
+        }
+        if (type == 'engine_ready') {
+          _iframeReady = true;
+          _hydrateEngine();
+          return;
+        }
+        if (type == 'engine_setting') {
+          _onEngineSetting(messageData);
+          return;
+        }
+        if (type == 'engine_snapshot') {
+          _onEngineSnapshot(messageData);
+          return;
+        }
+        if (type == 'deadzone_update') {
+          _onDeadzoneUpdate(messageData);
+          return;
+        }
+        if (type == 'save_preset') {
+          _onSavePresetFromEngine(messageData);
+          return;
+        }
+        if (type == 'load_preset_request') {
+          _onLoadPresetRequestFromEngine(messageData);
+          return;
         }
       }
+
+      if (fromTracker) {
+        if (type == 'hide_tracker') {
+          if (showTracker) {
+            setState(() => showTracker = false);
+            _postTrackerConfig();
+          }
+          return;
+        }
+        _dataController.add(messageData);
+      }
     });
-    _dataController.stream.listen((data) {
+    _trackingDataSubscription = _dataController.stream.listen((data) {
       if (widget.externalHeadPose != null) return;
-      if (!manualMode && data['head'] is Map) {
-        _applyTrackerDeadZone(Map<String, dynamic>.from(data['head'] as Map));
-      } else if (manualMode && data['head'] is Map) {
-        final headMap = Map<String, dynamic>.from(data['head'] as Map);
-        headX = (headMap['x'] ?? headX).toDouble();
-        headY = (headMap['y'] ?? headY).toDouble();
-        zValue = (headMap['z'] ?? zValue).toDouble();
-        yaw = (headMap['yaw'] ?? yaw).toDouble();
-        pitch = (headMap['pitch'] ?? pitch).toDouble();
+      final headMap = _asMap(data['head']);
+      if (headMap == null) return;
+
+      if (!manualMode) {
+        _applyTrackerDeadZone(headMap);
+      } else {
+        headX = _toDouble(headMap['x'], headX);
+        headY = _toDouble(headMap['y'], headY);
+        zValue = _toDouble(headMap['z'], zValue);
+        yaw = _toDouble(headMap['yaw'], yaw);
+        pitch = _toDouble(headMap['pitch'], pitch);
       }
       _postToEngine(<String, dynamic>{
         'head': <String, dynamic>{
@@ -1629,7 +1724,16 @@ class _Engine3DPageState extends State<Engine3DPage> {
   @override
   void dispose() {
     _saveDebounce?.cancel();
+    _postToEngine(<String, dynamic>{
+      'type': 'dispose_engine',
+      'channel': _bridgeChannel,
+    });
+    _postToTracker(<String, dynamic>{
+      'type': 'dispose_tracker',
+      'channel': _bridgeChannel,
+    });
     _messageSubscription?.cancel();
+    _trackingDataSubscription?.cancel();
     _dataController.close();
     presetNameController.dispose();
     super.dispose();
@@ -1715,6 +1819,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
     }
     if (key == 'show-tracker') {
       setState(() => showTracker = value.toString() == 'true');
+      _postTrackerConfig();
     }
     if (key == 'dz-x') {
       deadZoneX = double.tryParse(value.toString()) ?? deadZoneX;
@@ -1802,11 +1907,11 @@ class _Engine3DPageState extends State<Engine3DPage> {
   }
 
   void _applyTrackerDeadZone(Map<String, dynamic> headData) {
-    final double rawHeadX = (headData['x'] ?? 0.0).toDouble();
-    final double rawHeadY = (headData['y'] ?? 0.0).toDouble();
-    final double rawZ = (headData['z'] ?? 0.2).toDouble();
-    final double rawYaw = (headData['yaw'] ?? 0.0).toDouble();
-    final double rawPitch = (headData['pitch'] ?? 0.0).toDouble();
+    final double rawHeadX = _toDouble(headData['x'], 0.0);
+    final double rawHeadY = _toDouble(headData['y'], 0.0);
+    final double rawZ = _toDouble(headData['z'], 0.2);
+    final double rawYaw = _toDouble(headData['yaw'], 0.0);
+    final double rawPitch = _toDouble(headData['pitch'], 0.0);
 
     final double deltaX = rawHeadX - headX;
     if (deltaX.abs() > deadZoneX) {
@@ -1878,12 +1983,38 @@ class _Engine3DPageState extends State<Engine3DPage> {
       'presets': presets,
       'sceneState': sceneState,
     });
+    _postTrackerConfig();
   }
 
   void _postToEngine(Map<String, dynamic> message) {
-    final element = web.document.getElementById('3d-iframe');
-    if (element is! web.HTMLIFrameElement) return;
-    element.contentWindow?.postMessage(jsonEncode(message).toJS, '*'.toJS);
+    final element = _engineIframe;
+    if (element == null) return;
+    final envelope = <String, dynamic>{
+      ...message,
+      'channel': _bridgeChannel,
+    };
+    element.contentWindow?.postMessage(jsonEncode(envelope).toJS, '*'.toJS);
+  }
+
+  void _postToTracker(Map<String, dynamic> message) {
+    final element = _trackerIframe;
+    if (element == null) return;
+    final envelope = <String, dynamic>{
+      ...message,
+      'channel': _bridgeChannel,
+    };
+    element.contentWindow?.postMessage(jsonEncode(envelope).toJS, '*'.toJS);
+  }
+
+  void _postTrackerConfig() {
+    if (widget.externalHeadPose != null) return;
+    _postToTracker(<String, dynamic>{
+      'type': 'tracker_config',
+      'enabled': true,
+      'uiVisible': showTracker,
+      'showCursor': showTracker,
+      'headless': !showTracker,
+    });
   }
 
   Future<void> _uploadToEngine({
@@ -1892,8 +2023,19 @@ class _Engine3DPageState extends State<Engine3DPage> {
     required String messageType,
     required String successLabel,
   }) async {
+    if (_uploadingAsset) return;
     final file = await pickDeviceFile(accept: accept);
-    if (file == null) return;
+    if (file == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No file selected.')),
+      );
+      return;
+    }
+
+    if (mounted) {
+      setState(() => _uploadingAsset = true);
+    }
 
     try {
       final String url = await _repository.uploadAssetBytes(
@@ -1912,12 +2054,55 @@ class _Engine3DPageState extends State<Engine3DPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Upload failed: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingAsset = false);
+      }
     }
   }
 
   double _toDouble(dynamic value, double fallback) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  bool _isFromEngine(web.MessageEvent event) {
+    final iframe = _engineIframe;
+    if (iframe == null) return false;
+    final source = event.source;
+    if (source == null) return false;
+    return identical(source, iframe.contentWindow) || source == iframe.contentWindow;
+  }
+
+  bool _isFromTracker(web.MessageEvent event) {
+    final iframe = _trackerIframe;
+    if (iframe == null) return false;
+    final source = event.source;
+    if (source == null) return false;
+    return identical(source, iframe.contentWindow) || source == iframe.contentWindow;
+  }
+
+  Map<String, dynamic>? _extractPayload(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    if (data is JSString) return _decodePayload(data.toDart);
+    if (data is String) return _decodePayload(data);
+    return null;
+  }
+
+  Map<String, dynamic>? _decodePayload(String value) {
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
+  Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
   }
 
   @override
@@ -1930,15 +2115,14 @@ class _Engine3DPageState extends State<Engine3DPage> {
           child: HtmlElementView(viewType: viewID),
         ),
         if (!widget.cleanView && widget.externalHeadPose == null)
-          IgnorePointer(
-            ignoring: !showTracker,
-            child: Positioned(
-              left: showTracker ? 0 : -10000.0,
-              top: showTracker ? 0 : -10000.0,
-              child: SizedBox(
-                width: showTracker ? MediaQuery.of(context).size.width : 1.0,
-                height: showTracker ? MediaQuery.of(context).size.height : 1.0,
-                child: HtmlElementView(viewType: trackerViewID),
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: !showTracker,
+              child: ClipRect(
+                child: Opacity(
+                  opacity: showTracker ? 1 : 0,
+                  child: HtmlElementView(viewType: trackerViewID),
+                ),
               ),
             ),
           ),
@@ -1991,17 +2175,20 @@ class _Engine3DPageState extends State<Engine3DPage> {
                   runSpacing: 8,
                   children: [
                     ElevatedButton.icon(
-                      onPressed: () => _uploadToEngine(
-                        accept: '.glb,.gltf,.fbx,.obj,.usdz,model/*',
-                        folder: 'models',
-                        messageType: 'external_add_model',
-                        successLabel: '3D model',
-                      ),
+                      onPressed: _uploadingAsset
+                          ? null
+                          : () => _uploadToEngine(
+                                accept: '.glb,.gltf,.fbx,.obj,.usdz,model/*',
+                                folder: 'models',
+                                messageType: 'external_add_model',
+                                successLabel: '3D model',
+                              ),
                       icon: const Icon(Icons.view_in_ar_outlined, size: 16),
-                      label: const Text('Upload Model'),
+                      label:
+                          Text(_uploadingAsset ? 'Uploading...' : 'Upload Model'),
                     ),
                     ElevatedButton.icon(
-                      onPressed: widget.disableAudio
+                      onPressed: _uploadingAsset || widget.disableAudio
                           ? null
                           : () => _uploadToEngine(
                                 accept: 'audio/*',
@@ -2010,27 +2197,34 @@ class _Engine3DPageState extends State<Engine3DPage> {
                                 successLabel: 'Audio',
                               ),
                       icon: const Icon(Icons.graphic_eq_outlined, size: 16),
-                      label: const Text('Upload Audio'),
+                      label:
+                          Text(_uploadingAsset ? 'Uploading...' : 'Upload Audio'),
                     ),
                     ElevatedButton.icon(
-                      onPressed: () => _uploadToEngine(
-                        accept: '.hdr,.exr,image/*',
-                        folder: 'sky',
-                        messageType: 'external_set_sky',
-                        successLabel: 'Sky texture',
-                      ),
+                      onPressed: _uploadingAsset
+                          ? null
+                          : () => _uploadToEngine(
+                                accept: '.hdr,.exr,image/*',
+                                folder: 'sky',
+                                messageType: 'external_set_sky',
+                                successLabel: 'Sky texture',
+                              ),
                       icon: const Icon(Icons.wb_sunny_outlined, size: 16),
-                      label: const Text('Upload Sky'),
+                      label:
+                          Text(_uploadingAsset ? 'Uploading...' : 'Upload Sky'),
                     ),
                     ElevatedButton.icon(
-                      onPressed: () => _uploadToEngine(
-                        accept: '.hdr,.exr,image/*',
-                        folder: 'env',
-                        messageType: 'external_set_env',
-                        successLabel: 'Environment map',
-                      ),
+                      onPressed: _uploadingAsset
+                          ? null
+                          : () => _uploadToEngine(
+                                accept: '.hdr,.exr,image/*',
+                                folder: 'env',
+                                messageType: 'external_set_env',
+                                successLabel: 'Environment map',
+                              ),
                       icon: const Icon(Icons.landscape_outlined, size: 16),
-                      label: const Text('Upload Env'),
+                      label:
+                          Text(_uploadingAsset ? 'Uploading...' : 'Upload Env'),
                     ),
                   ],
                 ),

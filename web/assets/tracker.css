@@ -29,6 +29,29 @@ body {
     linear-gradient(160deg, #05080f 0%, #070d18 45%, #090f1f 100%);
 }
 
+html,
+body {
+  background-color: transparent;
+}
+
+body.tracker-headless {
+  background: transparent !important;
+}
+
+body.tracker-headless #canvas-container,
+body.tracker-headless #tracker-panel,
+body.tracker-headless #ui-video-box,
+body.tracker-headless #client-panel,
+body.tracker-headless #toggle-btns,
+body.tracker-headless #ui-text-canvas,
+body.tracker-headless #timer-overlay,
+body.tracker-headless #white-cursor,
+body.tracker-headless #cal-dot {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
 #canvas-container {
   position: absolute;
   inset: 0;

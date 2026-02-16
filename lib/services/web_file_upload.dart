@@ -25,30 +25,87 @@ Future<PickedDeviceFile?> pickDeviceFile({
 
   final html.FileUploadInputElement input = html.FileUploadInputElement()
     ..accept = accept
-    ..multiple = false;
+    ..multiple = false
+    ..style.display = 'none';
 
-  input.click();
-  try {
-    await input.onChange.first.timeout(const Duration(seconds: 45));
-  } on TimeoutException {
-    return null;
+  html.document.body?.append(input);
+
+  final Completer<PickedDeviceFile?> completer = Completer<PickedDeviceFile?>();
+  StreamSubscription<html.Event>? changeSub;
+  StreamSubscription<html.Event>? focusSub;
+
+  Future<void> completeOnce(PickedDeviceFile? value) async {
+    if (!completer.isCompleted) {
+      completer.complete(value);
+    }
   }
 
-  final html.File? file = (input.files != null && input.files!.isNotEmpty)
-      ? input.files!.first
-      : null;
-  if (file == null) return null;
+  Future<void> readFile(html.File file) async {
+    final html.FileReader reader = html.FileReader();
+    final Completer<Object?> readCompleter = Completer<Object?>();
+    late final StreamSubscription<html.ProgressEvent> loadEndSub;
+    late final StreamSubscription<html.ProgressEvent> errorSub;
+    loadEndSub = reader.onLoadEnd.listen((_) {
+      if (!readCompleter.isCompleted) {
+        readCompleter.complete(reader.result);
+      }
+    });
+    errorSub = reader.onError.listen((_) {
+      if (!readCompleter.isCompleted) {
+        readCompleter.complete(null);
+      }
+    });
+    reader.readAsArrayBuffer(file);
+    final Object? result = await readCompleter.future
+        .timeout(const Duration(seconds: 45), onTimeout: () => null);
+    await loadEndSub.cancel();
+    await errorSub.cancel();
 
-  final html.FileReader reader = html.FileReader();
-  reader.readAsArrayBuffer(file);
-  await reader.onLoadEnd.first.timeout(const Duration(seconds: 45));
+    if (result is! ByteBuffer) {
+      await completeOnce(null);
+      return;
+    }
 
-  final Object? result = reader.result;
-  if (result is! ByteBuffer) return null;
+    await completeOnce(
+      PickedDeviceFile(
+        name: file.name,
+        contentType: file.type.isEmpty ? 'application/octet-stream' : file.type,
+        bytes: Uint8List.view(result),
+      ),
+    );
+  }
 
-  return PickedDeviceFile(
-    name: file.name,
-    contentType: file.type.isEmpty ? 'application/octet-stream' : file.type,
-    bytes: Uint8List.view(result),
-  );
+  changeSub = input.onChange.listen((_) async {
+    final html.File? file = (input.files != null && input.files!.isNotEmpty)
+        ? input.files!.first
+        : null;
+    if (file == null) {
+      await completeOnce(null);
+      return;
+    }
+    await readFile(file);
+  });
+
+  focusSub = html.window.onFocus.listen((_) {
+    Future<void>.delayed(const Duration(milliseconds: 220), () async {
+      if (completer.isCompleted) return;
+      final hasSelection = input.files != null && input.files!.isNotEmpty;
+      if (!hasSelection) {
+        await completeOnce(null);
+      }
+    });
+  });
+
+  input.click();
+
+  PickedDeviceFile? result;
+  try {
+    result = await completer.future
+        .timeout(const Duration(seconds: 45), onTimeout: () => null);
+  } finally {
+    await changeSub.cancel();
+    await focusSub.cancel();
+    input.remove();
+  }
+  return result;
 }

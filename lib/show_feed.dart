@@ -11,6 +11,7 @@ import 'models/app_user_profile.dart';
 import 'models/chat_models.dart';
 import 'models/collection_models.dart';
 import 'models/feed_post.dart';
+import 'models/preset_payload_v2.dart';
 import 'models/preset_comment.dart';
 import 'models/profile_stats.dart';
 import 'models/render_preset.dart';
@@ -150,6 +151,26 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     }
   }
 
+  Widget _buildActiveTab() {
+    switch (_activeTab) {
+      case _ShellTab.home:
+        return _HomeFeedTab(key: _homeKey);
+      case _ShellTab.collection:
+        return _CollectionTab(key: _collectionKey);
+      case _ShellTab.post:
+        return const _PostStudioTab();
+      case _ShellTab.chat:
+        return _ChatTab(key: _chatKey);
+      case _ShellTab.profile:
+        return _ProfileTab(key: _profileKey, onProfileChanged: _loadProfile);
+      case _ShellTab.settings:
+        return _SettingsTab(
+          currentThemeMode: widget.themeMode,
+          onThemeModeChanged: widget.onThemeModeChanged,
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -225,18 +246,17 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
             child: SafeArea(
               child: Column(
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
+                  ClipRect(
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                       child: Container(
-                        margin: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-                        padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+                        padding: const EdgeInsets.fromLTRB(18, 10, 10, 10),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: cs.outline.withValues(alpha: 0.2),
+                          border: Border(
+                            bottom: BorderSide(
+                              color: cs.outline.withValues(alpha: 0.2),
+                            ),
                           ),
                         ),
                         child: Row(
@@ -313,20 +333,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                     ),
                   ),
                   Expanded(
-                    child: IndexedStack(
-                      index: _activeTab.index,
-                      children: [
-                        _HomeFeedTab(key: _homeKey),
-                        _CollectionTab(key: _collectionKey),
-                        const _PostStudioTab(),
-                        _ChatTab(key: _chatKey),
-                        _ProfileTab(key: _profileKey, onProfileChanged: _loadProfile),
-                        _SettingsTab(
-                          currentThemeMode: widget.themeMode,
-                          onThemeModeChanged: widget.onThemeModeChanged,
-                        ),
-                      ],
-                    ),
+                    child: _buildActiveTab(),
                   ),
                 ],
               ),
@@ -670,7 +677,7 @@ class _CollectionTabState extends State<_CollectionTab> {
   }
 }
 
-class _CollectionFeedTile extends StatelessWidget {
+class _CollectionFeedTile extends StatefulWidget {
   const _CollectionFeedTile({
     required this.summary,
     required this.onTap,
@@ -680,9 +687,16 @@ class _CollectionFeedTile extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_CollectionFeedTile> createState() => _CollectionFeedTileState();
+}
+
+class _CollectionFeedTileState extends State<_CollectionFeedTile> {
+  bool _hovered = false;
+
+  @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final item = summary.firstItem;
+    final item = widget.summary.firstItem;
     final preview = item == null
         ? Container(
             color: cs.surfaceContainerLow,
@@ -694,12 +708,10 @@ class _CollectionFeedTile extends StatelessWidget {
               ),
             ),
           )
-        : PresetViewer(
+        : _PresetCardPreview(
             mode: item.mode,
             payload: item.snapshot,
-            cleanView: true,
-            embedded: true,
-            disableAudio: true,
+            live3d: _hovered,
           );
 
     Widget deckPlate({required double dx, required double dy, required double a}) {
@@ -719,92 +731,98 @@ class _CollectionFeedTile extends StatelessWidget {
 
     return Material(
       color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            deckPlate(dx: 12, dy: 8, a: 0.35),
-            deckPlate(dx: 6, dy: 4, a: 0.5),
-            Positioned.fill(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Material(
-                  color: cs.surfaceContainerLow,
-                  child: Stack(
-                    children: [
-                      Positioned.fill(child: IgnorePointer(child: preview)),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.bottomCenter,
-                              end: Alignment.topCenter,
-                              colors: [
-                                Colors.black.withValues(alpha: 0.78),
-                                Colors.transparent,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: widget.onTap,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: <Widget>[
+              deckPlate(dx: 12, dy: 8, a: 0.35),
+              deckPlate(dx: 6, dy: 4, a: 0.5),
+              Positioned.fill(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Material(
+                    color: cs.surfaceContainerLow,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(child: IgnorePointer(child: preview)),
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.bottomCenter,
+                                end: Alignment.topCenter,
+                                colors: [
+                                  Colors.black.withValues(alpha: 0.78),
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.summary.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: cs.onSurface,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  widget.summary.author?.displayName ??
+                                      'Unknown creator',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: cs.onSurface.withValues(alpha: 0.82),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.layers,
+                                        size: 14, color: Colors.white70),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${widget.summary.itemsCount} items',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ],
                             ),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                summary.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: cs.onSurface,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                summary.author?.displayName ?? 'Unknown creator',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: cs.onSurface.withValues(alpha: 0.82),
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(Icons.layers, size: 14, color: Colors.white70),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    '${summary.itemsCount} items',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _FeedTile extends StatelessWidget {
+class _FeedTile extends StatefulWidget {
   const _FeedTile({
     required this.post,
     required this.onTap,
@@ -814,80 +832,90 @@ class _FeedTile extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_FeedTile> createState() => _FeedTileState();
+}
+
+class _FeedTileState extends State<_FeedTile> {
+  bool _hovered = false;
+
+  @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final Widget preview = PresetViewer(
-      mode: post.preset.mode,
-      payload: post.preset.payload,
-      cleanView: true,
-      embedded: true,
-      disableAudio: true,
+    final Widget preview = _PresetCardPreview(
+      mode: widget.post.preset.mode,
+      payload: widget.post.preset.payload,
+      live3d: _hovered,
     );
 
     return Material(
       color: cs.surfaceContainerLow,
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Stack(
-          children: [
-            Positioned.fill(child: IgnorePointer(child: preview)),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [
-                      Colors.black.withValues(alpha: 0.78),
-                      Colors.transparent
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: InkWell(
+          onTap: widget.onTap,
+          child: Stack(
+            children: [
+              Positioned.fill(child: IgnorePointer(child: preview)),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.78),
+                        Colors.transparent
+                      ],
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.post.author?.displayName ?? 'Unknown creator',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: cs.onSurface,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        widget.post.preset.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: cs.onSurface.withValues(alpha: 0.8),
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          _miniStat(
+                              Icons.thumb_up_alt_outlined, widget.post.likesCount),
+                          _miniStat(Icons.thumb_down_alt_outlined,
+                              widget.post.dislikesCount),
+                          _miniStat(Icons.mode_comment_outlined,
+                              widget.post.commentsCount),
+                          _miniStat(Icons.bookmark_border, widget.post.savesCount),
+                        ],
+                      ),
                     ],
                   ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      post.author?.displayName ?? 'Unknown creator',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurface,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      post.preset.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurface.withValues(alpha: 0.8),
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        _miniStat(Icons.thumb_up_alt_outlined, post.likesCount),
-                        _miniStat(
-                            Icons.thumb_down_alt_outlined, post.dislikesCount),
-                        _miniStat(
-                            Icons.mode_comment_outlined, post.commentsCount),
-                        _miniStat(Icons.bookmark_border, post.savesCount),
-                      ],
-                    ),
-                  ],
-                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -905,6 +933,167 @@ class _FeedTile extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class _PresetCardPreview extends StatelessWidget {
+  const _PresetCardPreview({
+    required this.mode,
+    required this.payload,
+    required this.live3d,
+  });
+
+  final String mode;
+  final Map<String, dynamic> payload;
+  final bool live3d;
+
+  @override
+  Widget build(BuildContext context) {
+    final adapted = PresetPayloadV2.fromMap(payload, fallbackMode: mode);
+    if (adapted.mode == '3d') {
+      if (live3d) {
+        return PresetViewer(
+          mode: adapted.mode,
+          payload: adapted.toMap(),
+          cleanView: true,
+          embedded: true,
+          disableAudio: true,
+        );
+      }
+      return const _ThreeDPosterPreview();
+    }
+    return _TwoDPosterPreview(scene: adapted.scene);
+  }
+}
+
+class _ThreeDPosterPreview extends StatelessWidget {
+  const _ThreeDPosterPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return ValueListenableBuilder(
+      valueListenable: TrackingService.instance.frameNotifier,
+      builder: (context, frame, _) {
+        final double nx = ((frame.headX - 0.5).clamp(-0.6, 0.6)) * 16;
+        final double ny = ((frame.headY - 0.5).clamp(-0.6, 0.6)) * 16;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: <Color>[
+                    Color(0xFF131313),
+                    Color(0xFF070707),
+                  ],
+                ),
+              ),
+            ),
+            Transform.translate(
+              offset: Offset(nx, ny),
+              child: Icon(
+                Icons.view_in_ar_outlined,
+                size: 72,
+                color: cs.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _PosterLayerSnapshot {
+  const _PosterLayerSnapshot({
+    required this.url,
+    required this.order,
+    required this.scale,
+  });
+
+  final String url;
+  final int order;
+  final double scale;
+}
+
+class _TwoDPosterPreview extends StatelessWidget {
+  const _TwoDPosterPreview({required this.scene});
+
+  final Map<String, dynamic> scene;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final layers = _extractLayers(scene);
+    if (layers.isEmpty) {
+      return Container(
+        color: cs.surfaceContainerLow,
+        alignment: Alignment.center,
+        child: Icon(Icons.image_outlined, color: cs.onSurfaceVariant, size: 44),
+      );
+    }
+
+    return ValueListenableBuilder(
+      valueListenable: TrackingService.instance.frameNotifier,
+      builder: (context, frame, _) {
+        final double nx = (frame.headX - 0.5).clamp(-0.6, 0.6);
+        final double ny = (frame.headY - 0.5).clamp(-0.6, 0.6);
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            for (int i = 0; i < layers.length; i++)
+              Positioned.fill(
+                child: Transform.translate(
+                  offset: Offset(
+                    nx * (8 + (i * 3)),
+                    ny * (8 + (i * 3)),
+                  ),
+                  child: Transform.scale(
+                    scale: layers[i].scale,
+                    child: Image.network(
+                      layers[i].url,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, _, __) => Container(
+                        color: cs.surfaceContainerHighest,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  List<_PosterLayerSnapshot> _extractLayers(Map<String, dynamic> map) {
+    final List<_PosterLayerSnapshot> layers = <_PosterLayerSnapshot>[];
+    for (final entry in map.entries) {
+      final value = entry.value;
+      if (value is! Map) continue;
+      final snapshot = Map<String, dynamic>.from(value);
+      final String url = snapshot['url']?.toString() ?? '';
+      if (url.isEmpty) continue;
+      if (snapshot['isVisible'] == false) continue;
+      final int order = snapshot['order'] is num
+          ? (snapshot['order'] as num).toInt()
+          : layers.length;
+      final double scale = _toDouble(snapshot['scale'], 1.0).clamp(0.5, 2.5);
+      layers.add(_PosterLayerSnapshot(url: url, order: order, scale: scale));
+    }
+    layers.sort((a, b) => a.order.compareTo(b.order));
+    if (layers.length > 5) {
+      return layers.sublist(0, 5);
+    }
+    return layers;
+  }
+
+  double _toDouble(dynamic value, double fallback) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? fallback;
   }
 }
 
@@ -1046,6 +1235,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
 
     try {
       final chatId = await _repository.createOrGetDirectChat(profile.userId);
+      if (chatId.isEmpty) {
+        throw Exception('Unable to open chat for selected user.');
+      }
       await _repository.sendChatMessage(
         chatId: chatId,
         body: 'Shared a preset',
@@ -1229,96 +1421,98 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   Expanded(
                     child: GestureDetector(
                       onTap: () => setState(() => _commentsOpen = false),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                        child: Container(
-                          color: Colors.black.withValues(alpha: 0.3),
-                        ),
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.2),
                       ),
                     ),
                   ),
                   SizedBox(
                     width: MediaQuery.of(context).size.width * 0.25,
-                    child: Container(
-                      color: Colors.black.withValues(alpha: 0.65),
-                      child: Column(
-                        children: [
-                          const SizedBox(height: 14),
-                          const Text(
-                            'Comments',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Expanded(
-                            child: _loadingComments
-                                ? const Center(
-                                    child: CircularProgressIndicator(),
-                                  )
-                                : _comments.isEmpty
+                    child: ClipRect(
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                        child: Container(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          child: Column(
+                            children: [
+                              const SizedBox(height: 14),
+                              const Text(
+                                'Comments',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Expanded(
+                                child: _loadingComments
                                     ? const Center(
-                                        child: Text(
-                                          'No comments yet',
-                                          style: TextStyle(color: Colors.white70),
-                                        ),
+                                        child: CircularProgressIndicator(),
                                       )
-                                    : ListView.builder(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 12),
-                                        itemCount: _comments.length,
-                                        itemBuilder: (context, index) {
-                                          final c = _comments[index];
-                                          return Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 6),
-                                            child: RichText(
-                                              text: TextSpan(
-                                                style: const TextStyle(
-                                                    color: Colors.white70),
-                                                children: [
-                                                  TextSpan(
-                                                    text:
-                                                        '${c.author?.displayName ?? 'User'}: ',
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontWeight: FontWeight.w600,
-                                                    ),
-                                                  ),
-                                                  TextSpan(text: c.content),
-                                                ],
-                                              ),
+                                    : _comments.isEmpty
+                                        ? const Center(
+                                            child: Text(
+                                              'No comments yet',
+                                              style: TextStyle(color: Colors.white70),
                                             ),
-                                          );
-                                        },
+                                          )
+                                        : ListView.builder(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 12),
+                                            itemCount: _comments.length,
+                                            itemBuilder: (context, index) {
+                                              final c = _comments[index];
+                                              return Padding(
+                                                padding: const EdgeInsets.symmetric(
+                                                    vertical: 6),
+                                                child: RichText(
+                                                  text: TextSpan(
+                                                    style: const TextStyle(
+                                                        color: Colors.white70),
+                                                    children: [
+                                                      TextSpan(
+                                                        text:
+                                                            '${c.author?.displayName ?? 'User'}: ',
+                                                        style: const TextStyle(
+                                                          color: Colors.white,
+                                                          fontWeight: FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                      TextSpan(text: c.content),
+                                                    ],
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextField(
+                                        controller: _commentController,
+                                        decoration: const InputDecoration(
+                                          hintText: 'Write a comment...',
+                                          filled: true,
+                                        ),
                                       ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _commentController,
-                                    decoration: const InputDecoration(
-                                      hintText: 'Write a comment...',
-                                      filled: true,
                                     ),
-                                  ),
+                                    const SizedBox(width: 8),
+                                    FilledButton(
+                                      onPressed:
+                                          _sendingComment ? null : _sendComment,
+                                      child:
+                                          Text(_sendingComment ? '...' : 'Send'),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 8),
-                                FilledButton(
-                                  onPressed:
-                                      _sendingComment ? null : _sendComment,
-                                  child:
-                                      Text(_sendingComment ? '...' : 'Send'),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -1382,12 +1576,36 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   int _editorSeed = 0;
   int _selectedItemIndex = -1;
   bool _publishing = false;
+  bool _overlayVisible = true;
+  Timer? _overlayHideTimer;
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
 
   @override
+  void initState() {
+    super.initState();
+    _armOverlayAutoHide();
+  }
+
+  @override
   void dispose() {
+    _overlayHideTimer?.cancel();
     _collectionNameController.dispose();
     super.dispose();
+  }
+
+  void _armOverlayAutoHide() {
+    _overlayHideTimer?.cancel();
+    _overlayHideTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      setState(() => _overlayVisible = false);
+    });
+  }
+
+  void _wakeOverlay() {
+    if (!_overlayVisible && mounted) {
+      setState(() => _overlayVisible = true);
+    }
+    _armOverlayAutoHide();
   }
 
   void _onPresetSaved(String name, Map<String, dynamic> payload) {
@@ -1503,16 +1721,18 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final bool collectionMode = _postTypeIndex == 1;
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          child: Row(
+  Widget _buildTopOverlay(ColorScheme cs, bool collectionMode) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.56),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
             children: [
               SegmentedButton<int>(
                 segments: const [
@@ -1522,6 +1742,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 selected: <int>{_modeIndex},
                 onSelectionChanged: (values) {
                   setState(() => _modeIndex = values.first);
+                  _wakeOverlay();
                 },
               ),
               const SizedBox(width: 10),
@@ -1533,6 +1754,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 selected: <int>{_postTypeIndex},
                 onSelectionChanged: (values) {
                   setState(() => _postTypeIndex = values.first);
+                  _wakeOverlay();
                 },
               ),
               const Spacer(),
@@ -1551,113 +1773,152 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               ],
             ],
           ),
-        ),
-        if (collectionMode)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: TextField(
+          if (collectionMode) ...[
+            const SizedBox(height: 8),
+            TextField(
               controller: _collectionNameController,
               decoration: const InputDecoration(
                 labelText: 'Collection Name',
                 prefixIcon: Icon(Icons.collections_bookmark_outlined),
               ),
             ),
-          ),
-        Expanded(
-          child: Row(
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCollectionManagerOverlay(ColorScheme cs) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.22)),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 10),
+          Row(
             children: [
-              if (collectionMode)
-                Container(
-                  width: 320,
-                  margin: const EdgeInsets.fromLTRB(12, 0, 8, 12),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerLow,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
-                  ),
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          const SizedBox(width: 12),
-                          const Expanded(
-                            child: Text(
-                              'Collection Manager',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          TextButton.icon(
-                            onPressed: _createNewCollectionItem,
-                            icon: const Icon(Icons.add_circle_outline, size: 16),
-                            label: const Text('Add New'),
-                          ),
-                          const SizedBox(width: 6),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Expanded(
-                        child: _draftItems.isEmpty
-                            ? const Center(
-                                child: Text('Save presets to add them here.'),
-                              )
-                            : ReorderableListView.builder(
-                                itemCount: _draftItems.length,
-                                onReorder: (oldIndex, newIndex) {
-                                  setState(() {
-                                    if (newIndex > oldIndex) newIndex -= 1;
-                                    final item = _draftItems.removeAt(oldIndex);
-                                    _draftItems.insert(newIndex, item);
-                                    _selectedItemIndex = newIndex;
-                                  });
-                                },
-                                itemBuilder: (context, index) {
-                                  final item = _draftItems[index];
-                                  final bool active = index == _selectedItemIndex;
-                                  return ListTile(
-                                    key: ValueKey('collection-item-$index-${item.name}'),
-                                    selected: active,
-                                    selectedTileColor:
-                                        cs.primary.withValues(alpha: 0.14),
-                                    title: Text(
-                                      item.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    subtitle: Text(item.mode.toUpperCase()),
-                                    leading: Icon(
-                                      item.mode == '2d'
-                                          ? Icons.layers_outlined
-                                          : Icons.view_in_ar_outlined,
-                                    ),
-                                    trailing: IconButton(
-                                      onPressed: () => _removeCollectionItem(index),
-                                      icon: const Icon(Icons.delete_outline),
-                                    ),
-                                    onTap: () => _selectCollectionItem(index),
-                                  );
-                                },
-                              ),
-                      ),
-                    ],
-                  ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Collection Manager',
+                  style: TextStyle(fontWeight: FontWeight.w700),
                 ),
-              Expanded(
-                child: Container(
-                  margin: const EdgeInsets.fromLTRB(0, 0, 12, 12),
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: cs.outline.withValues(alpha: 0.16)),
+              ),
+              TextButton.icon(
+                onPressed: _createNewCollectionItem,
+                icon: const Icon(Icons.add_circle_outline, size: 16),
+                label: const Text('Add New'),
+              ),
+              const SizedBox(width: 6),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: _draftItems.isEmpty
+                ? const Center(
+                    child: Text('Save presets to add them here.'),
+                  )
+                : ReorderableListView.builder(
+                    itemCount: _draftItems.length,
+                    onReorder: (oldIndex, newIndex) {
+                      setState(() {
+                        if (newIndex > oldIndex) newIndex -= 1;
+                        final item = _draftItems.removeAt(oldIndex);
+                        _draftItems.insert(newIndex, item);
+                        _selectedItemIndex = newIndex;
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      final item = _draftItems[index];
+                      final bool active = index == _selectedItemIndex;
+                      return ListTile(
+                        key: ValueKey('collection-item-$index-${item.name}'),
+                        selected: active,
+                        selectedTileColor: cs.primary.withValues(alpha: 0.14),
+                        title: Text(
+                          item.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(item.mode.toUpperCase()),
+                        leading: Icon(
+                          item.mode == '2d'
+                              ? Icons.layers_outlined
+                              : Icons.view_in_ar_outlined,
+                        ),
+                        trailing: IconButton(
+                          onPressed: () => _removeCollectionItem(index),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                        onTap: () => _selectCollectionItem(index),
+                      );
+                    },
                   ),
-                  clipBehavior: Clip.antiAlias,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bool collectionMode = _postTypeIndex == 1;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: MouseRegion(
+        onEnter: (_) => _wakeOverlay(),
+        onHover: (_) => _wakeOverlay(),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: cs.outline.withValues(alpha: 0.16)),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
                   child: _buildEditor(),
                 ),
               ),
-            ],
-          ),
+            ),
+            Positioned(
+              top: 12,
+              left: 12,
+              right: 12,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 220),
+                opacity: _overlayVisible ? 1 : 0,
+                child: IgnorePointer(
+                  ignoring: !_overlayVisible,
+                  child: _buildTopOverlay(cs, collectionMode),
+                ),
+              ),
+            ),
+            if (collectionMode)
+              Positioned(
+                left: 12,
+                top: 116,
+                bottom: 12,
+                width: 320,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 220),
+                  opacity: _overlayVisible ? 1 : 0,
+                  child: IgnorePointer(
+                    ignoring: !_overlayVisible,
+                    child: _buildCollectionManagerOverlay(cs),
+                  ),
+                ),
+              ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
@@ -2352,6 +2613,7 @@ class _EditProfilePageState extends State<_EditProfilePage> {
   late final TextEditingController _bioController;
 
   bool _saving = false;
+  bool _uploadingAvatar = false;
   String? _avatarUrl;
 
   @override
@@ -2374,15 +2636,37 @@ class _EditProfilePageState extends State<_EditProfilePage> {
   }
 
   Future<void> _uploadAvatar() async {
+    if (_uploadingAvatar) return;
     final file = await pickDeviceFile(accept: 'image/*');
-    if (file == null) return;
-    final String url = await _repository.uploadProfileAvatar(
-      bytes: file.bytes,
-      fileName: file.name,
-      contentType: file.contentType,
-    );
-    if (!mounted) return;
-    setState(() => _avatarUrl = url);
+    if (file == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No image selected.')),
+      );
+      return;
+    }
+    setState(() => _uploadingAvatar = true);
+    try {
+      final String url = await _repository.uploadProfileAvatar(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+      );
+      if (!mounted) return;
+      setState(() => _avatarUrl = url);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile photo uploaded.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Profile upload failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingAvatar = false);
+      }
+    }
   }
 
   Future<void> _save() async {
@@ -2436,15 +2720,17 @@ class _EditProfilePageState extends State<_EditProfilePage> {
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton(
-                    onPressed: _uploadAvatar,
-                    child: const Text('Upload Profile Picture'),
+                    onPressed: _uploadingAvatar ? null : _uploadAvatar,
+                    child: Text(_uploadingAvatar
+                        ? 'Uploading...'
+                        : 'Upload Profile Picture'),
                   ),
                 ],
               ),
               const SizedBox(height: 16),
-              TextField(
+              TextFormField(
                 enabled: false,
-                controller: TextEditingController(text: widget.profile.email),
+                initialValue: widget.profile.email,
                 decoration: InputDecoration(
                   labelText: 'Email',
                   filled: true,
@@ -2636,8 +2922,15 @@ class _ChatTabState extends State<_ChatTab> {
     );
     if (profile == null) return;
     try {
-      await _repository.createOrGetDirectChat(profile.userId);
+      final chatId = await _repository.createOrGetDirectChat(profile.userId);
       await _bootstrap();
+      if (!mounted) return;
+      for (final chat in _chats) {
+        if (chat.id == chatId) {
+          await _selectChat(chat);
+          break;
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2653,11 +2946,26 @@ class _ChatTabState extends State<_ChatTab> {
     );
     if (result == null) return;
     try {
-      await _repository.createGroupChat(
+      final chatId = await _repository.createGroupChat(
         name: result.name,
         memberIds: result.memberIds,
       );
       await _bootstrap();
+      if (!mounted) return;
+      ChatSummary? created;
+      for (final chat in _chats) {
+        if (chat.id == chatId) {
+          created = chat;
+          break;
+        }
+      }
+      if (created != null) {
+        await _selectChat(created);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Group created but not yet visible. Refreshing chats...')),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3000,6 +3308,9 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
   final TextEditingController _searchController = TextEditingController();
   List<AppUserProfile> _profiles = const <AppUserProfile>[];
   bool _loading = true;
+  Timer? _debounce;
+  int _searchToken = 0;
+  String? _error;
 
   @override
   void initState() {
@@ -3009,24 +3320,35 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
+  void _scheduleSearch() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 250), _search);
+  }
+
   Future<void> _search() async {
-    setState(() => _loading = true);
+    final int token = ++_searchToken;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final profiles = await _repository.searchProfiles(_searchController.text);
-      if (!mounted) return;
+      if (!mounted || token != _searchToken) return;
       setState(() {
         _profiles = profiles;
         _loading = false;
       });
-    } catch (_) {
-      if (!mounted) return;
+    } catch (e) {
+      if (!mounted || token != _searchToken) return;
       setState(() {
         _profiles = const <AppUserProfile>[];
         _loading = false;
+        _error = 'Search failed: $e';
       });
     }
   }
@@ -3047,6 +3369,7 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
                 Expanded(
                   child: TextField(
                     controller: _searchController,
+                    onChanged: (_) => _scheduleSearch(),
                     decoration: InputDecoration(
                       hintText: 'Search username/full name/email',
                       filled: true,
@@ -3056,10 +3379,28 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                ElevatedButton(onPressed: _search, child: const Text('Search')),
+                if (_loading)
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: cs.primary,
+                    ),
+                  )
+                else
+                  Icon(Icons.search, color: cs.onSurfaceVariant),
               ],
             ),
             const SizedBox(height: 10),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: cs.error),
+                ),
+              ),
             if (_loading)
               Padding(
                 padding: const EdgeInsets.all(16),
@@ -3068,32 +3409,39 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
             else
               SizedBox(
                 height: 340,
-                child: ListView.builder(
-                  itemCount: _profiles.length,
-                  itemBuilder: (context, index) {
-                    final p = _profiles[index];
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundImage:
-                            (p.avatarUrl != null && p.avatarUrl!.isNotEmpty)
-                                ? NetworkImage(p.avatarUrl!)
-                                : null,
-                        child: (p.avatarUrl == null || p.avatarUrl!.isEmpty)
-                            ? const Icon(Icons.person)
-                            : null,
+                child: _profiles.isEmpty
+                    ? Center(
+                        child: Text(
+                          'No users found',
+                          style: TextStyle(color: cs.onSurfaceVariant),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _profiles.length,
+                        itemBuilder: (context, index) {
+                          final p = _profiles[index];
+                          return ListTile(
+                            leading: CircleAvatar(
+                              backgroundImage:
+                                  (p.avatarUrl != null && p.avatarUrl!.isNotEmpty)
+                                      ? NetworkImage(p.avatarUrl!)
+                                      : null,
+                              child: (p.avatarUrl == null || p.avatarUrl!.isEmpty)
+                                  ? const Icon(Icons.person)
+                                  : null,
+                            ),
+                            title: Text(
+                              p.displayName,
+                              style: TextStyle(color: cs.onSurface),
+                            ),
+                            subtitle: Text(
+                              p.email,
+                              style: TextStyle(color: cs.onSurfaceVariant),
+                            ),
+                            onTap: () => Navigator.pop(context, p),
+                          );
+                        },
                       ),
-                      title: Text(
-                        p.displayName,
-                        style: TextStyle(color: cs.onSurface),
-                      ),
-                      subtitle: Text(
-                        p.email,
-                        style: TextStyle(color: cs.onSurfaceVariant),
-                      ),
-                      onTap: () => Navigator.pop(context, p),
-                    );
-                  },
-                ),
               ),
           ],
         ),
@@ -3153,6 +3501,10 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
     }
   }
 
+  bool get _canCreate {
+    return _nameController.text.trim().isNotEmpty && _selected.isNotEmpty;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -3166,6 +3518,7 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
           children: [
             TextField(
               controller: _nameController,
+              onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 hintText: 'Group name',
                 filled: true,
@@ -3221,14 +3574,18 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: () {
-            final String name = _nameController.text.trim();
-            if (name.isEmpty || _selected.isEmpty) return;
-            Navigator.pop(
-              context,
-              _GroupChatPayload(name: name, memberIds: _selected.toList()),
-            );
-          },
+          onPressed: _canCreate
+              ? () {
+                  final String name = _nameController.text.trim();
+                  Navigator.pop(
+                    context,
+                    _GroupChatPayload(name: name, memberIds: _selected.toList()),
+                  );
+                }
+              : null,
+          style: ElevatedButton.styleFrom(
+            disabledBackgroundColor: cs.surfaceContainerHighest,
+          ),
           child: const Text('Create'),
         ),
       ],

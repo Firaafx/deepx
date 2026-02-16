@@ -94,10 +94,10 @@ class _MyAppState extends State<MyApp> {
         brightness: Brightness.light,
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF0A6FB7),
+          seedColor: const Color(0xFF0095F6),
           brightness: Brightness.light,
         ),
-        scaffoldBackgroundColor: const Color(0xFFF3F6FB),
+        scaffoldBackgroundColor: const Color(0xFFF7F7F7),
         cardColor: Colors.white,
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
@@ -112,13 +112,13 @@ class _MyAppState extends State<MyApp> {
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
           brightness: Brightness.dark,
-          seedColor: const Color(0xFF00B8D4),
+          seedColor: const Color(0xFF0095F6),
         ),
-        scaffoldBackgroundColor: const Color(0xFF060A10),
-        cardColor: const Color(0xFF111824),
+        scaffoldBackgroundColor: const Color(0xFF000000),
+        cardColor: const Color(0xFF121212),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFF111824),
+          fillColor: const Color(0xFF141414),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
           ),

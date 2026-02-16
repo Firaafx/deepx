@@ -266,10 +266,15 @@ class _LayerModeState extends State<LayerMode> {
   TextEditingController presetNameController = TextEditingController();
   Timer? _debounceTimer;
   late String viewID;
+  late String _trackerFrameElementId;
+  late String _trackerBridgeChannel;
+  web.HTMLIFrameElement? _trackerIframe;
   final AppRepository _repository = AppRepository.instance;
   final StreamController<Map<String, dynamic>> _dataController =
       StreamController.broadcast();
   StreamSubscription? _messageSubscription;
+  StreamSubscription<Map<String, dynamic>>? _trackingDataSubscription;
+  bool _uploadingImage = false;
   @override
   void initState() {
     super.initState();
@@ -312,14 +317,14 @@ class _LayerModeState extends State<LayerMode> {
       debugPrint('Failed to load 2D mode state: $e');
     }
 
-    final controls = (modeState?['controls'] as Map?)?.cast<String, dynamic>();
+    final controls = _asMap(modeState?['controls']);
     _applyControlSettingsMap(controls);
     selectedAspect = modeState?['selectedAspect'] as String?;
     if (selectedAspect != null && selectedAspect!.isEmpty) {
       selectedAspect = null;
     }
 
-    final savedLayers = (modeState?['layers'] as Map?)?.cast<String, dynamic>();
+    final savedLayers = _asMap(modeState?['layers']);
     final adaptedPreset = _adaptPresetPayload(widget.initialPresetPayload);
     if (adaptedPreset != null) {
       _applyControlSettingsMap(adaptedPreset.controls);
@@ -332,47 +337,96 @@ class _LayerModeState extends State<LayerMode> {
 
   void _initTrackerBridge() {
     viewID = 'cyber-tracker-${DateTime.now().millisecondsSinceEpoch}';
+    _trackerFrameElementId =
+        'layer-tracker-${DateTime.now().millisecondsSinceEpoch}';
+    _trackerBridgeChannel =
+        'layer-tracker-bridge-${DateTime.now().microsecondsSinceEpoch}';
     ui_web.platformViewRegistry.registerViewFactory(viewID, (int viewId) {
       final web.HTMLIFrameElement iframe = web.HTMLIFrameElement();
+      iframe.id = _trackerFrameElementId;
       iframe.setAttribute('width', '100%');
       iframe.setAttribute('height', '100%');
-      iframe.src = 'assets/tracker.html';
+      iframe.src = 'assets/tracker.html?channel=$_trackerBridgeChannel';
       iframe.style.setProperty('border', 'none');
+      iframe.style.setProperty('background', 'transparent');
       iframe.allow = 'camera *; microphone *; fullscreen *';
+      _trackerIframe = iframe;
+      scheduleMicrotask(_postTrackerConfig);
       return iframe;
     });
 
     _messageSubscription = web.window.onMessage.listen((event) {
-      final data = event.data;
-      if (data is JSString) {
-        final JSString jsString = data;
-        final jsonString = jsString.toDart;
-        try {
-          final Map<String, dynamic> messageData = jsonDecode(jsonString);
-          if (messageData.containsKey('type') &&
-              messageData['type'] == 'hide_tracker') {
-            setState(() {
-              showTracker = false;
-            });
-          } else {
-            _dataController.add(messageData);
-          }
-        } catch (e) {
-          debugPrint('Error parsing tracking data: $e');
-        }
+      if (!_isFromTracker(event)) return;
+      final Map<String, dynamic>? messageData = _extractPayload(event.data);
+      if (messageData == null) return;
+      if (messageData['channel'] != null &&
+          messageData['channel'].toString() != _trackerBridgeChannel) {
+        return;
       }
+      if (messageData['type'] == 'hide_tracker') {
+        setState(() => showTracker = false);
+        return;
+      }
+      _dataController.add(messageData);
     });
 
-    _dataController.stream.listen((data) {
+    _trackingDataSubscription = _dataController.stream.listen((data) {
       if (!isEditMode && !manualMode) {
         setState(() => _applyHeadTrackingMap(data));
       }
     });
   }
 
+  void _postTrackerConfig() {
+    final iframe = _trackerIframe;
+    if (iframe == null) return;
+    final payload = <String, dynamic>{
+      'type': 'tracker_config',
+      'channel': _trackerBridgeChannel,
+      'enabled': true,
+      'uiVisible': showTracker,
+      'showCursor': showTracker,
+      'headless': !showTracker,
+    };
+    try {
+      iframe.contentWindow?.postMessage(jsonEncode(payload).toJS, '*'.toJS);
+    } catch (_) {}
+  }
+
+  bool _isFromTracker(web.MessageEvent event) {
+    final iframe = _trackerIframe;
+    if (iframe == null) return false;
+    final source = event.source;
+    if (source == null) return false;
+    return identical(source, iframe.contentWindow) || source == iframe.contentWindow;
+  }
+
+  Map<String, dynamic>? _extractPayload(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    if (data is JSString) return _decodePayload(data.toDart);
+    if (data is String) return _decodePayload(data);
+    return null;
+  }
+
+  Map<String, dynamic>? _decodePayload(String value) {
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
+  Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
+  }
+
   void _applyHeadTrackingMap(Map<String, dynamic> data) {
     final Map<String, dynamic> headData =
-        (data['head'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+        _asMap(data['head']) ?? <String, dynamic>{};
     final double rawHeadX = (headData['x'] ?? 0.0).toDouble();
     final double rawHeadY = (headData['y'] ?? 0.0).toDouble();
     final double rawZ = (headData['z'] ?? 0.0).toDouble();
@@ -423,7 +477,20 @@ class _LayerModeState extends State<LayerMode> {
     _debounceTimer?.cancel();
     urlController.dispose();
     presetNameController.dispose();
+    final iframe = _trackerIframe;
+    if (iframe != null) {
+      try {
+        iframe.contentWindow?.postMessage(
+          jsonEncode(<String, dynamic>{
+            'type': 'dispose_tracker',
+            'channel': _trackerBridgeChannel,
+          }).toJS,
+          '*'.toJS,
+        );
+      } catch (_) {}
+    }
     _messageSubscription?.cancel();
+    _trackingDataSubscription?.cancel();
     _dataController.close();
     super.dispose();
   }
@@ -452,6 +519,9 @@ class _LayerModeState extends State<LayerMode> {
       anchorHeadX = ((map['anchorHeadX'] ?? anchorHeadX) as num).toDouble();
       anchorHeadY = ((map['anchorHeadY'] ?? anchorHeadY) as num).toDouble();
     });
+    if (widget.externalHeadPose == null) {
+      _postTrackerConfig();
+    }
   }
 
   Map<String, dynamic> _controlSettingsMap() {
@@ -757,8 +827,18 @@ class _LayerModeState extends State<LayerMode> {
   }
 
   Future<void> _uploadImageFromDevice() async {
+    if (_uploadingImage) return;
+    setState(() => _uploadingImage = true);
     final file = await pickDeviceFile(accept: 'image/*');
-    if (file == null) return;
+    if (file == null) {
+      if (mounted) {
+        setState(() => _uploadingImage = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No file selected.')),
+        );
+      }
+      return;
+    }
 
     try {
       final String url = await _repository.uploadAssetBytes(
@@ -779,6 +859,10 @@ class _LayerModeState extends State<LayerMode> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Upload failed: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingImage = false);
+      }
     }
   }
 
@@ -831,15 +915,14 @@ class _LayerModeState extends State<LayerMode> {
       children: [
         _buildLayersStack(),
         if (!widget.cleanView && widget.externalHeadPose == null)
-          IgnorePointer(
-            ignoring: !showTracker,
-            child: Positioned(
-              left: showTracker ? 0 : -10000.0,
-              top: showTracker ? 0 : -10000.0,
-              child: SizedBox(
-                width: showTracker ? MediaQuery.of(context).size.width : 1.0,
-                height: showTracker ? MediaQuery.of(context).size.height : 1.0,
-                child: HtmlElementView(viewType: viewID),
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: !showTracker,
+              child: ClipRect(
+                child: Opacity(
+                  opacity: showTracker ? 1 : 0,
+                  child: HtmlElementView(viewType: viewID),
+                ),
               ),
             ),
           ),
@@ -1173,12 +1256,12 @@ class _LayerModeState extends State<LayerMode> {
                     ),
                     const SizedBox(height: 6),
                     ElevatedButton(
-                      onPressed: _uploadImageFromDevice,
+                      onPressed: _uploadingImage ? null : _uploadImageFromDevice,
                       style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.amberAccent),
-                      child: const Text(
-                        "Upload",
-                        style: TextStyle(color: Colors.black),
+                      child: Text(
+                        _uploadingImage ? "Uploading..." : "Upload",
+                        style: const TextStyle(color: Colors.black),
                       ),
                     ),
                   ],
@@ -1383,17 +1466,17 @@ class _LayerModeState extends State<LayerMode> {
                 if (config.isText) ...[
                   const Text("TEXT CONTENT",
                       style: TextStyle(color: Colors.white60, fontSize: 10)),
-                  TextField(
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                      decoration: const InputDecoration(
-                          filled: true, fillColor: Colors.white10),
-                      onChanged: (v) {
-                        _saveToHistory();
-                        setState(() => config.textValue = v);
-                      },
-                      controller: TextEditingController(text: config.textValue)
-                        ..selection = TextSelection.collapsed(
-                            offset: config.textValue!.length)),
+                  TextFormField(
+                    key: ValueKey('text-content-${config.name}'),
+                    initialValue: config.textValue ?? '',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    decoration: const InputDecoration(
+                        filled: true, fillColor: Colors.white10),
+                    onChanged: (v) {
+                      _saveToHistory();
+                      setState(() => config.textValue = v);
+                    },
+                  ),
                   const SizedBox(height: 10),
                   _fontDropdown(config),
                   _enhancedSlider("Font Size", config.fontSize, 10, 300, 1.0,
@@ -1468,7 +1551,8 @@ class _LayerModeState extends State<LayerMode> {
         SizedBox(
             width: 80,
             height: 25,
-            child: TextField(
+            child: TextFormField(
+                initialValue: hex,
                 style: const TextStyle(color: Colors.white, fontSize: 10),
                 decoration: const InputDecoration(
                     contentPadding: EdgeInsets.symmetric(horizontal: 5),
@@ -1477,8 +1561,7 @@ class _LayerModeState extends State<LayerMode> {
                 onChanged: (v) {
                   _saveToHistory();
                   onHexChange(v);
-                },
-                controller: TextEditingController(text: hex))),
+                })),
       ]),
     );
   }
@@ -1550,6 +1633,7 @@ class _LayerModeState extends State<LayerMode> {
                 }),
                 _toggleRow("Show Tracker", showTracker, (v) {
                   setState(() => showTracker = v);
+                  _postTrackerConfig();
                 }),
                 _enhancedSlider("Dead Zone X", deadZoneX, 0.001, 0.1, 0.001,
                     (v) {
@@ -1709,12 +1793,10 @@ class _LayerModeState extends State<LayerMode> {
               Text(l, style: const TextStyle(color: Colors.white, fontSize: 9)),
               SizedBox(
                 width: 60,
-                child: TextField(
-                  controller: TextEditingController(text: v.toStringAsFixed(3))
-                    ..selection = TextSelection.collapsed(
-                        offset: v.toStringAsFixed(3).length),
+                child: TextFormField(
+                  initialValue: v.toStringAsFixed(3),
                   style: const TextStyle(color: Colors.cyanAccent, fontSize: 8),
-                  onSubmitted: (s) {
+                  onFieldSubmitted: (s) {
                     double newV = double.tryParse(s) ?? v;
                     cb(newV.clamp(min, max));
                   },

@@ -1189,9 +1189,21 @@ class AppRepository {
           );
       return _client.storage.from(bucket).getPublicUrl(path);
     } on StorageException catch (e) {
+      final String message = e.message.toLowerCase();
+      if (message.contains('bucket') && message.contains('not found')) {
+        throw Exception(
+          'Upload failed: storage bucket "$bucket" is missing.',
+        );
+      }
+      if (message.contains('row-level security') || message.contains('policy')) {
+        throw Exception(
+          'Upload failed: storage policy blocked this file. Verify RLS for bucket "$bucket".',
+        );
+      }
       throw Exception('Upload failed in storage: ${e.message}');
     } on PostgrestException catch (e) {
-      throw Exception('Upload failed by database policy: ${e.message}');
+      throw Exception(
+          'Upload failed by database policy (${e.code}): ${e.message}');
     } catch (e) {
       throw Exception('Upload failed: $e');
     }

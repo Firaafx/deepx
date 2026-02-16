@@ -131,6 +131,7 @@ let handTransY = 0.001;
 let uiVisible = true;
 const params = new URLSearchParams(window.location.search);
 const GLOBAL_TRACKER = params.get('global') === '1';
+let activeChannel = params.get('channel') || null;
 let headlessMode = params.get('headless') === '1';
 let trackerRuntimeEnabled = true;
 let runtimeShowCursor = true;
@@ -140,9 +141,59 @@ let doubleClickThreshold = 600; // Changed to 600ms
 let doubleDragThreshold = 300;
 let lastDoubleDragTime = 0;
 const inputSmooth = 0.7;
+let trackerDisposed = false;
+
+function emitToParent(payload) {
+    const message = activeChannel ? { ...payload, channel: activeChannel } : payload;
+    window.parent.postMessage(JSON.stringify(message), '*');
+}
+
+function parseBridgePayload(rawData) {
+    if (typeof rawData === 'string') {
+        try {
+            return JSON.parse(rawData);
+        } catch (_) {
+            return null;
+        }
+    }
+    if (rawData && typeof rawData === 'object') {
+        return rawData;
+    }
+    return null;
+}
+
+function disposeTrackerRuntime() {
+    if (trackerDisposed) return;
+    trackerDisposed = true;
+    trackerRuntimeEnabled = false;
+    uiVisible = false;
+    headlessMode = true;
+    runtimeShowCursor = false;
+    applyRuntimeVisibility();
+    const stream = document.getElementById('webcam-small')?.srcObject;
+    if (stream && typeof stream.getTracks === 'function') {
+        stream.getTracks().forEach((track) => track.stop());
+    }
+    if (cameraSvc && typeof cameraSvc.stop === 'function') {
+        try {
+            cameraSvc.stop();
+        } catch (_) {}
+    }
+    if (conn && typeof conn.close === 'function') {
+        try {
+            conn.close();
+        } catch (_) {}
+    }
+    if (peer && typeof peer.destroy === 'function') {
+        try {
+            peer.destroy();
+        } catch (_) {}
+    }
+}
 
 function applyRuntimeVisibility() {
     const showUi = uiVisible && !headlessMode;
+    document.body.classList.toggle('tracker-headless', !showUi);
     const panelDisplay = showUi ? 'block' : 'none';
     document.getElementById('tracker-panel').style.display = panelDisplay;
     document.getElementById('ui-video-box').style.display = panelDisplay;
@@ -158,6 +209,9 @@ function applyRuntimeVisibility() {
 
 function applyTrackerConfig(config) {
     if (!config || typeof config !== 'object') return;
+    if (typeof config.channel === 'string' && config.channel.length > 0) {
+        activeChannel = config.channel;
+    }
     if (typeof config.enabled === 'boolean') {
         const toggle = document.getElementById('tracking-toggle');
         const nextEnabled = config.enabled;
@@ -193,12 +247,16 @@ async function init() {
     }
     applyRuntimeVisibility();
     window.addEventListener('message', (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'tracker_config') {
-                applyTrackerConfig(data);
-            }
-        } catch (_) {}
+        const data = parseBridgePayload(event.data);
+        if (!data || typeof data !== 'object') return;
+        if (data.channel && activeChannel && data.channel !== activeChannel) return;
+        if (data.type === 'dispose_tracker') {
+            disposeTrackerRuntime();
+            return;
+        }
+        if (data.type === 'tracker_config') {
+            applyTrackerConfig(data);
+        }
     });
     faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`});
     hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`});
@@ -558,7 +616,7 @@ async function init() {
             uiVisible = !headlessMode;
             applyRuntimeVisibility();
             if (e.target.checked) {
-                window.parent.postMessage(JSON.stringify({type: 'hide_tracker'}), '*');
+                emitToParent({type: 'hide_tracker'});
             }
         };
     }
@@ -1026,6 +1084,7 @@ function toggleUI() {
     applyRuntimeVisibility();
 }
 function frameUpdate() {
+    if (trackerDisposed) return;
     frameCount++;
     const now = performance.now();
     dt = now - prevTime;
@@ -1481,7 +1540,7 @@ function frameUpdate() {
         }
         // Add more as needed, e.g., ear, etc.
     };
-    window.parent.postMessage(JSON.stringify(trackingData), '*');
+    emitToParent(trackingData);
     requestAnimationFrame(frameUpdate);
 }
 function drawHUD() {
