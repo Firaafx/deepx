@@ -85,7 +85,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
 <head>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap');
-        body { margin: 0; background: #000; overflow: hidden; font-family: 'Poppins', sans-serif; color: #e0e0e0; }
+        body { margin: 0; background: __BODY_BG__; overflow: hidden; font-family: 'Poppins', sans-serif; color: #e0e0e0; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; }
         /* --- 3D ENGINE PANEL (RIGHT) --- */
         #control-panel-3d {
@@ -528,13 +528,19 @@ class _Engine3DPageState extends State<Engine3DPage> {
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.copy(initPos);
             camera.setRotationFromEuler(initRot);
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: CLEAN_VIEW });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
             renderer.toneMappingExposure = 1.2;
             renderer.shadowMap.enabled = true;
             renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            if (CLEAN_VIEW) {
+                renderer.setClearColor(0x000000, 0);
+                document.body.style.background = 'transparent';
+            } else {
+                renderer.setClearColor(0x000000, 1);
+            }
             renderer.setAnimationLoop(animate);
             document.getElementById('canvas-container').appendChild(renderer.domElement);
             if (CLEAN_VIEW) {
@@ -712,7 +718,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
             });
         }
         // --- MODEL LOADING & TRANSFORMS ---
-        function addModel(url) {
+        function addModel(url, initialState = null) {
             if(!url) return Promise.resolve(null);
             const modelName = url.split('/').pop().replace(/\.[^/.]+$/, "");
             document.getElementById('model-url').value = '';
@@ -721,6 +727,11 @@ class _Engine3DPageState extends State<Engine3DPage> {
                     const model = gltf.scene;
                     model.traverse(n => { if(n.isMesh) { n.layers.enable(1); n.castShadow = true; n.receiveShadow = true; } });
                     model.userData.url = url;
+                    model.userData.id =
+                        (initialState && initialState.id) ||
+                        `model_${Date.now()}_${currentModels.length}`;
+                    model.userData.windowLayer =
+                        (initialState && initialState.windowLayer) || 'inside';
                     if (currentModels.length > 0) {
                         currentModels[0].add(model);
                     } else {
@@ -812,8 +823,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
             });
         }
         // --- DYNAMIC LIGHT SYSTEM ---
-        function addPointLight() {
-            const id = Date.now();
+        function addPointLight(initialState = null) {
+            const id = (initialState && initialState.id) || Date.now();
             const light = new THREE.PointLight(0xffffff, 10, 50);
             light.position.set(0, 5, 0);
             light.castShadow = true;
@@ -826,7 +837,13 @@ class _Engine3DPageState extends State<Engine3DPage> {
             const helper = new THREE.Mesh(new THREE.SphereGeometry(0.2), new THREE.MeshStandardMaterial({emissive: 0xffffff, emissiveIntensity: 1, toneMapped: false}));
             helper.layers.enable(1);
             root.add(helper);
-            const lightData = { id, light, helper, modelIndex: currentModels.length > 0 ? 0 : -1 };
+            const lightData = {
+                id,
+                light,
+                helper,
+                modelIndex: currentModels.length > 0 ? 0 : -1,
+                windowLayer: (initialState && initialState.windowLayer) || 'inside',
+            };
             dynamicLights.push(lightData);
             const card = document.createElement('div');
             card.className = 'light-card';
@@ -1317,6 +1334,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
         function getCurrentState() {
             return {
                 models: currentModels.map((m, i) => ({
+                    id: m.userData.id || `model_${i}`,
+                    windowLayer: m.userData.windowLayer || 'inside',
                     name: modelNames[i],
                     url: m.userData.url,
                     position: m.position.toArray(),
@@ -1325,6 +1344,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
                     visible: m.visible
                 })),
                 lights: dynamicLights.map(l => ({
+                    id: l.id,
+                    windowLayer: l.windowLayer || 'inside',
                     color: l.light.color.getHexString(),
                     intensity: l.light.intensity,
                     position: l.light.position.toArray(),
@@ -1370,18 +1391,19 @@ class _Engine3DPageState extends State<Engine3DPage> {
             const audios = Array.isArray(state.audios) ? state.audios : [];
             // Load models
             for (const m of models) {
-                const model = await addModel(m.url);
+                const model = await addModel(m.url, m);
                 if (!model) continue;
                 if (Array.isArray(m.position)) model.position.fromArray(m.position);
                 if (Array.isArray(m.rotation)) model.rotation.fromArray(m.rotation);
                 if (Array.isArray(m.scale)) model.scale.fromArray(m.scale);
-                model.visible = m.visible;
+                model.visible = (m.visible !== false);
             }
             // Load lights
-            lights.forEach(() => addPointLight());
+            lights.forEach((l) => addPointLight(l));
             lights.forEach((l, i) => {
                 const lightData = dynamicLights[i];
                 if (!lightData) return;
+                lightData.windowLayer = l.windowLayer || 'inside';
                 lightData.light.color.setHex('0x' + l.color);
                 lightData.light.intensity = l.intensity;
                 if (Array.isArray(l.position)) {
@@ -1620,8 +1642,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
 ''';
     content = content
         .replaceAll('__CLEAN_VIEW__', widget.cleanView ? 'true' : 'false')
-        .replaceAll(
-            '__AUDIO_ENABLED__', widget.disableAudio ? 'false' : 'true')
+        .replaceAll('__AUDIO_ENABLED__', widget.disableAudio ? 'false' : 'true')
+        .replaceAll('__BODY_BG__', widget.cleanView ? 'transparent' : '#000')
         .replaceAll('__BRIDGE_CHANNEL__', _bridgeChannel);
 
     ui_web.platformViewRegistry.registerViewFactory(viewID, (int viewId) {
@@ -2197,7 +2219,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
     if (iframe == null) return false;
     final source = event.source;
     if (source == null) return false;
-    return identical(source, iframe.contentWindow) || source == iframe.contentWindow;
+    return identical(source, iframe.contentWindow) ||
+        source == iframe.contentWindow;
   }
 
   bool _isFromTracker(web.MessageEvent event) {
@@ -2205,7 +2228,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
     if (iframe == null) return false;
     final source = event.source;
     if (source == null) return false;
-    return identical(source, iframe.contentWindow) || source == iframe.contentWindow;
+    return identical(source, iframe.contentWindow) ||
+        source == iframe.contentWindow;
   }
 
   Map<String, dynamic>? _extractPayload(dynamic data) {
@@ -2312,8 +2336,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
                                 successLabel: '3D model',
                               ),
                       icon: const Icon(Icons.view_in_ar_outlined, size: 16),
-                      label:
-                          Text(_uploadingAsset ? 'Uploading...' : 'Upload Model'),
+                      label: Text(
+                          _uploadingAsset ? 'Uploading...' : 'Upload Model'),
                     ),
                     ElevatedButton.icon(
                       onPressed: _uploadingAsset || widget.disableAudio
@@ -2325,8 +2349,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
                                 successLabel: 'Audio',
                               ),
                       icon: const Icon(Icons.graphic_eq_outlined, size: 16),
-                      label:
-                          Text(_uploadingAsset ? 'Uploading...' : 'Upload Audio'),
+                      label: Text(
+                          _uploadingAsset ? 'Uploading...' : 'Upload Audio'),
                     ),
                     ElevatedButton.icon(
                       onPressed: _uploadingAsset

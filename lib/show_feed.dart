@@ -24,6 +24,7 @@ import 'services/app_repository.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
 import 'widgets/preset_viewer.dart';
+import 'widgets/window_effect_2d_preview.dart';
 
 enum _ShellTab {
   home,
@@ -98,6 +99,9 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   bool _navExpanded = false;
   bool _realNavHover = false;
   bool _trackerNavHover = false;
+  DateTime _lastTrackerHoverInsideAt =
+      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true).toLocal();
+  Timer? _trackerNavDebounce;
   VoidCallback? _trackerNavListener;
   AppUserProfile? _currentProfile;
 
@@ -113,6 +117,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
 
   @override
   void dispose() {
+    _trackerNavDebounce?.cancel();
     final listener = _trackerNavListener;
     if (listener != null) {
       TrackingService.instance.frameNotifier.removeListener(listener);
@@ -155,19 +160,50 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
 
   void _syncTrackerCursorHover() {
     if (!mounted) return;
+    final tracking = TrackingService.instance;
+    if (!tracking.trackerEnabled || !tracking.dartCursorEnabled) {
+      _setTrackerNavHover(false);
+      return;
+    }
     final RenderBox? box =
         _navRegionKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) {
       _setTrackerNavHover(false);
       return;
     }
-    final frame = TrackingService.instance.frameNotifier.value;
-    final Offset local = box.globalToLocal(Offset(frame.cursorX, frame.cursorY));
-    final bool inside = local.dx >= 0 &&
+    final frame = tracking.frameNotifier.value;
+    if (frame.cursorX <= 0 && frame.cursorY <= 0) {
+      _setTrackerNavHover(false);
+      return;
+    }
+    final Offset local =
+        box.globalToLocal(Offset(frame.cursorX, frame.cursorY));
+    final bool insideStrict = local.dx >= 0 &&
         local.dy >= 0 &&
         local.dx <= box.size.width &&
         local.dy <= box.size.height;
-    _setTrackerNavHover(inside);
+    final bool insideHysteresis = local.dx >= -12 &&
+        local.dy >= -12 &&
+        local.dx <= box.size.width + 12 &&
+        local.dy <= box.size.height + 12;
+    if (insideStrict) {
+      _lastTrackerHoverInsideAt = DateTime.now();
+      _trackerNavDebounce?.cancel();
+      _setTrackerNavHover(true);
+      return;
+    }
+    if (_trackerNavHover && insideHysteresis) {
+      final Duration elapsed =
+          DateTime.now().difference(_lastTrackerHoverInsideAt);
+      if (elapsed.inMilliseconds < 160) {
+        return;
+      }
+    }
+    _trackerNavDebounce?.cancel();
+    _trackerNavDebounce = Timer(const Duration(milliseconds: 90), () {
+      if (!mounted) return;
+      _setTrackerNavHover(false);
+    });
   }
 
   void _setTrackerNavHover(bool value) {
@@ -193,17 +229,20 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     return tab != _ShellTab.home && tab != _ShellTab.collection;
   }
 
-  void _promptSignIn() {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Please sign in to access this section.')),
+  Future<bool> _promptSignIn() async {
+    if (!mounted) return false;
+    final bool shouldSignIn = await _showSignInRequiredSheet(
+      context,
+      message: 'This action requires sign in.',
     );
+    if (!mounted || !shouldSignIn) return false;
     Navigator.pushNamed(context, '/auth');
+    return true;
   }
 
-  void _switchTab(_ShellTab tab) {
+  Future<void> _switchTab(_ShellTab tab) async {
     if (_isGuest && _tabNeedsAuth(tab)) {
-      _promptSignIn();
+      await _promptSignIn();
       return;
     }
     setState(() => _activeTab = tab);
@@ -382,7 +421,8 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                 },
                                 blendMode: BlendMode.dstIn,
                                 child: BackdropFilter(
-                                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                                  filter:
+                                      ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                                   child: Container(
                                     color: Colors.black.withValues(alpha: 0.6),
                                   ),
@@ -404,7 +444,8 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                               ),
                             ),
                             Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 10, 10, 10),
                               child: Row(
                                 children: [
                                   AnimatedSwitcher(
@@ -414,7 +455,8 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                       key: ValueKey<String>(headerTitle),
                                       style: (_activeTab == _ShellTab.home
                                                   ? GoogleFonts.orbitron(
-                                                      fontWeight: FontWeight.w700,
+                                                      fontWeight:
+                                                          FontWeight.w700,
                                                     )
                                                   : null)
                                               ?.copyWith(
@@ -432,7 +474,8 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                   if (_currentProfile != null)
                                     InkWell(
                                       borderRadius: BorderRadius.circular(24),
-                                      onTap: () => _switchTab(_ShellTab.profile),
+                                      onTap: () =>
+                                          _switchTab(_ShellTab.profile),
                                       child: Padding(
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 6,
@@ -443,20 +486,25 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                             CircleAvatar(
                                               radius: 15,
                                               backgroundImage:
-                                                  (_currentProfile!.avatarUrl != null &&
+                                                  (_currentProfile!.avatarUrl !=
+                                                              null &&
                                                           _currentProfile!
-                                                              .avatarUrl!.isNotEmpty)
+                                                              .avatarUrl!
+                                                              .isNotEmpty)
                                                       ? NetworkImage(
-                                                          _currentProfile!.avatarUrl!)
+                                                          _currentProfile!
+                                                              .avatarUrl!)
                                                       : null,
                                               backgroundColor:
                                                   cs.surfaceContainerHighest,
-                                              child: (_currentProfile!.avatarUrl ==
+                                              child: (_currentProfile!
+                                                              .avatarUrl ==
                                                           null ||
-                                                      _currentProfile!.avatarUrl!
-                                                          .isEmpty)
+                                                      _currentProfile!
+                                                          .avatarUrl!.isEmpty)
                                                   ? Icon(Icons.person,
-                                                      color: cs.onSurfaceVariant,
+                                                      color:
+                                                          cs.onSurfaceVariant,
                                                       size: 15)
                                                   : null,
                                             ),
@@ -473,13 +521,14 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                     )
                                   else
                                     FilledButton.tonal(
-                                      onPressed: _promptSignIn,
+                                      onPressed: () => _promptSignIn(),
                                       child: const Text('Sign In'),
                                     ),
                                   IconButton(
                                     tooltip: 'Reload',
                                     onPressed: _reloadActiveTab,
-                                    icon: Icon(Icons.refresh, color: headerTitleColor),
+                                    icon: Icon(Icons.refresh,
+                                        color: headerTitleColor),
                                   ),
                                 ],
                               ),
@@ -663,7 +712,9 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            post.preset.isPublic ? 'Post set to private.' : 'Post set to public.',
+            post.preset.isPublic
+                ? 'Post set to private.'
+                : 'Post set to public.',
           ),
         ),
       );
@@ -1026,8 +1077,7 @@ class _CollectionTabState extends State<_CollectionTab> {
             ),
             itemBuilder: (context, index) {
               final summary = _collections[index];
-              final bool mine =
-                  _repository.currentUser?.id == summary.userId;
+              final bool mine = _repository.currentUser?.id == summary.userId;
               return _CollectionFeedTile(
                 summary: summary,
                 onTap: () => _openCollection(summary),
@@ -1066,6 +1116,7 @@ class _CollectionFeedTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final item = summary.firstItem;
+    final BorderRadius cardRadius = BorderRadius.circular(16);
     final preview = item == null
         ? Container(
             color: cs.surfaceContainerLow,
@@ -1077,7 +1128,11 @@ class _CollectionFeedTile extends StatelessWidget {
               ),
             ),
           )
-        : _GridPresetPreview(mode: item.mode, payload: item.snapshot);
+        : _GridPresetPreview(
+            mode: item.mode,
+            payload: item.snapshot,
+            borderRadius: cardRadius,
+          );
 
     Widget deckPlate(
         {required double dx, required double dy, required double a}) {
@@ -1105,14 +1160,14 @@ class _CollectionFeedTile extends StatelessWidget {
           children: <Widget>[
             deckPlate(dx: 12, dy: 8, a: 0.35),
             deckPlate(dx: 6, dy: 4, a: 0.5),
+            Positioned.fill(child: IgnorePointer(child: preview)),
             Positioned.fill(
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: cardRadius,
                 child: Material(
                   color: cs.surfaceContainerLow,
                   child: Stack(
                     children: [
-                      Positioned.fill(child: IgnorePointer(child: preview)),
                       if (isMine)
                         Positioned(
                           top: 8,
@@ -1122,7 +1177,9 @@ class _CollectionFeedTile extends StatelessWidget {
                             color: cs.surfaceContainerHighest,
                             onSelected: (value) {
                               if (value == 'update') onUpdate?.call();
-                              if (value == 'visibility') onToggleVisibility?.call();
+                              if (value == 'visibility') {
+                                onToggleVisibility?.call();
+                              }
                               if (value == 'delete') onDelete?.call();
                             },
                             itemBuilder: (context) => [
@@ -1251,114 +1308,135 @@ class _FeedTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final Widget preview =
-        _GridPresetPreview(mode: post.preset.mode, payload: post.preset.payload);
+    final BorderRadius cardRadius = BorderRadius.circular(16);
+    final Widget preview = _GridPresetPreview(
+      mode: post.preset.mode,
+      payload: post.preset.payload,
+      borderRadius: cardRadius,
+    );
 
     return Material(
       color: cs.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
+      borderRadius: cardRadius,
+      clipBehavior: Clip.none,
       child: InkWell(
         onTap: onTap,
+        borderRadius: cardRadius,
         child: Stack(
+          clipBehavior: Clip.none,
           children: [
             Positioned.fill(child: IgnorePointer(child: preview)),
-            if (isMine)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: PopupMenuButton<String>(
-                  tooltip: 'Post actions',
-                  color: cs.surfaceContainerHighest,
-                  onSelected: (value) {
-                    if (value == 'edit') onEdit?.call();
-                    if (value == 'visibility') onToggleVisibility?.call();
-                    if (value == 'delete') onDelete?.call();
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem<String>(
-                      value: 'edit',
-                      child: Text('Update'),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'visibility',
-                      child: Text(
-                        post.preset.isPublic ? 'Make Private' : 'Make Public',
-                      ),
-                    ),
-                    const PopupMenuItem<String>(
-                      value: 'delete',
-                      child: Text('Delete'),
-                    ),
-                  ],
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                      child: Container(
-                        padding: const EdgeInsets.all(6),
-                        color: Colors.black.withValues(alpha: 0.35),
-                        child: const Icon(
-                          Icons.more_vert,
-                          color: Colors.white,
-                          size: 18,
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: cardRadius,
+                child: Stack(
+                  children: [
+                    if (isMine)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: PopupMenuButton<String>(
+                          tooltip: 'Post actions',
+                          color: cs.surfaceContainerHighest,
+                          onSelected: (value) {
+                            if (value == 'edit') onEdit?.call();
+                            if (value == 'visibility') {
+                              onToggleVisibility?.call();
+                            }
+                            if (value == 'delete') onDelete?.call();
+                          },
+                          itemBuilder: (context) => [
+                            const PopupMenuItem<String>(
+                              value: 'edit',
+                              child: Text('Update'),
+                            ),
+                            PopupMenuItem<String>(
+                              value: 'visibility',
+                              child: Text(
+                                post.preset.isPublic
+                                    ? 'Make Private'
+                                    : 'Make Public',
+                              ),
+                            ),
+                            const PopupMenuItem<String>(
+                              value: 'delete',
+                              child: Text('Delete'),
+                            ),
+                          ],
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: BackdropFilter(
+                              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                color: Colors.black.withValues(alpha: 0.35),
+                                child: const Icon(
+                                  Icons.more_vert,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                ),
-              ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [
-                      Colors.black.withValues(alpha: 0.78),
-                      Colors.transparent
-                    ],
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      post.author?.displayName ?? 'Unknown creator',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurface,
-                        fontWeight: FontWeight.w700,
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.78),
+                              Colors.transparent
+                            ],
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              post.author?.displayName ?? 'Unknown creator',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: cs.onSurface,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              post.preset.title.isNotEmpty
+                                  ? post.preset.title
+                                  : post.preset.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: cs.onSurface.withValues(alpha: 0.8),
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            Wrap(
+                              spacing: 8,
+                              children: [
+                                _miniStat(Icons.thumb_up_alt_outlined,
+                                    post.likesCount),
+                                _miniStat(Icons.thumb_down_alt_outlined,
+                                    post.dislikesCount),
+                                _miniStat(Icons.mode_comment_outlined,
+                                    post.commentsCount),
+                                _miniStat(
+                                    Icons.bookmark_border, post.savesCount),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      post.preset.title.isNotEmpty
-                          ? post.preset.title
-                          : post.preset.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurface.withValues(alpha: 0.8),
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        _miniStat(Icons.thumb_up_alt_outlined, post.likesCount),
-                        _miniStat(
-                            Icons.thumb_down_alt_outlined, post.dislikesCount),
-                        _miniStat(
-                            Icons.mode_comment_outlined, post.commentsCount),
-                        _miniStat(Icons.bookmark_border, post.savesCount),
-                      ],
                     ),
                   ],
                 ),
@@ -1389,10 +1467,12 @@ class _GridPresetPreview extends StatelessWidget {
   const _GridPresetPreview({
     required this.mode,
     required this.payload,
+    this.borderRadius = const BorderRadius.all(Radius.circular(16)),
   });
 
   final String mode;
   final Map<String, dynamic> payload;
+  final BorderRadius borderRadius;
 
   @override
   Widget build(BuildContext context) {
@@ -1401,17 +1481,6 @@ class _GridPresetPreview extends StatelessWidget {
       payload,
       fallbackMode: mode,
     );
-
-    if (adapted.mode == '3d') {
-      return PresetViewer(
-        mode: adapted.mode,
-        payload: adapted.toMap(),
-        cleanView: true,
-        embedded: true,
-        disableAudio: true,
-        useGlobalTracking: true,
-      );
-    }
 
     if (adapted.scene.isEmpty) {
       return DecoratedBox(
@@ -1428,14 +1497,151 @@ class _GridPresetPreview extends StatelessWidget {
       );
     }
 
-    return PresetViewer(
-      mode: adapted.mode,
-      payload: adapted.toMap(),
-      cleanView: true,
-      embedded: true,
-      disableAudio: true,
-      useGlobalTracking: true,
+    if (adapted.mode == '2d') {
+      return WindowEffect2DPreview(
+        mode: adapted.mode,
+        payload: adapted.toMap(),
+        borderRadius: borderRadius,
+      );
+    }
+
+    return _build3DPreview(adapted);
+  }
+
+  Widget _build3DPreview(PresetPayloadV2 adapted) {
+    final bool hasWindowAssignments = _has3DWindowAssignments(adapted.scene);
+    if (!hasWindowAssignments) {
+      return PresetViewer(
+        mode: adapted.mode,
+        payload: adapted.toMap(),
+        cleanView: true,
+        embedded: true,
+        disableAudio: true,
+        useGlobalTracking: true,
+      );
+    }
+
+    final Map<String, dynamic> insidePayload = adapted.toMap()
+      ..['scene'] = _filtered3dScene(adapted.scene, 'inside');
+    final Map<String, dynamic> outsidePayload = adapted.toMap()
+      ..['scene'] = _filtered3dScene(adapted.scene, 'outside');
+    final bool hasOutside = _sceneHasModelsOrLights(outsidePayload['scene']);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      fit: StackFit.expand,
+      children: <Widget>[
+        ClipRRect(
+          borderRadius: borderRadius,
+          child: PresetViewer(
+            mode: adapted.mode,
+            payload: insidePayload,
+            cleanView: true,
+            embedded: true,
+            disableAudio: true,
+            useGlobalTracking: true,
+          ),
+        ),
+        if (hasOutside)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final double width = constraints.maxWidth * 1.25;
+                  final double height = constraints.maxHeight * 1.25;
+                  return OverflowBox(
+                    alignment: Alignment.center,
+                    minWidth: width,
+                    minHeight: height,
+                    maxWidth: width,
+                    maxHeight: height,
+                    child: SizedBox(
+                      width: width,
+                      height: height,
+                      child: PresetViewer(
+                        mode: adapted.mode,
+                        payload: outsidePayload,
+                        cleanView: true,
+                        embedded: true,
+                        disableAudio: true,
+                        useGlobalTracking: true,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+      ],
     );
+  }
+
+  bool _has3DWindowAssignments(Map<String, dynamic> scene) {
+    final models = scene['models'];
+    if (models is List) {
+      for (final model in models) {
+        if (model is Map && model['windowLayer'] != null) {
+          return true;
+        }
+      }
+    }
+    final lights = scene['lights'];
+    if (lights is List) {
+      for (final light in lights) {
+        if (light is Map && light['windowLayer'] != null) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  Map<String, dynamic> _filtered3dScene(
+    Map<String, dynamic> scene,
+    String layer,
+  ) {
+    final Map<String, dynamic> next = Map<String, dynamic>.from(scene);
+    final List<Map<String, dynamic>> models = <Map<String, dynamic>>[];
+    final dynamic modelsRaw = scene['models'];
+    if (modelsRaw is List) {
+      for (final item in modelsRaw) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final String windowLayer =
+            (map['windowLayer']?.toString().toLowerCase() ?? 'inside');
+        if (windowLayer == layer) {
+          models.add(map);
+        }
+      }
+    }
+
+    final List<Map<String, dynamic>> lights = <Map<String, dynamic>>[];
+    final dynamic lightsRaw = scene['lights'];
+    if (lightsRaw is List) {
+      for (final item in lightsRaw) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final String windowLayer =
+            (map['windowLayer']?.toString().toLowerCase() ?? 'inside');
+        if (windowLayer == layer) {
+          lights.add(map);
+        }
+      }
+    }
+
+    next['models'] = models;
+    next['lights'] = lights;
+    return next;
+  }
+
+  bool _sceneHasModelsOrLights(dynamic rawScene) {
+    if (rawScene is! Map) return false;
+    final scene = Map<String, dynamic>.from(rawScene);
+    final models = scene['models'];
+    if (models is List && models.isNotEmpty) return true;
+    final lights = scene['lights'];
+    if (lights is List && lights.isNotEmpty) return true;
+    return false;
   }
 }
 
@@ -1466,12 +1672,14 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
       _repository.currentUser != null &&
       _repository.currentUser!.id == _post.preset.userId;
 
-  bool _requireAuthAction() {
+  Future<bool> _requireAuthAction() async {
     if (_repository.currentUser != null) return true;
     if (!mounted) return false;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Please sign in to use this action.')),
+    final bool shouldSignIn = await _showSignInRequiredSheet(
+      context,
+      message: 'This action requires sign in.',
     );
+    if (!mounted || !shouldSignIn) return false;
     Navigator.pushNamed(context, '/auth');
     return false;
   }
@@ -1531,7 +1739,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _toggleReaction(int value) async {
-    if (!_requireAuthAction()) return;
+    if (!await _requireAuthAction()) return;
     final int newReaction = _post.myReaction == value ? 0 : value;
     await _repository.setReaction(
         presetId: _post.preset.id, reaction: newReaction);
@@ -1560,7 +1768,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _toggleSave() async {
-    if (!_requireAuthAction()) return;
+    if (!await _requireAuthAction()) return;
     final bool shouldSave = !_post.isSaved;
     await _repository.toggleSavePreset(_post.preset.id, save: shouldSave);
     if (!mounted) return;
@@ -1582,7 +1790,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _toggleFollow() async {
-    if (!_requireAuthAction()) return;
+    if (!await _requireAuthAction()) return;
     final bool follow = !_post.isFollowingAuthor;
     await _repository.setFollow(
       targetUserId: _post.preset.userId,
@@ -1605,7 +1813,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _shareToUser() async {
-    if (!_requireAuthAction()) return;
+    if (!await _requireAuthAction()) return;
+    if (!mounted) return;
     final profile = await showDialog<AppUserProfile>(
       context: context,
       builder: (context) =>
@@ -1633,7 +1842,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _sendComment() async {
-    if (!_requireAuthAction()) return;
+    if (!await _requireAuthAction()) return;
     final String text = _commentController.text.trim();
     if (text.isEmpty || _sendingComment) return;
     setState(() => _sendingComment = true);
@@ -1678,7 +1887,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _post.preset.isPublic ? 'Post set to private.' : 'Post set to public.',
+            _post.preset.isPublic
+                ? 'Post set to private.'
+                : 'Post set to public.',
           ),
         ),
       );
@@ -1796,7 +2007,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       PopupMenuItem<String>(
                         value: 'visibility',
                         child: Text(
-                          _post.preset.isPublic ? 'Make Private' : 'Make Public',
+                          _post.preset.isPublic
+                              ? 'Make Private'
+                              : 'Make Public',
                         ),
                       ),
                       const PopupMenuItem<String>(
@@ -1826,7 +2039,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   left: 18,
                   bottom: 20,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.4),
                       borderRadius: BorderRadius.circular(12),
@@ -1861,10 +2075,11 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                           children: [
                             CircleAvatar(
                               radius: 16,
-                              backgroundImage: (_post.author?.avatarUrl != null &&
-                                      _post.author!.avatarUrl!.isNotEmpty)
-                                  ? NetworkImage(_post.author!.avatarUrl!)
-                                  : null,
+                              backgroundImage:
+                                  (_post.author?.avatarUrl != null &&
+                                          _post.author!.avatarUrl!.isNotEmpty)
+                                      ? NetworkImage(_post.author!.avatarUrl!)
+                                      : null,
                               child: (_post.author?.avatarUrl == null ||
                                       _post.author!.avatarUrl!.isEmpty)
                                   ? const Icon(Icons.person, size: 14)
@@ -1896,8 +2111,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   bottom: 24,
                   child: Center(
                     child: Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
                         color: Colors.black.withValues(alpha: 0.45),
                         borderRadius: BorderRadius.circular(999),
@@ -1997,31 +2212,35 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                                                 ),
                                               )
                                             : ListView.builder(
-                                                padding: const EdgeInsets.symmetric(
-                                                    horizontal: 12),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 12),
                                                 itemCount: _comments.length,
                                                 itemBuilder: (context, index) {
                                                   final c = _comments[index];
                                                   return Padding(
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                            vertical: 6),
+                                                    padding: const EdgeInsets
+                                                        .symmetric(vertical: 6),
                                                     child: RichText(
                                                       text: TextSpan(
                                                         style: const TextStyle(
-                                                            color: Colors.white70),
+                                                            color:
+                                                                Colors.white70),
                                                         children: [
                                                           TextSpan(
                                                             text:
                                                                 '${c.author?.displayName ?? 'User'}: ',
                                                             style:
                                                                 const TextStyle(
-                                                              color: Colors.white,
+                                                              color:
+                                                                  Colors.white,
                                                               fontWeight:
-                                                                  FontWeight.w600,
+                                                                  FontWeight
+                                                                      .w600,
                                                             ),
                                                           ),
-                                                          TextSpan(text: c.content),
+                                                          TextSpan(
+                                                              text: c.content),
                                                         ],
                                                       ),
                                                     ),
@@ -2030,8 +2249,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                                               ),
                                   ),
                                   Padding(
-                                    padding:
-                                        const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                                    padding: const EdgeInsets.fromLTRB(
+                                        10, 8, 10, 10),
                                     child: Row(
                                       children: [
                                         Expanded(
@@ -2045,10 +2264,11 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                                         ),
                                         const SizedBox(width: 8),
                                         FilledButton(
-                                          onPressed:
-                                              _sendingComment ? null : _sendComment,
-                                          child:
-                                              Text(_sendingComment ? '...' : 'Send'),
+                                          onPressed: _sendingComment
+                                              ? null
+                                              : _sendComment,
+                                          child: Text(
+                                              _sendingComment ? '...' : 'Send'),
                                         ),
                                       ],
                                     ),
@@ -3312,119 +3532,119 @@ class _ProfileTabState extends State<_ProfileTab> {
         child: Column(
           children: [
             Container(
-            margin: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: profilePanelColor,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 42,
-                      backgroundImage: (_profile!.avatarUrl != null &&
-                              _profile!.avatarUrl!.isNotEmpty)
-                          ? NetworkImage(_profile!.avatarUrl!)
-                          : null,
-                      backgroundColor: cs.surfaceContainerHighest,
-                      child: (_profile!.avatarUrl == null ||
-                              _profile!.avatarUrl!.isEmpty)
-                          ? Icon(Icons.person,
-                              color: cs.onSurfaceVariant, size: 34)
-                          : null,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _profile!.fullName?.isNotEmpty == true
-                                ? _profile!.fullName!
-                                : 'No full name set',
-                            style: TextStyle(
-                              color: cs.onSurface,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
+              margin: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: profilePanelColor,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 42,
+                        backgroundImage: (_profile!.avatarUrl != null &&
+                                _profile!.avatarUrl!.isNotEmpty)
+                            ? NetworkImage(_profile!.avatarUrl!)
+                            : null,
+                        backgroundColor: cs.surfaceContainerHighest,
+                        child: (_profile!.avatarUrl == null ||
+                                _profile!.avatarUrl!.isEmpty)
+                            ? Icon(Icons.person,
+                                color: cs.onSurfaceVariant, size: 34)
+                            : null,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _profile!.fullName?.isNotEmpty == true
+                                  ? _profile!.fullName!
+                                  : 'No full name set',
+                              style: TextStyle(
+                                color: cs.onSurface,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _profile!.username?.isNotEmpty == true
+                                  ? '@${_profile!.username}'
+                                  : '@set_username',
+                              style: TextStyle(color: cs.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _profile!.email,
+                              style: TextStyle(color: cs.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              IconButton.filledTonal(
+                                onPressed: _openNotifications,
+                                icon: const Icon(Icons.notifications_outlined),
+                              ),
+                              if (_notifications.any((n) => !n.read))
+                                Positioned(
+                                  right: 3,
+                                  top: 3,
+                                  child: Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: const BoxDecoration(
+                                      color: Colors.redAccent,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _profile!.username?.isNotEmpty == true
-                                ? '@${_profile!.username}'
-                                : '@set_username',
-                            style: TextStyle(color: cs.onSurfaceVariant),
+                          const SizedBox(height: 6),
+                          FilledButton.tonal(
+                            onPressed: _editProfile,
+                            child: const Text('Edit Profile'),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _profile!.email,
-                            style: TextStyle(color: cs.onSurfaceVariant),
+                          const SizedBox(height: 6),
+                          OutlinedButton.icon(
+                            onPressed: _confirmSignOut,
+                            icon: const Icon(Icons.logout, size: 16),
+                            label: const Text('Logout'),
                           ),
                         ],
                       ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            IconButton.filledTonal(
-                              onPressed: _openNotifications,
-                              icon: const Icon(Icons.notifications_outlined),
-                            ),
-                            if (_notifications.any((n) => !n.read))
-                              Positioned(
-                                right: 3,
-                                top: 3,
-                                child: Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: const BoxDecoration(
-                                    color: Colors.redAccent,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        FilledButton.tonal(
-                          onPressed: _editProfile,
-                          child: const Text('Edit Profile'),
-                        ),
-                        const SizedBox(height: 6),
-                        OutlinedButton.icon(
-                          onPressed: _confirmSignOut,
-                          icon: const Icon(Icons.logout, size: 16),
-                          label: const Text('Logout'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                if (_profile!.bio.isNotEmpty)
-                  Text(
-                    _profile!.bio,
-                    style: TextStyle(color: cs.onSurfaceVariant),
+                    ],
                   ),
-                const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _countBlock('Followers', _stats.followersCount),
-                    _countBlock('Following', _stats.followingCount),
-                    _countBlock('Posts', _stats.postsCount),
-                  ],
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  if (_profile!.bio.isNotEmpty)
+                    Text(
+                      _profile!.bio,
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _countBlock('Followers', _stats.followersCount),
+                      _countBlock('Following', _stats.followingCount),
+                      _countBlock('Posts', _stats.postsCount),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
             TabBar(
               indicatorColor: cs.primary,
               labelColor: cs.onSurface,
@@ -4150,7 +4370,8 @@ class _ChatTabState extends State<_ChatTab> {
                                       decoration: BoxDecoration(
                                         color: mine
                                             ? cs.primary.withValues(alpha: 0.18)
-                                            : panelColor.withValues(alpha: 0.95),
+                                            : panelColor.withValues(
+                                                alpha: 0.95),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: Column(
@@ -4223,8 +4444,8 @@ class _ChatTabState extends State<_ChatTab> {
                                   decoration: InputDecoration(
                                     hintText: 'Type a message...',
                                     filled: true,
-                                    fillColor: messageInputColor
-                                        .withValues(alpha: 0.4),
+                                    fillColor: messageInputColor.withValues(
+                                        alpha: 0.4),
                                     border: const OutlineInputBorder(),
                                   ),
                                 ),
@@ -4570,7 +4791,8 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
                   final String name = _nameController.text.trim();
                   Navigator.pop(
                     context,
-                    _GroupChatPayload(name: name, memberIds: _selected.toList()),
+                    _GroupChatPayload(
+                        name: name, memberIds: _selected.toList()),
                   );
                 }
               : null,
@@ -4668,16 +4890,15 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       _descriptionController =
           TextEditingController(text: widget.existingPreset?.description ?? '');
       _tagsController = TextEditingController(
-        text: (widget.existingPreset?.tags ?? const <String>[])
-            .join(' ')
-            .trim(),
+        text:
+            (widget.existingPreset?.tags ?? const <String>[]).join(' ').trim(),
       );
       _isPublic = widget.existingPreset?.isPublic ?? true;
       _thumbnailMode = widget.existingPreset?.thumbnailMode ?? widget.mode;
-      _thumbnailPayload = widget.existingPreset?.thumbnailPayload.isNotEmpty ==
-              true
-          ? widget.existingPreset!.thumbnailPayload
-          : widget.payload;
+      _thumbnailPayload =
+          widget.existingPreset?.thumbnailPayload.isNotEmpty == true
+              ? widget.existingPreset!.thumbnailPayload
+              : widget.payload;
       _selectedMentionIds
           .addAll(widget.existingPreset?.mentionUserIds ?? const <String>[]);
     } else {
@@ -4695,6 +4916,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         _thumbnailPayload = const <String, dynamic>{};
       }
     }
+    _ensure3DWindowLayerDefaults();
     _mentionController.addListener(_onMentionQueryChanged);
   }
 
@@ -4711,7 +4933,8 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
 
   void _onMentionQueryChanged() {
     _mentionDebounce?.cancel();
-    _mentionDebounce = Timer(const Duration(milliseconds: 260), _searchMentions);
+    _mentionDebounce =
+        Timer(const Duration(milliseconds: 260), _searchMentions);
   }
 
   Future<void> _searchMentions() async {
@@ -4779,11 +5002,13 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       _thumbnailIndex = index;
       _thumbnailMode = item.mode;
       _thumbnailPayload = item.snapshot;
+      _ensure3DWindowLayerDefaults();
     });
   }
 
   Future<void> _openThumbnailEditor() async {
-    final Map<String, dynamic>? payload = await Navigator.push<Map<String, dynamic>>(
+    final Map<String, dynamic>? payload =
+        await Navigator.push<Map<String, dynamic>>(
       context,
       MaterialPageRoute(
         builder: (_) => _ThumbnailEditorPage(
@@ -4793,7 +5018,252 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       ),
     );
     if (payload == null || !mounted) return;
-    setState(() => _thumbnailPayload = payload);
+    setState(() {
+      _thumbnailPayload = payload;
+      _ensure3DWindowLayerDefaults();
+    });
+  }
+
+  void _ensure3DWindowLayerDefaults() {
+    if (_thumbnailMode != '3d') return;
+    final dynamic sceneRaw = _thumbnailPayload['scene'];
+    if (sceneRaw is! Map) return;
+    final Map<String, dynamic> scene = Map<String, dynamic>.from(sceneRaw);
+    bool changed = false;
+
+    final dynamic modelsRaw = scene['models'];
+    if (modelsRaw is List) {
+      final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
+      for (int i = 0; i < modelsRaw.length; i++) {
+        final item = modelsRaw[i];
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        if ((map['id']?.toString().trim().isEmpty ?? true)) {
+          map['id'] = 'model_$i';
+          changed = true;
+        }
+        if ((map['windowLayer']?.toString().isEmpty ?? true)) {
+          map['windowLayer'] = 'inside';
+          changed = true;
+        }
+        normalized.add(map);
+      }
+      scene['models'] = normalized;
+    }
+
+    final dynamic lightsRaw = scene['lights'];
+    if (lightsRaw is List) {
+      final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
+      for (int i = 0; i < lightsRaw.length; i++) {
+        final item = lightsRaw[i];
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        if ((map['id']?.toString().trim().isEmpty ?? true)) {
+          map['id'] = 'light_$i';
+          changed = true;
+        }
+        if ((map['windowLayer']?.toString().isEmpty ?? true)) {
+          map['windowLayer'] = 'inside';
+          changed = true;
+        }
+        normalized.add(map);
+      }
+      scene['lights'] = normalized;
+    }
+
+    if (!changed) return;
+    _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+      ..['scene'] = scene;
+  }
+
+  List<Map<String, dynamic>> _thumbnailModels() {
+    final dynamic sceneRaw = _thumbnailPayload['scene'];
+    if (sceneRaw is! Map) return const <Map<String, dynamic>>[];
+    final dynamic modelsRaw = sceneRaw['models'];
+    if (modelsRaw is! List) return const <Map<String, dynamic>>[];
+    return modelsRaw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  List<Map<String, dynamic>> _thumbnailLights() {
+    final dynamic sceneRaw = _thumbnailPayload['scene'];
+    if (sceneRaw is! Map) return const <Map<String, dynamic>>[];
+    final dynamic lightsRaw = sceneRaw['lights'];
+    if (lightsRaw is! List) return const <Map<String, dynamic>>[];
+    return lightsRaw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  void _set3dWindowLayer({
+    required bool light,
+    required int index,
+    required String layer,
+  }) {
+    if (_thumbnailMode != '3d') return;
+    final dynamic sceneRaw = _thumbnailPayload['scene'];
+    if (sceneRaw is! Map) return;
+    final Map<String, dynamic> scene = Map<String, dynamic>.from(sceneRaw);
+    final String key = light ? 'lights' : 'models';
+    final dynamic listRaw = scene[key];
+    if (listRaw is! List || index < 0 || index >= listRaw.length) return;
+    final List<Map<String, dynamic>> normalized = listRaw
+        .map((e) =>
+            e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+        .toList();
+    normalized[index]['windowLayer'] = layer;
+    scene[key] = normalized;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+    });
+  }
+
+  String _labelForNode(Map<String, dynamic> map, int index, String fallback) {
+    final String name = (map['name'] ?? map['id'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+    return '$fallback ${index + 1}';
+  }
+
+  Widget _build3DWindowLayerPanel(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final List<Map<String, dynamic>> models = _thumbnailModels();
+    final List<Map<String, dynamic>> lights = _thumbnailLights();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: cs.outline.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '3D Window Effect Layers',
+            style: TextStyle(
+              color: cs.onSurface,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Assign models and lights to Inside or Outside.',
+            style: TextStyle(
+              color: cs.onSurfaceVariant,
+              fontSize: 12,
+            ),
+          ),
+          if (models.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Models',
+              style: TextStyle(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            ...List<Widget>.generate(models.length, (i) {
+              final node = models[i];
+              final String layer = (node['windowLayer'] ?? 'inside').toString();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _labelForNode(node, i, 'Model'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment<String>(
+                          value: 'inside',
+                          label: Text('Inside'),
+                        ),
+                        ButtonSegment<String>(
+                          value: 'outside',
+                          label: Text('Outside'),
+                        ),
+                      ],
+                      selected: <String>{layer},
+                      onSelectionChanged: (values) {
+                        _set3dWindowLayer(
+                          light: false,
+                          index: i,
+                          layer: values.first,
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+          if (lights.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Lights',
+              style: TextStyle(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            ...List<Widget>.generate(lights.length, (i) {
+              final node = lights[i];
+              final String layer = (node['windowLayer'] ?? 'inside').toString();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _labelForNode(node, i, 'Light'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment<String>(
+                          value: 'inside',
+                          label: Text('Inside'),
+                        ),
+                        ButtonSegment<String>(
+                          value: 'outside',
+                          label: Text('Outside'),
+                        ),
+                      ],
+                      selected: <String>{layer},
+                      onSelectionChanged: (values) {
+                        _set3dWindowLayer(
+                          light: true,
+                          index: i,
+                          layer: values.first,
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ],
+      ),
+    );
   }
 
   Future<void> _submit() async {
@@ -4890,21 +5360,13 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    final preview = ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: Material(
-        color: Colors.black,
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: PresetViewer(
-            mode: _thumbnailMode,
-            payload: _thumbnailPayload,
-            cleanView: true,
-            embedded: true,
-            disableAudio: true,
-            useGlobalTracking: true,
-          ),
-        ),
+    final BorderRadius previewRadius = BorderRadius.circular(18);
+    final preview = AspectRatio(
+      aspectRatio: 16 / 9,
+      child: _GridPresetPreview(
+        mode: _thumbnailMode,
+        payload: _thumbnailPayload,
+        borderRadius: previewRadius,
       ),
     );
 
@@ -5102,6 +5564,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                         }).toList(),
                       ),
                     ),
+                  if (_thumbnailMode == '3d') _build3DWindowLayerPanel(context),
                   const SizedBox(height: 14),
                   SegmentedButton<bool>(
                     segments: const [
@@ -5463,6 +5926,41 @@ class _SettingsTabState extends State<_SettingsTab> {
                       : null,
                 ),
                 const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _trackerConfig.perfMode,
+                  decoration: const InputDecoration(
+                    labelText: 'Performance Mode',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'low', child: Text('Low')),
+                    DropdownMenuItem(value: 'medium', child: Text('Medium')),
+                    DropdownMenuItem(value: 'high', child: Text('High')),
+                  ],
+                  onChanged: _trackerEnabled
+                      ? (value) {
+                          if (value == null) return;
+                          _updateTrackerConfig(
+                            _trackerConfig.copyWith(perfMode: value),
+                          );
+                        }
+                      : null,
+                ),
+                const SizedBox(height: 10),
+                SwitchListTile(
+                  value: _trackerConfig.showCursor,
+                  title: const Text('Tracker Internal Cursor'),
+                  subtitle: const Text(
+                    'Used inside tracker UI; global app cursor remains Dart-side.',
+                  ),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(showCursor: value),
+                          )
+                      : null,
+                ),
+                const SizedBox(height: 4),
+                _settingsSectionTitle('Core Motion'),
                 _settingsSlider(
                   label: 'Sensitivity X',
                   value: _trackerConfig.sensitivityX,
@@ -5496,6 +5994,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                           )
                       : null,
                 ),
+                _settingsSectionTitle('Dead Zones'),
                 _settingsSlider(
                   label: 'Iris Dead Zone X',
                   value: _trackerConfig.deadZoneIrisX,
@@ -5562,6 +6061,223 @@ class _SettingsTabState extends State<_SettingsTab> {
                           )
                       : null,
                 ),
+                _settingsSectionTitle('Wink + Pinch'),
+                _settingsSlider(
+                  label: 'Left Closed Threshold',
+                  value: _trackerConfig.leftClosedThresh,
+                  min: 0.0,
+                  max: 1.0,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(leftClosedThresh: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Left Open Threshold',
+                  value: _trackerConfig.leftOpenThresh,
+                  min: 0.0,
+                  max: 1.0,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(leftOpenThresh: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Right Closed Threshold',
+                  value: _trackerConfig.rightClosedThresh,
+                  min: 0.0,
+                  max: 1.0,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(rightClosedThresh: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Right Open Threshold',
+                  value: _trackerConfig.rightOpenThresh,
+                  min: 0.0,
+                  max: 1.0,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(rightOpenThresh: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Pinch Threshold',
+                  value: _trackerConfig.pinchThresh,
+                  min: 0.01,
+                  max: 0.2,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(pinchThresh: v),
+                          )
+                      : null,
+                ),
+                _settingsSectionTitle('Head Acceleration'),
+                _settingsSlider(
+                  label: 'Head Slow X',
+                  value: _trackerConfig.headSlowX,
+                  min: 0.001,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(headSlowX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Head Fast X',
+                  value: _trackerConfig.headFastX,
+                  min: 0.001,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(headFastX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Head Transition X',
+                  value: _trackerConfig.headTransX,
+                  min: 0.001,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(headTransX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Head Slow Y',
+                  value: _trackerConfig.headSlowY,
+                  min: 0.001,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(headSlowY: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Head Fast Y',
+                  value: _trackerConfig.headFastY,
+                  min: 0.001,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(headFastY: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Head Transition Y',
+                  value: _trackerConfig.headTransY,
+                  min: 0.001,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(headTransY: v),
+                          )
+                      : null,
+                ),
+                _settingsSectionTitle('Hand Acceleration'),
+                _settingsSlider(
+                  label: 'Hand Slow X',
+                  value: _trackerConfig.handSlowX,
+                  min: 0.001,
+                  max: 15,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(handSlowX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Fast X',
+                  value: _trackerConfig.handFastX,
+                  min: 0.001,
+                  max: 20,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(handFastX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Transition X',
+                  value: _trackerConfig.handTransX,
+                  min: 0.001,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(handTransX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Slow Y',
+                  value: _trackerConfig.handSlowY,
+                  min: 0.001,
+                  max: 15,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(handSlowY: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Fast Y',
+                  value: _trackerConfig.handFastY,
+                  min: 0.001,
+                  max: 20,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(handFastY: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Transition Y',
+                  value: _trackerConfig.handTransY,
+                  min: 0.001,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(handTransY: v),
+                          )
+                      : null,
+                ),
+                _settingsSectionTitle('Hand Detection'),
+                _settingsSlider(
+                  label: 'Hand Detection Confidence',
+                  value: _trackerConfig.handDetectionConfidence,
+                  min: 0.3,
+                  max: 0.99,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(
+                              handDetectionConfidence: v,
+                            ),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Tracking Confidence',
+                  value: _trackerConfig.handTrackingConfidence,
+                  min: 0.3,
+                  max: 0.99,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(
+                              handTrackingConfidence: v,
+                            ),
+                          )
+                      : null,
+                ),
               ],
             ],
           ),
@@ -5621,6 +6337,107 @@ class _SettingsTabState extends State<_SettingsTab> {
       ),
     );
   }
+
+  Widget _settingsSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, bottom: 6),
+      child: Text(
+        title,
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.onSurface,
+          fontWeight: FontWeight.w700,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+}
+
+Future<bool> _showSignInRequiredSheet(
+  BuildContext context, {
+  required String message,
+}) async {
+  final bool? result = await showModalBottomSheet<bool>(
+    context: context,
+    isDismissible: true,
+    enableDrag: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) {
+      return SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Theme.of(context)
+                    .colorScheme
+                    .outline
+                    .withValues(alpha: 0.2),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 34,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    message,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.black,
+                          ),
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Sign In'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton.tonal(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF1E1E1E),
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+  return result == true;
 }
 
 String _friendlyTime(DateTime value) {

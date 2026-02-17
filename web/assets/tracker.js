@@ -128,6 +128,10 @@ let handTransX = 0.001;
 let handSlowY = 1.0;
 let handFastY = 10.0;
 let handTransY = 0.001;
+let handDetectionConfidence = 0.75;
+let handTrackingConfidence = 0.75;
+let handStableFrames = 0;
+let handMissingFrames = 0;
 let uiVisible = true;
 const params = new URLSearchParams(window.location.search);
 const GLOBAL_TRACKER = params.get('global') === '1';
@@ -179,6 +183,48 @@ function _videoReady(video) {
         video.videoHeight > 0;
 }
 
+function _isLikelyHandLandmarks(lm) {
+    if (!Array.isArray(lm) || lm.length !== 21) return false;
+    const wrist = lm[0];
+    const indexMcp = lm[5];
+    const pinkyMcp = lm[17];
+    const indexTip = lm[8];
+    const thumbTip = lm[4];
+    if (!wrist || !indexMcp || !pinkyMcp || !indexTip || !thumbTip) return false;
+    const palmWidth = dist(indexMcp, pinkyMcp);
+    const wristToIndex = dist(wrist, indexMcp);
+    const fingertipSpan = dist(indexTip, thumbTip);
+    if (!Number.isFinite(palmWidth) || !Number.isFinite(wristToIndex) || !Number.isFinite(fingertipSpan)) {
+        return false;
+    }
+    if (palmWidth < 0.02 || palmWidth > 0.45) return false;
+    const ratio = wristToIndex / Math.max(palmWidth, 1e-6);
+    if (ratio < 0.25 || ratio > 3.5) return false;
+    if (fingertipSpan > 0.8) return false;
+    return true;
+}
+
+function _markHandObserved(isValid) {
+    if (isValid) {
+        handStableFrames = Math.min(handStableFrames + 1, 30);
+        handMissingFrames = 0;
+        if (handStableFrames >= 3) {
+            hasHand = true;
+            lastHandDataTime = performance.now();
+            return true;
+        }
+        return false;
+    }
+    handMissingFrames = Math.min(handMissingFrames + 1, 30);
+    if (handMissingFrames > 4) {
+        hasHand = false;
+        handLm = null;
+        isPinching = false;
+        handStableFrames = 0;
+    }
+    return false;
+}
+
 function _applySliderValue(id, value, digits = 3) {
     const el = document.getElementById(id);
     if (!el || value === undefined || value === null) return;
@@ -203,6 +249,20 @@ function applyRuntimeSettings(settings) {
         const cursorToggle = document.getElementById('show-cursor');
         if (cursorToggle) cursorToggle.checked = runtimeShowCursor;
     }
+    const perfModeValue = (settings.perfMode || '').toString().toLowerCase();
+    if (['low', 'medium', 'high'].includes(perfModeValue)) {
+        perfMode = perfModeValue;
+        const perfHost = document.getElementById('perf-mode-host');
+        if (perfHost && perfHost.value !== perfModeValue) {
+            perfHost.value = perfModeValue;
+            perfHost.dispatchEvent(new Event('change'));
+        }
+        const perfClient = document.getElementById('perf-mode-client');
+        if (perfClient && perfClient.value !== perfModeValue) {
+            perfClient.value = perfModeValue;
+            perfClient.dispatchEvent(new Event('change'));
+        }
+    }
     _applySliderValue('h-sens', settings.sensitivityX, 3);
     _applySliderValue('v-sens', settings.sensitivityY, 3);
     _applySliderValue('s-sens', settings.smoothing, 3);
@@ -212,6 +272,39 @@ function applyRuntimeSettings(settings) {
     _applySliderValue('dz-hp', settings.deadZoneHeadPitch, 1);
     _applySliderValue('dz-hx', settings.deadZoneHandX, 3);
     _applySliderValue('dz-hand-y', settings.deadZoneHandY, 3);
+    _applySliderValue('left-closed-thresh', settings.leftClosedThresh, 3);
+    _applySliderValue('left-open-thresh', settings.leftOpenThresh, 3);
+    _applySliderValue('right-closed-thresh', settings.rightClosedThresh, 3);
+    _applySliderValue('right-open-thresh', settings.rightOpenThresh, 3);
+    _applySliderValue('pinch-thresh', settings.pinchThresh, 3);
+    _applySliderValue('head-slow-x', settings.headSlowX, 3);
+    _applySliderValue('head-fast-x', settings.headFastX, 3);
+    _applySliderValue('head-trans-x', settings.headTransX, 3);
+    _applySliderValue('head-slow-y', settings.headSlowY, 3);
+    _applySliderValue('head-fast-y', settings.headFastY, 3);
+    _applySliderValue('head-trans-y', settings.headTransY, 3);
+    _applySliderValue('hand-slow-x', settings.handSlowX, 3);
+    _applySliderValue('hand-fast-x', settings.handFastX, 3);
+    _applySliderValue('hand-trans-x', settings.handTransX, 3);
+    _applySliderValue('hand-slow-y', settings.handSlowY, 3);
+    _applySliderValue('hand-fast-y', settings.handFastY, 3);
+    _applySliderValue('hand-trans-y', settings.handTransY, 3);
+    handDetectionConfidence = _toNumber(
+        settings.handDetectionConfidence,
+        handDetectionConfidence
+    );
+    handTrackingConfidence = _toNumber(
+        settings.handTrackingConfidence,
+        handTrackingConfidence
+    );
+    if (hands) {
+        hands.setOptions({
+            modelComplexity: 0,
+            maxNumHands: 1,
+            minDetectionConfidence: Math.max(0.3, Math.min(0.99, handDetectionConfidence)),
+            minTrackingConfidence: Math.max(0.3, Math.min(0.99, handTrackingConfidence)),
+        });
+    }
 }
 
 function disposeTrackerRuntime() {
@@ -257,7 +350,10 @@ function applyRuntimeVisibility() {
     if (cursor) {
         const localShowCursor = document.getElementById('show-cursor');
         const allowCursor = localShowCursor ? localShowCursor.checked : runtimeShowCursor;
-        cursor.style.display = showUi && runtimeShowCursor && allowCursor ? 'block' : 'none';
+        cursor.style.display =
+            showUi && !GLOBAL_TRACKER && runtimeShowCursor && allowCursor
+                ? 'block'
+                : 'none';
     }
 }
 
@@ -772,25 +868,50 @@ function drawHandDots(lmArray) {
     }
 }
 async function updatePerformanceSettings() {
-    let refineLandmarks = (perfMode !== 'low');
-    let minDetectionConfidence = (perfMode === 'low') ? 0.5 : (perfMode === 'medium') ? 0.3 : 0.3;
-    let minTrackingConfidence = minDetectionConfidence;
-    let modelComplexity = (perfMode === 'low' ? 0 : 1);
-    let vidSize;
+    const refineLandmarks = (perfMode !== 'low');
+    const minDetectionConfidence = (perfMode === 'low') ? 0.58 : (perfMode === 'medium') ? 0.52 : 0.48;
+    const minTrackingConfidence = minDetectionConfidence;
+    let baseShort;
     if (perfMode === 'low') {
-        vidSize = 160;
+        baseShort = 180;
     } else if (perfMode === 'medium') {
-        vidSize = 320;
+        baseShort = 300;
     } else {
-        vidSize = 640;
+        baseShort = 480;
     }
-    faceMesh.setOptions({ refineLandmarks, maxNumFaces: 1, minDetectionConfidence, minTrackingConfidence });
-    hands.setOptions({ modelComplexity: 0, maxNumHands: 1, minDetectionConfidence: 0.3, minTrackingConfidence: 0.3 });
+
+    const viewportW = Math.max(window.innerWidth || 1, 1);
+    const viewportH = Math.max(window.innerHeight || 1, 1);
+    const aspect = viewportW / viewportH;
+    let captureWidth;
+    let captureHeight;
+    if (aspect >= 1) {
+        captureHeight = baseShort;
+        captureWidth = Math.round(baseShort * aspect);
+    } else {
+        captureWidth = baseShort;
+        captureHeight = Math.round(baseShort / aspect);
+    }
+    captureWidth = Math.max(160, Math.min(1280, captureWidth));
+    captureHeight = Math.max(120, Math.min(1280, captureHeight));
+
+    faceMesh.setOptions({
+        refineLandmarks,
+        maxNumFaces: 1,
+        minDetectionConfidence,
+        minTrackingConfidence
+    });
+    hands.setOptions({
+        modelComplexity: 0,
+        maxNumHands: 1,
+        minDetectionConfidence: Math.max(0.3, Math.min(0.99, handDetectionConfidence)),
+        minTrackingConfidence: Math.max(0.3, Math.min(0.99, handTrackingConfidence)),
+    });
     if (cameraSvc) await cameraSvc.stop();
     cameraSvc = new Camera(document.getElementById('webcam-small'), {
         onFrame: async () => {
             const video = document.getElementById('webcam-small');
-            if (!_videoReady(video)) {
+            if (!_videoReady(video) || video.videoWidth < 16 || video.videoHeight < 16) {
                 return;
             }
             startTime = performance.now();
@@ -809,18 +930,24 @@ async function updatePerformanceSettings() {
                     hasHand = false;
                     handLm = null;
                     isPinching = false;
-                    handSuspendUntil = performance.now() + 3000;
+                    handStableFrames = 0;
+                    handMissingFrames = 0;
+                    handSuspendUntil = performance.now() + 2500;
                 }
             }
-            await faceMesh.send({image: video});
+            try {
+                await faceMesh.send({image: video});
+            } catch (err) {
+                console.warn('Face pipeline dropped one frame.', err);
+            }
             frameCounter++;
         },
-        width: vidSize,
-        height: vidSize
+        width: captureWidth,
+        height: captureHeight
     });
     const overlay = document.getElementById('face-dots-overlay');
-    overlay.width = vidSize;
-    overlay.height = vidSize;
+    overlay.width = captureWidth;
+    overlay.height = captureHeight;
     if (!isRemote && document.getElementById('tracking-toggle').checked) {
         await cameraSvc.start();
     }
@@ -1091,10 +1218,14 @@ function setupOnResults() {
     });
     hands.onResults((results) => {
         latency = performance.now() - startTime;
+        const hasRawHand = !!(results.multiHandLandmarks && results.multiHandLandmarks.length > 0);
+        const candidate = hasRawHand ? results.multiHandLandmarks[0] : null;
+        const validCandidate = _isLikelyHandLandmarks(candidate);
+        const handStable = _markHandObserved(validCandidate);
+
         if (isClient) {
-            hasHand = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
-            if (currentMode === 'hand' && hasHand && !sendNone) {
-                const lm = results.multiHandLandmarks[0];
+            if (currentMode === 'hand' && handStable && candidate && !sendNone) {
+                const lm = candidate;
                 processHand(lm);
                 let sendData = {type: 'hand', timestamp: Date.now(), mpLatency: latency};
                 let partial = {};
@@ -1116,9 +1247,8 @@ function setupOnResults() {
             return;
         } else {
             oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                hasHand = true;
-                handLm = results.multiHandLandmarks[0];
+            if (handStable && candidate) {
+                handLm = candidate;
                 if (activeTracker !== 'hand') {
                     activeTracker = 'hand';
                 }
@@ -1126,9 +1256,6 @@ function setupOnResults() {
                 drawHandDots(handLm);
                 lastHandDataTime = performance.now();
             } else {
-                hasHand = false;
-                handLm = null;
-                isPinching = false;
                 if (activeTracker === 'hand') {
                     activeTracker = 'face';
                 }
@@ -1306,7 +1433,7 @@ function frameUpdate() {
         const centerY = smoothY;
         const finalX = Math.max(0, Math.min(window.innerWidth - cursorSize, centerX - halfSize));
         const finalY = Math.max(0, Math.min(window.innerHeight - cursorSize, centerY - halfSize));
-        if (!headlessMode && runtimeShowCursor) {
+        if (!headlessMode && runtimeShowCursor && !GLOBAL_TRACKER) {
             cursor.style.transform = `translate3d(${finalX}px, ${finalY}px, 0)`;
             cursor.style.display = document.getElementById('show-cursor').checked ? 'block' : 'none';
         } else {
@@ -1648,13 +1775,17 @@ function drawHUD() {
         stats.push(`Rel Hand X: ${currentHandDx.toFixed(3)} Y: ${currentHandDy.toFixed(3)}`);
         stats.push(`Pinch: ${isPinching ? 'Yes' : 'No'}`);
     }
+    const panelW = 240;
+    const panelH = stats.length * 15 + 20;
+    const panelX = Math.max(12, tCanvas.width - panelW - 16);
+    const panelY = 10;
     tCtx.fillStyle = 'rgba(18,18,18,0.8)';
-    tCtx.fillRect(260, 10, 200, stats.length * 15 + 20);
+    tCtx.fillRect(panelX, panelY, panelW, panelH);
     tCtx.strokeStyle = '#333';
-    tCtx.strokeRect(260, 10, 200, stats.length * 15 + 20);
+    tCtx.strokeRect(panelX, panelY, panelW, panelH);
     tCtx.fillStyle = '#e0e0e0';
     tCtx.font = '10px Poppins';
-    stats.forEach((s, i) => tCtx.fillText(s, 275, 35 + (i * 15)));
+    stats.forEach((s, i) => tCtx.fillText(s, panelX + 15, panelY + 25 + (i * 15)));
 }
 function drawMouseHUD() {
     if (headlessMode || !uiVisible) return;
@@ -1668,13 +1799,17 @@ function drawMouseHUD() {
         `Cursor X: ${targetX.toFixed(1)} Y: ${targetY.toFixed(1)}`,
         `FPS: ${fps}`
     ];
+    const panelW = 240;
+    const panelH = stats.length * 15 + 20;
+    const panelX = Math.max(12, tCanvas.width - panelW - 16);
+    const panelY = 10;
     tCtx.fillStyle = 'rgba(18,18,18,0.8)';
-    tCtx.fillRect(260, 10, 200, stats.length * 15 + 20);
+    tCtx.fillRect(panelX, panelY, panelW, panelH);
     tCtx.strokeStyle = '#333';
-    tCtx.strokeRect(260, 10, 200, stats.length * 15 + 20);
+    tCtx.strokeRect(panelX, panelY, panelW, panelH);
     tCtx.fillStyle = '#e0e0e0';
     tCtx.font = '10px Poppins';
-    stats.forEach((s, i) => tCtx.fillText(s, 275, 35 + (i * 15)));
+    stats.forEach((s, i) => tCtx.fillText(s, panelX + 15, panelY + 25 + (i * 15)));
 }
 function setupTrackerEvents() {
     document.getElementById('toggle-tracker-ui').onclick = toggleUI;
@@ -1692,8 +1827,12 @@ function setupTrackerEvents() {
         localStorage.setItem('show-cursor', runtimeShowCursor);
         applyRuntimeVisibility();
     };
-    document.addEventListener('dblclick', (e) => {
-        if (!uiVisible) toggleUI();
+    document.addEventListener('dblclick', () => {
+        if (!uiVisible) return;
+        uiVisible = false;
+        headlessMode = true;
+        applyRuntimeVisibility();
+        emitToParent({type: 'hide_tracker'});
     });
     document.getElementById('btn-calibrate').onclick = async () => {
         const mode = document.getElementById('cursor-mode').value;

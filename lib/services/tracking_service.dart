@@ -51,18 +51,24 @@ class TrackingService {
   bool _pointerDown = false;
   DateTime? _pointerDownAt;
   html.Element? _pointerTarget;
+  html.Element? _hoverTarget;
+  int? _lastDispatchX;
+  int? _lastDispatchY;
 
   Future<void> initialize() async {
     if (_initialized || !kIsWeb) return;
     _initialized = true;
 
     _viewId = 'global-tracker-${DateTime.now().millisecondsSinceEpoch}';
-    _iframeElementId = 'global-tracker-iframe-${DateTime.now().millisecondsSinceEpoch}';
-    _bridgeChannel = 'global-tracker-bridge-${DateTime.now().microsecondsSinceEpoch}';
+    _iframeElementId =
+        'global-tracker-iframe-${DateTime.now().millisecondsSinceEpoch}';
+    _bridgeChannel =
+        'global-tracker-bridge-${DateTime.now().microsecondsSinceEpoch}';
     ui_web.platformViewRegistry.registerViewFactory(_viewId, (int _) {
       final iframe = web.HTMLIFrameElement();
       iframe.id = _iframeElementId;
-      iframe.src = 'assets/tracker.html?global=1&headless=1&channel=$_bridgeChannel';
+      iframe.src =
+          'assets/tracker.html?global=1&headless=1&channel=$_bridgeChannel';
       iframe.style.setProperty('border', 'none');
       iframe.style.setProperty('width', '100%');
       iframe.style.setProperty('height', '100%');
@@ -114,6 +120,8 @@ class TrackingService {
     _postConfig(force: true);
     _configRetryTimer?.cancel();
     _configRetryTimer = null;
+    _releasePointerAtCurrentPosition();
+    _clearHoverState();
     await _messageSub?.cancel();
     _messageSub = null;
     _overlayTick.dispose();
@@ -139,7 +147,10 @@ class TrackingService {
         .updateTrackerPreferencesForCurrentUser(trackerEnabled: enabled);
     _syncHostVisibilityStyle();
     _postConfig(force: true);
-    if (!enabled) _releasePointerAtCurrentPosition();
+    if (!enabled) {
+      _releasePointerAtCurrentPosition();
+      _clearHoverState();
+    }
     _bumpOverlayTick();
   }
 
@@ -155,7 +166,10 @@ class TrackingService {
   void setDartCursorEnabled(bool enabled) {
     _dartCursorEnabled = enabled;
     _postConfig(force: true);
-    if (!enabled) _releasePointerAtCurrentPosition();
+    if (!enabled) {
+      _releasePointerAtCurrentPosition();
+      _clearHoverState();
+    }
     _bumpOverlayTick();
   }
 
@@ -191,6 +205,7 @@ class TrackingService {
   void _bridgePointerInteractions(TrackingFrame frame) {
     if (!_trackerEnabled || !_dartCursorEnabled) {
       _releasePointerAtCurrentPosition();
+      _clearHoverState();
       return;
     }
 
@@ -199,12 +214,34 @@ class TrackingService {
     final target = html.document.elementFromPoint(x, y);
     if (target == null) {
       _releasePointerAtCurrentPosition();
+      _clearHoverState();
       return;
     }
     if (_isTrackerHostElement(target)) {
+      _clearHoverState();
       return;
     }
     final dispatchTarget = _resolveDispatchTarget(target);
+    final bool moved = _lastDispatchX != x || _lastDispatchY != y;
+    if (moved || !identical(_hoverTarget, dispatchTarget) || _pointerDown) {
+      _dispatchHoverIfNeeded(dispatchTarget, x, y);
+      _dispatchPointer(
+        target: dispatchTarget,
+        type: 'pointermove',
+        x: x,
+        y: y,
+        buttons: _pointerDown ? 1 : 0,
+      );
+      _dispatchMouse(
+        target: dispatchTarget,
+        type: 'mousemove',
+        x: x,
+        y: y,
+        buttons: _pointerDown ? 1 : 0,
+      );
+      _lastDispatchX = x;
+      _lastDispatchY = y;
+    }
 
     final bool active = frame.wink || frame.pinch;
 
@@ -224,31 +261,36 @@ class TrackingService {
         type: 'mousedown',
         x: x,
         y: y,
+        buttons: 1,
       );
       return;
     }
 
     if (_pointerDown) {
       final moveTarget = _pointerTarget ?? dispatchTarget;
-      _dispatchPointer(
-        target: moveTarget,
-        type: 'pointermove',
-        x: x,
-        y: y,
-        buttons: 1,
-      );
-      _dispatchMouse(
-        target: moveTarget,
-        type: 'mousemove',
-        x: x,
-        y: y,
-      );
+      if (!identical(moveTarget, dispatchTarget)) {
+        _dispatchPointer(
+          target: moveTarget,
+          type: 'pointermove',
+          x: x,
+          y: y,
+          buttons: 1,
+        );
+        _dispatchMouse(
+          target: moveTarget,
+          type: 'mousemove',
+          x: x,
+          y: y,
+          buttons: 1,
+        );
+      }
     }
 
     if (!active && _pointerDown) {
       final downAt = _pointerDownAt;
-      final int holdMs =
-          downAt == null ? 1000 : DateTime.now().difference(downAt).inMilliseconds;
+      final int holdMs = downAt == null
+          ? 1000
+          : DateTime.now().difference(downAt).inMilliseconds;
       final upTarget = _pointerTarget ?? dispatchTarget;
       _dispatchPointer(
         target: upTarget,
@@ -262,6 +304,7 @@ class TrackingService {
         type: 'mouseup',
         x: x,
         y: y,
+        buttons: 0,
       );
 
       if (holdMs < 300) {
@@ -277,6 +320,7 @@ class TrackingService {
           type: 'click',
           x: x,
           y: y,
+          buttons: 0,
         );
       }
 
@@ -359,7 +403,8 @@ class TrackingService {
     if (iframe == null) return false;
     final source = event.source;
     if (source == null) return false;
-    return identical(source, iframe.contentWindow) || source == iframe.contentWindow;
+    return identical(source, iframe.contentWindow) ||
+        source == iframe.contentWindow;
   }
 
   Map<String, dynamic>? _extractPayload(dynamic data) {
@@ -384,7 +429,9 @@ class TrackingService {
     required String type,
     required int x,
     required int y,
+    int buttons = 0,
   }) {
+    final _ = buttons;
     target.dispatchEvent(
       html.MouseEvent(
         type,
@@ -416,7 +463,7 @@ class TrackingService {
             'clientY': y,
             'buttons': buttons,
             'button': 0,
-            'pointerId': 1,
+            'pointerId': 731,
             'isPrimary': true,
             'pointerType': 'mouse',
           },
@@ -431,6 +478,8 @@ class TrackingService {
     _pointerDown = false;
     _pointerDownAt = null;
     _pointerTarget = null;
+    _lastDispatchX = null;
+    _lastDispatchY = null;
     if (target == null) return;
     _dispatchPointer(
       target: target,
@@ -444,6 +493,109 @@ class TrackingService {
       type: 'mouseup',
       x: frameNotifier.value.cursorX.round(),
       y: frameNotifier.value.cursorY.round(),
+      buttons: 0,
+    );
+  }
+
+  void _dispatchHoverIfNeeded(html.Element target, int x, int y) {
+    final html.Element? previous = _hoverTarget;
+    if (identical(previous, target)) return;
+    if (previous != null) {
+      _dispatchPointer(
+        target: previous,
+        type: 'pointerout',
+        x: x,
+        y: y,
+        buttons: _pointerDown ? 1 : 0,
+      );
+      _dispatchMouse(
+        target: previous,
+        type: 'mouseout',
+        x: x,
+        y: y,
+        buttons: _pointerDown ? 1 : 0,
+      );
+      _dispatchPointer(
+        target: previous,
+        type: 'pointerleave',
+        x: x,
+        y: y,
+        buttons: _pointerDown ? 1 : 0,
+      );
+      _dispatchMouse(
+        target: previous,
+        type: 'mouseleave',
+        x: x,
+        y: y,
+        buttons: _pointerDown ? 1 : 0,
+      );
+    }
+    _hoverTarget = target;
+    _dispatchPointer(
+      target: target,
+      type: 'pointerover',
+      x: x,
+      y: y,
+      buttons: _pointerDown ? 1 : 0,
+    );
+    _dispatchMouse(
+      target: target,
+      type: 'mouseover',
+      x: x,
+      y: y,
+      buttons: _pointerDown ? 1 : 0,
+    );
+    _dispatchPointer(
+      target: target,
+      type: 'pointerenter',
+      x: x,
+      y: y,
+      buttons: _pointerDown ? 1 : 0,
+    );
+    _dispatchMouse(
+      target: target,
+      type: 'mouseenter',
+      x: x,
+      y: y,
+      buttons: _pointerDown ? 1 : 0,
+    );
+  }
+
+  void _clearHoverState() {
+    final previous = _hoverTarget;
+    _hoverTarget = null;
+    _lastDispatchX = null;
+    _lastDispatchY = null;
+    if (previous == null) return;
+    final int x = frameNotifier.value.cursorX.round();
+    final int y = frameNotifier.value.cursorY.round();
+    _dispatchPointer(
+      target: previous,
+      type: 'pointerout',
+      x: x,
+      y: y,
+      buttons: 0,
+    );
+    _dispatchMouse(
+      target: previous,
+      type: 'mouseout',
+      x: x,
+      y: y,
+      buttons: 0,
+    );
+    _dispatchPointer(
+      target: previous,
+      type: 'pointerleave',
+      x: x,
+      y: y,
+      buttons: 0,
+    );
+    _dispatchMouse(
+      target: previous,
+      type: 'mouseleave',
+      x: x,
+      y: y,
+      buttons: 0,
     );
   }
 
@@ -468,7 +620,8 @@ class TrackingService {
 
   void _queueConfigRetry() {
     if (_configRetryTimer != null) return;
-    _configRetryTimer = Timer.periodic(const Duration(milliseconds: 450), (timer) {
+    _configRetryTimer =
+        Timer.periodic(const Duration(milliseconds: 450), (timer) {
       if (!_initialized) {
         timer.cancel();
         _configRetryTimer = null;
@@ -488,7 +641,8 @@ class TrackingService {
     if (element == null) return;
     final bool visibleUi = _trackerEnabled && _trackerUiVisible;
     element.style.setProperty('pointer-events', visibleUi ? 'auto' : 'none');
-    element.style.setProperty('visibility', visibleUi ? 'visible' : 'hidden');
+    element.style
+        .setProperty('visibility', _trackerEnabled ? 'visible' : 'hidden');
     element.style.setProperty('opacity', visibleUi ? '1' : '0');
     element.style.setProperty('background', 'transparent');
     element.style.setProperty('transform', 'none');
