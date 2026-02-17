@@ -12,6 +12,7 @@ import 'dart:js_interop';
 
 import 'models/preset_payload_v2.dart';
 import 'services/app_repository.dart';
+import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
 
 class LayerConfig {
@@ -197,6 +198,7 @@ class LayerMode extends StatefulWidget {
     this.embeddedStudio = false,
     this.persistPresets = true,
     this.onPresetSaved,
+    this.useGlobalTracking = true,
   });
   final double? width, height;
   final Map<String, dynamic>? initialPresetPayload;
@@ -206,6 +208,7 @@ class LayerMode extends StatefulWidget {
   final bool embeddedStudio;
   final bool persistPresets;
   final void Function(String name, Map<String, dynamic> payload)? onPresetSaved;
+  final bool useGlobalTracking;
   @override
   State<LayerMode> createState() => _LayerModeState();
 }
@@ -274,6 +277,7 @@ class _LayerModeState extends State<LayerMode> {
       StreamController.broadcast();
   StreamSubscription? _messageSubscription;
   StreamSubscription<Map<String, dynamic>>? _trackingDataSubscription;
+  VoidCallback? _globalTrackingListener;
   bool _uploadingImage = false;
   @override
   void initState() {
@@ -282,6 +286,20 @@ class _LayerModeState extends State<LayerMode> {
 
     if (widget.externalHeadPose != null) {
       _applyExternalHeadPose(widget.externalHeadPose!);
+    } else if (widget.useGlobalTracking) {
+      _globalTrackingListener = () {
+        final frame = TrackingService.instance.frameNotifier.value;
+        if (!mounted) return;
+        if (!isEditMode && !manualMode) {
+          setState(() {
+            _applyHeadTrackingMap(
+              <String, dynamic>{'head': frame.toHeadPoseMap()},
+            );
+          });
+        }
+      };
+      TrackingService.instance.frameNotifier
+          .addListener(_globalTrackingListener!);
     } else {
       _initTrackerBridge();
     }
@@ -292,6 +310,29 @@ class _LayerModeState extends State<LayerMode> {
     super.didUpdateWidget(oldWidget);
     if (widget.externalHeadPose != null) {
       _applyExternalHeadPose(widget.externalHeadPose!);
+      return;
+    }
+    if (widget.useGlobalTracking && !oldWidget.useGlobalTracking) {
+      _globalTrackingListener ??= () {
+        final frame = TrackingService.instance.frameNotifier.value;
+        if (!mounted) return;
+        if (!isEditMode && !manualMode) {
+          setState(() {
+            _applyHeadTrackingMap(
+              <String, dynamic>{'head': frame.toHeadPoseMap()},
+            );
+          });
+        }
+      };
+      TrackingService.instance.frameNotifier
+          .addListener(_globalTrackingListener!);
+    } else if (!widget.useGlobalTracking && oldWidget.useGlobalTracking) {
+      final listener = _globalTrackingListener;
+      if (listener != null) {
+        TrackingService.instance.frameNotifier.removeListener(listener);
+      }
+      _globalTrackingListener = null;
+      _initTrackerBridge();
     }
   }
 
@@ -306,7 +347,8 @@ class _LayerModeState extends State<LayerMode> {
       if (adapted != null) {
         _applyControlSettingsMap(adapted.controls);
       }
-      await _initLayers(savedMap: adapted?.scene ?? widget.initialPresetPayload);
+      await _initLayers(
+          savedMap: adapted?.scene ?? widget.initialPresetPayload);
       return;
     }
 
@@ -330,7 +372,8 @@ class _LayerModeState extends State<LayerMode> {
       _applyControlSettingsMap(adaptedPreset.controls);
     }
     await _initLayers(
-      savedMap: adaptedPreset?.scene ?? widget.initialPresetPayload ?? savedLayers,
+      savedMap:
+          adaptedPreset?.scene ?? widget.initialPresetPayload ?? savedLayers,
     );
     await _loadPresets();
   }
@@ -398,7 +441,8 @@ class _LayerModeState extends State<LayerMode> {
     if (iframe == null) return false;
     final source = event.source;
     if (source == null) return false;
-    return identical(source, iframe.contentWindow) || source == iframe.contentWindow;
+    return identical(source, iframe.contentWindow) ||
+        source == iframe.contentWindow;
   }
 
   Map<String, dynamic>? _extractPayload(dynamic data) {
@@ -477,8 +521,13 @@ class _LayerModeState extends State<LayerMode> {
     _debounceTimer?.cancel();
     urlController.dispose();
     presetNameController.dispose();
+    final listener = _globalTrackingListener;
+    if (listener != null) {
+      TrackingService.instance.frameNotifier.removeListener(listener);
+      _globalTrackingListener = null;
+    }
     final iframe = _trackerIframe;
-    if (iframe != null) {
+    if (iframe != null && !widget.useGlobalTracking) {
       try {
         iframe.contentWindow?.postMessage(
           jsonEncode(<String, dynamic>{
@@ -514,12 +563,14 @@ class _LayerModeState extends State<LayerMode> {
       deadZonePitch =
           ((map['deadZonePitch'] ?? 0.0) as num).toDouble().clamp(0.0, 10.0);
       manualMode = map['manualMode'] == true;
-      showTracker = map['showTracker'] == true;
+      if (!widget.useGlobalTracking) {
+        showTracker = map['showTracker'] == true;
+      }
       zBase = ((map['zBase'] ?? zBase) as num).toDouble();
       anchorHeadX = ((map['anchorHeadX'] ?? anchorHeadX) as num).toDouble();
       anchorHeadY = ((map['anchorHeadY'] ?? anchorHeadY) as num).toDouble();
     });
-    if (widget.externalHeadPose == null) {
+    if (widget.externalHeadPose == null && !widget.useGlobalTracking) {
       _postTrackerConfig();
     }
   }
@@ -537,7 +588,7 @@ class _LayerModeState extends State<LayerMode> {
       'deadZoneYaw': deadZoneYaw,
       'deadZonePitch': deadZonePitch,
       'manualMode': manualMode,
-      'showTracker': showTracker,
+      if (!widget.useGlobalTracking) 'showTracker': showTracker,
       'zBase': zBase,
       'anchorHeadX': anchorHeadX,
       'anchorHeadY': anchorHeadY,
@@ -583,7 +634,8 @@ class _LayerModeState extends State<LayerMode> {
     setState(() => selectedAspect = value);
   }
 
-  Map<String, dynamic> _extractSceneMapFromPayload(Map<String, dynamic> payload) {
+  Map<String, dynamic> _extractSceneMapFromPayload(
+      Map<String, dynamic> payload) {
     final adapted = PresetPayloadV2.fromMap(payload, fallbackMode: '2d');
     _applyPresetControls(adapted.controls);
     return adapted.scene;
@@ -914,7 +966,9 @@ class _LayerModeState extends State<LayerMode> {
       clipBehavior: Clip.none,
       children: [
         _buildLayersStack(),
-        if (!widget.cleanView && widget.externalHeadPose == null)
+        if (!widget.cleanView &&
+            widget.externalHeadPose == null &&
+            !widget.useGlobalTracking)
           Positioned.fill(
             child: IgnorePointer(
               ignoring: !showTracker,
@@ -1256,7 +1310,8 @@ class _LayerModeState extends State<LayerMode> {
                     ),
                     const SizedBox(height: 6),
                     ElevatedButton(
-                      onPressed: _uploadingImage ? null : _uploadImageFromDevice,
+                      onPressed:
+                          _uploadingImage ? null : _uploadImageFromDevice,
                       style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.amberAccent),
                       child: Text(
@@ -1631,10 +1686,11 @@ class _LayerModeState extends State<LayerMode> {
                 _toggleRow("Manual Control", manualMode, (v) {
                   setState(() => manualMode = v);
                 }),
-                _toggleRow("Show Tracker", showTracker, (v) {
-                  setState(() => showTracker = v);
-                  _postTrackerConfig();
-                }),
+                if (!widget.useGlobalTracking)
+                  _toggleRow("Show Tracker", showTracker, (v) {
+                    setState(() => showTracker = v);
+                    _postTrackerConfig();
+                  }),
                 _enhancedSlider("Dead Zone X", deadZoneX, 0.001, 0.1, 0.001,
                     (v) {
                   setState(() => deadZoneX = v);

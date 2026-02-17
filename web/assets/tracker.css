@@ -36,6 +36,7 @@ body {
 
 body.tracker-headless {
   background: transparent !important;
+  pointer-events: none !important;
 }
 
 body.tracker-headless #canvas-container,

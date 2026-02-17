@@ -209,24 +209,43 @@ class AppRepository {
     if (user == null) return const <AppUserProfile>[];
 
     final trimmed = query.trim();
-    dynamic request = _client
-        .from('profiles')
-        .select('*')
-        .neq('user_id', user.id)
-        .limit(limit);
-
-    if (trimmed.isNotEmpty) {
-      final escaped = trimmed.replaceAll(',', '');
-      request = request.or(
-        'username.ilike.%$escaped%,full_name.ilike.%$escaped%,email.ilike.%$escaped%',
-      );
+    if (trimmed.isEmpty) {
+      final List<dynamic> rows = await _client
+          .from('profiles')
+          .select('*')
+          .neq('user_id', user.id)
+          .limit(limit);
+      return rows
+          .map((dynamic e) =>
+              AppUserProfile.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
     }
 
-    final List<dynamic> rows = await request;
-    return rows
-        .map((dynamic e) =>
-            AppUserProfile.fromMap(Map<String, dynamic>.from(e as Map)))
-        .toList();
+    final String escaped = trimmed.replaceAll(',', '');
+    final String pattern = '%$escaped%';
+    final Map<String, AppUserProfile> merged = <String, AppUserProfile>{};
+
+    Future<void> collectMatches(String column) async {
+      if (merged.length >= limit) return;
+      final int remaining = limit - merged.length;
+      final List<dynamic> rows = await _client
+          .from('profiles')
+          .select('*')
+          .neq('user_id', user.id)
+          .ilike(column, pattern)
+          .limit(remaining);
+      for (final dynamic row in rows) {
+        final profile =
+            AppUserProfile.fromMap(Map<String, dynamic>.from(row as Map));
+        merged.putIfAbsent(profile.userId, () => profile);
+        if (merged.length >= limit) return;
+      }
+    }
+
+    await collectMatches('username');
+    await collectMatches('full_name');
+    await collectMatches('email');
+    return merged.values.toList();
   }
 
   Future<ProfileStats> fetchProfileStats(String userId) async {
@@ -865,6 +884,11 @@ class AppRepository {
     required String name,
     required List<String> memberIds,
   }) async {
+    try {
+      final chatId = await createGroupChatRpc(name: name, memberIds: memberIds);
+      if (chatId.isNotEmpty) return chatId;
+    } catch (_) {}
+
     final user = currentUser;
     if (user == null) return '';
 
@@ -894,6 +918,22 @@ class AppRepository {
     await _client.from('chat_members').upsert(rows);
 
     return chatId;
+  }
+
+  Future<String> createGroupChatRpc({
+    required String name,
+    required List<String> memberIds,
+  }) async {
+    final user = currentUser;
+    if (user == null) return '';
+    final dynamic value = await _client.rpc(
+      'create_group_chat',
+      params: <String, dynamic>{
+        'group_name': name.trim(),
+        'member_ids': memberIds,
+      },
+    );
+    return value?.toString() ?? '';
   }
 
   Future<List<CollectionSummary>> fetchPublishedCollections({

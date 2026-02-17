@@ -59,18 +59,36 @@ class TrackingFrame {
     final safeHeight = viewportHeight.isFinite && viewportHeight > 0
         ? viewportHeight
         : 1.0;
+    final sourceWidth = _finiteOr(
+      _toDouble(
+        cursor['sourceWidth'] ?? cursor['width'] ?? payload['sourceWidth'],
+        safeWidth,
+      ),
+      safeWidth,
+    ).clamp(1.0, 1000000.0);
+    final sourceHeight = _finiteOr(
+      _toDouble(
+        cursor['sourceHeight'] ?? cursor['height'] ?? payload['sourceHeight'],
+        safeHeight,
+      ),
+      safeHeight,
+    ).clamp(1.0, 1000000.0);
+    final rawCursorX =
+        _finiteOr(_toDouble(cursor['x'], sourceWidth / 2), sourceWidth / 2)
+            .clamp(0.0, sourceWidth);
+    final rawCursorY =
+        _finiteOr(_toDouble(cursor['y'], sourceHeight / 2), sourceHeight / 2)
+            .clamp(0.0, sourceHeight);
+    final mappedCursorX = (rawCursorX / sourceWidth) * safeWidth;
+    final mappedCursorY = (rawCursorY / sourceHeight) * safeHeight;
     return TrackingFrame(
       headX: _finiteOr(_toDouble(head['x'], 0), 0),
       headY: _finiteOr(_toDouble(head['y'], 0), 0),
       headZ: _finiteOr(_toDouble(head['z'], 0.2), 0.2),
       yaw: _finiteOr(_toDouble(head['yaw'], 0), 0),
       pitch: _finiteOr(_toDouble(head['pitch'], 0), 0),
-      cursorX:
-          _finiteOr(_toDouble(cursor['x'], safeWidth / 2), safeWidth / 2)
-              .clamp(0, safeWidth),
-      cursorY:
-          _finiteOr(_toDouble(cursor['y'], safeHeight / 2), safeHeight / 2)
-              .clamp(0, safeHeight),
+      cursorX: mappedCursorX.clamp(0.0, safeWidth),
+      cursorY: mappedCursorY.clamp(0.0, safeHeight),
       wink: payload['wink'] == true,
       pinch: payload['pinch'] == true,
       hasHand: payload['hand'] != null,

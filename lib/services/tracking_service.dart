@@ -34,10 +34,12 @@ class TrackingService {
   bool _dartCursorEnabled = true;
 
   StreamSubscription? _messageSub;
+  Timer? _configRetryTimer;
   late String _viewId;
   late String _iframeElementId;
   late String _bridgeChannel;
   web.HTMLIFrameElement? _trackerIframe;
+  bool _trackerReady = false;
   final ValueNotifier<int> _overlayTick = ValueNotifier<int>(0);
   DateTime _lastFrameAt =
       DateTime.fromMillisecondsSinceEpoch(0, isUtc: true).toLocal();
@@ -63,7 +65,8 @@ class TrackingService {
       iframe.style.setProperty('background', 'transparent');
       iframe.allow = 'camera *; microphone *; fullscreen *';
       _trackerIframe = iframe;
-      scheduleMicrotask(_postConfig);
+      _syncHostVisibilityStyle();
+      scheduleMicrotask(() => _postConfig(force: true));
       return iframe;
     });
 
@@ -73,6 +76,13 @@ class TrackingService {
       if (payload == null) return;
       if (payload['channel'] != null &&
           payload['channel'].toString() != _bridgeChannel) {
+        return;
+      }
+
+      if (payload['type'] == 'tracker_ready') {
+        _trackerReady = true;
+        _configRetryTimer?.cancel();
+        _postConfig(force: true);
         return;
       }
 
@@ -93,11 +103,13 @@ class TrackingService {
     });
 
     await refreshPreferences();
-    _postConfig();
+    _postConfig(force: true);
   }
 
   Future<void> dispose() async {
-    _postConfig();
+    _postConfig(force: true);
+    _configRetryTimer?.cancel();
+    _configRetryTimer = null;
     await _messageSub?.cancel();
     _messageSub = null;
     _overlayTick.dispose();
@@ -110,7 +122,8 @@ class TrackingService {
         await AppRepository.instance.fetchTrackerPreferencesForCurrentUser();
     _trackerEnabled = prefs['trackerEnabled'] ?? true;
     _trackerUiVisible = prefs['trackerUiVisible'] ?? false;
-    _postConfig();
+    _syncHostVisibilityStyle();
+    _postConfig(force: true);
     _bumpOverlayTick();
   }
 
@@ -118,7 +131,8 @@ class TrackingService {
     _trackerEnabled = enabled;
     await AppRepository.instance
         .updateTrackerPreferencesForCurrentUser(trackerEnabled: enabled);
-    _postConfig();
+    _syncHostVisibilityStyle();
+    _postConfig(force: true);
     if (!enabled) _releasePointerAtCurrentPosition();
     _bumpOverlayTick();
   }
@@ -127,18 +141,19 @@ class TrackingService {
     _trackerUiVisible = visible;
     await AppRepository.instance
         .updateTrackerPreferencesForCurrentUser(trackerUiVisible: visible);
-    _postConfig();
+    _syncHostVisibilityStyle();
+    _postConfig(force: true);
     _bumpOverlayTick();
   }
 
   void setDartCursorEnabled(bool enabled) {
     _dartCursorEnabled = enabled;
-    _postConfig();
+    _postConfig(force: true);
     if (!enabled) _releasePointerAtCurrentPosition();
     _bumpOverlayTick();
   }
 
-  void _postConfig() {
+  void _postConfig({bool force = false}) {
     if (!kIsWeb || !_initialized) return;
     final element = _trackerIframe;
     if (element == null) return;
@@ -150,7 +165,15 @@ class TrackingService {
       'showCursor': !_dartCursorEnabled,
       'headless': !_trackerUiVisible,
     };
-    element.contentWindow?.postMessage(jsonEncode(payload).toJS, '*'.toJS);
+    try {
+      element.contentWindow?.postMessage(jsonEncode(payload).toJS, '*'.toJS);
+    } catch (_) {}
+    if (!_trackerReady && !force) {
+      _queueConfigRetry();
+    }
+    if (!_trackerReady && force) {
+      _queueConfigRetry();
+    }
   }
 
   void _bridgePointerInteractions(TrackingFrame frame) {
@@ -166,12 +189,37 @@ class TrackingService {
       _releasePointerAtCurrentPosition();
       return;
     }
+    if (_isTrackerHostElement(target)) {
+      return;
+    }
+    final dispatchTarget = _resolveDispatchTarget(target);
 
     final bool active = frame.wink || frame.pinch;
+    _dispatchMouse(
+      target: dispatchTarget,
+      type: 'mousemove',
+      x: x,
+      y: y,
+    );
+    _dispatchPointer(
+      target: dispatchTarget,
+      type: 'pointermove',
+      x: x,
+      y: y,
+      buttons: _pointerDown ? 1 : 0,
+    );
+
     if (active && !_pointerDown) {
       _pointerDown = true;
       _pointerDownAt = DateTime.now();
-      _pointerTarget = target;
+      _pointerTarget = dispatchTarget;
+      _dispatchPointer(
+        target: _pointerTarget!,
+        type: 'pointerdown',
+        x: x,
+        y: y,
+        buttons: 1,
+      );
       _dispatchMouse(
         target: _pointerTarget!,
         type: 'mousedown',
@@ -182,7 +230,14 @@ class TrackingService {
     }
 
     if (_pointerDown) {
-      final moveTarget = _pointerTarget ?? target;
+      final moveTarget = _pointerTarget ?? dispatchTarget;
+      _dispatchPointer(
+        target: moveTarget,
+        type: 'pointermove',
+        x: x,
+        y: y,
+        buttons: 1,
+      );
       _dispatchMouse(
         target: moveTarget,
         type: 'mousemove',
@@ -195,7 +250,14 @@ class TrackingService {
       final downAt = _pointerDownAt;
       final int holdMs =
           downAt == null ? 1000 : DateTime.now().difference(downAt).inMilliseconds;
-      final upTarget = _pointerTarget ?? target;
+      final upTarget = _pointerTarget ?? dispatchTarget;
+      _dispatchPointer(
+        target: upTarget,
+        type: 'pointerup',
+        x: x,
+        y: y,
+        buttons: 0,
+      );
       _dispatchMouse(
         target: upTarget,
         type: 'mouseup',
@@ -204,6 +266,13 @@ class TrackingService {
       );
 
       if (holdMs < 300) {
+        _dispatchPointer(
+          target: upTarget,
+          type: 'click',
+          x: x,
+          y: y,
+          buttons: 0,
+        );
         _dispatchMouse(
           target: upTarget,
           type: 'click',
@@ -224,6 +293,8 @@ class TrackingService {
     return ValueListenableBuilder<int>(
       valueListenable: _overlayTick,
       builder: (context, _, __) {
+        final bool attachTrackerHost = _trackerEnabled;
+        final bool showTrackerHost = _trackerEnabled && _trackerUiVisible;
         final cursor = ValueListenableBuilder<TrackingFrame>(
           valueListenable: frameNotifier,
           builder: (context, frame, _) {
@@ -263,10 +334,10 @@ class TrackingService {
 
         final trackerHost = Positioned.fill(
           child: IgnorePointer(
-            ignoring: !_trackerUiVisible,
+            ignoring: !showTrackerHost,
             child: ClipRect(
               child: Opacity(
-                opacity: _trackerUiVisible ? 1 : 0,
+                opacity: attachTrackerHost ? 1 : 0,
                 child: HtmlElementView(viewType: _viewId),
               ),
             ),
@@ -328,6 +399,33 @@ class TrackingService {
     );
   }
 
+  void _dispatchPointer({
+    required html.Element target,
+    required String type,
+    required int x,
+    required int y,
+    required int buttons,
+  }) {
+    try {
+      target.dispatchEvent(
+        html.PointerEvent(
+          type,
+          <String, dynamic>{
+            'bubbles': true,
+            'cancelable': true,
+            'clientX': x,
+            'clientY': y,
+            'buttons': buttons,
+            'button': 0,
+            'pointerId': 1,
+            'isPrimary': true,
+            'pointerType': 'mouse',
+          },
+        ),
+      );
+    } catch (_) {}
+  }
+
   void _releasePointerAtCurrentPosition() {
     if (!_pointerDown) return;
     final target = _pointerTarget;
@@ -335,11 +433,69 @@ class TrackingService {
     _pointerDownAt = null;
     _pointerTarget = null;
     if (target == null) return;
+    _dispatchPointer(
+      target: target,
+      type: 'pointerup',
+      x: frameNotifier.value.cursorX.round(),
+      y: frameNotifier.value.cursorY.round(),
+      buttons: 0,
+    );
     _dispatchMouse(
       target: target,
       type: 'mouseup',
       x: frameNotifier.value.cursorX.round(),
       y: frameNotifier.value.cursorY.round(),
+    );
+  }
+
+  bool _isTrackerHostElement(html.Element target) {
+    if (target.id == _iframeElementId) return true;
+    final String id = target.id;
+    if (id.contains('global-tracker')) return true;
+    final html.Element? iframe = html.document.getElementById(_iframeElementId);
+    if (iframe == null) return false;
+    if (identical(target, iframe)) return true;
+    return iframe.contains(target);
+  }
+
+  html.Element _resolveDispatchTarget(html.Element target) {
+    final html.Element? flutterPane =
+        html.document.querySelector('flt-glass-pane');
+    if (flutterPane != null && flutterPane.contains(target)) {
+      return flutterPane;
+    }
+    return target;
+  }
+
+  void _queueConfigRetry() {
+    if (_configRetryTimer != null) return;
+    _configRetryTimer = Timer.periodic(const Duration(milliseconds: 450), (timer) {
+      if (!_initialized) {
+        timer.cancel();
+        _configRetryTimer = null;
+        return;
+      }
+      if (_trackerReady || timer.tick > 16) {
+        timer.cancel();
+        _configRetryTimer = null;
+        return;
+      }
+      _postConfig(force: true);
+    });
+  }
+
+  void _syncHostVisibilityStyle() {
+    final element = _trackerIframe;
+    if (element == null) return;
+    final bool enabled = _trackerEnabled;
+    final bool visibleUi = _trackerEnabled && _trackerUiVisible;
+    element.style.setProperty('pointer-events', visibleUi ? 'auto' : 'none');
+    element.style.setProperty('visibility', enabled ? 'visible' : 'hidden');
+    element.style.setProperty('opacity', visibleUi ? '1' : '0');
+    element.style.setProperty('background', 'transparent');
+    element.style.setProperty(
+      'transform',
+      visibleUi ? 'none' : 'translate(-200vw, -200vh)',
     );
   }
 

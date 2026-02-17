@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../engine3d.dart';
 import '../layer_mode.dart';
 import '../models/preset_payload_v2.dart';
-import '../services/tracking_service.dart';
 
 class PresetViewer extends StatelessWidget {
   const PresetViewer({
@@ -14,6 +13,8 @@ class PresetViewer extends StatelessWidget {
     this.embedded = false,
     this.disableAudio = true,
     this.embeddedStudio = false,
+    this.useGlobalTracking = true,
+    this.headPose,
   });
 
   final String mode;
@@ -22,36 +23,33 @@ class PresetViewer extends StatelessWidget {
   final bool embedded;
   final bool disableAudio;
   final bool embeddedStudio;
+  final bool useGlobalTracking;
+  final Map<String, double>? headPose;
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder(
-      valueListenable: TrackingService.instance.frameNotifier,
-      builder: (context, frame, _) {
-        final adapted = PresetPayloadV2.fromMap(
-          payload,
-          fallbackMode: mode,
-        );
-
-        if (adapted.mode == '2d') {
-          return LayerMode(
-            cleanView: cleanView,
-            embedded: embedded,
-            embeddedStudio: embeddedStudio,
-            initialPresetPayload: adapted.toMap(),
-            externalHeadPose: frame.toHeadPoseMap(),
-          );
-        }
-
-        return Engine3DPage(
-          cleanView: cleanView,
-          embedded: embedded,
-          embeddedStudio: embeddedStudio,
-          disableAudio: disableAudio,
-          initialPresetPayload: adapted.toMap(),
-          externalHeadPose: frame.toHeadPoseMap(),
-        );
-      },
+    final adapted = PresetPayloadV2.fromMap(
+      payload,
+      fallbackMode: mode,
+    );
+    if (adapted.mode == '2d') {
+      return LayerMode(
+        cleanView: cleanView,
+        embedded: embedded,
+        embeddedStudio: embeddedStudio,
+        initialPresetPayload: adapted.toMap(),
+        externalHeadPose: headPose,
+        useGlobalTracking: useGlobalTracking,
+      );
+    }
+    return Engine3DPage(
+      cleanView: cleanView,
+      embedded: embedded,
+      embeddedStudio: embeddedStudio,
+      disableAudio: disableAudio,
+      initialPresetPayload: adapted.toMap(),
+      externalHeadPose: headPose,
+      useGlobalTracking: useGlobalTracking,
     );
   }
 }

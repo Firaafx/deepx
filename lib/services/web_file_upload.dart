@@ -33,6 +33,8 @@ Future<PickedDeviceFile?> pickDeviceFile({
   final Completer<PickedDeviceFile?> completer = Completer<PickedDeviceFile?>();
   StreamSubscription<html.Event>? changeSub;
   StreamSubscription<html.Event>? focusSub;
+  bool didReceiveChange = false;
+  Timer? focusCancelTimer;
 
   Future<void> completeOnce(PickedDeviceFile? value) async {
     if (!completer.isCompleted) {
@@ -76,6 +78,7 @@ Future<PickedDeviceFile?> pickDeviceFile({
   }
 
   changeSub = input.onChange.listen((_) async {
+    didReceiveChange = true;
     final html.File? file = (input.files != null && input.files!.isNotEmpty)
         ? input.files!.first
         : null;
@@ -87,10 +90,11 @@ Future<PickedDeviceFile?> pickDeviceFile({
   });
 
   focusSub = html.window.onFocus.listen((_) {
-    Future<void>.delayed(const Duration(milliseconds: 220), () async {
+    focusCancelTimer?.cancel();
+    focusCancelTimer = Timer(const Duration(milliseconds: 900), () async {
       if (completer.isCompleted) return;
       final hasSelection = input.files != null && input.files!.isNotEmpty;
-      if (!hasSelection) {
+      if (!didReceiveChange && !hasSelection) {
         await completeOnce(null);
       }
     });
@@ -103,6 +107,7 @@ Future<PickedDeviceFile?> pickDeviceFile({
     result = await completer.future
         .timeout(const Duration(seconds: 45), onTimeout: () => null);
   } finally {
+    focusCancelTimer?.cancel();
     await changeSub.cancel();
     await focusSub.cancel();
     input.remove();

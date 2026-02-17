@@ -258,6 +258,7 @@ async function init() {
             applyTrackerConfig(data);
         }
     });
+    emitToParent({type: 'tracker_ready'});
     faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`});
     hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`});
     setupDraggablePanel();
@@ -1536,7 +1537,9 @@ function frameUpdate() {
         } : null,
         cursor: {
             x: smoothX,
-            y: smoothY
+            y: smoothY,
+            sourceWidth: window.innerWidth,
+            sourceHeight: window.innerHeight
         }
         // Add more as needed, e.g., ear, etc.
     };

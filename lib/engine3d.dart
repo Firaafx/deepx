@@ -8,6 +8,7 @@ import 'dart:js_interop';
 
 import 'models/preset_payload_v2.dart';
 import 'services/app_repository.dart';
+import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
 
 class Engine3DPage extends StatefulWidget {
@@ -21,6 +22,7 @@ class Engine3DPage extends StatefulWidget {
     this.disableAudio = false,
     this.externalHeadPose,
     this.onPresetSaved,
+    this.useGlobalTracking = true,
   });
 
   final Map<String, dynamic>? initialPresetPayload;
@@ -31,6 +33,7 @@ class Engine3DPage extends StatefulWidget {
   final bool disableAudio;
   final Map<String, double>? externalHeadPose;
   final void Function(String name, Map<String, dynamic> payload)? onPresetSaved;
+  final bool useGlobalTracking;
 
   @override
   State<Engine3DPage> createState() => _Engine3DPageState();
@@ -48,6 +51,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
       StreamController.broadcast();
   StreamSubscription? _messageSubscription;
   StreamSubscription<Map<String, dynamic>>? _trackingDataSubscription;
+  VoidCallback? _globalTrackingListener;
   bool showTracker = false;
   String? currentPresetName;
   final Map<String, Map<String, dynamic>> presets = {};
@@ -466,6 +470,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
         let deadZoneX = 0.0, deadZoneY = 0.0, deadZoneZ = 0.0, deadZoneYaw = 0.0, deadZonePitch = 0.0;
         let manualMode = false;
         let showTracker = false;
+        let useGlobalTracking = false;
         let cameraMode = 'orbit';
         let presets = {};
         let currentPreset = null;
@@ -482,6 +487,20 @@ class _Engine3DPageState extends State<Engine3DPage> {
         }
         function pushStateSnapshot() {
             emitToParent({ type: 'engine_snapshot', state: getCurrentState() });
+        }
+        function applyGlobalTrackingConfig(enabled) {
+            useGlobalTracking = !!enabled;
+            const trackerInput = document.getElementById('show-tracker');
+            if (!trackerInput) return;
+            const trackerRow = trackerInput.parentElement;
+            if (trackerRow) {
+                trackerRow.style.display = useGlobalTracking ? 'none' : 'flex';
+            }
+            if (useGlobalTracking) {
+                showTracker = false;
+                trackerInput.checked = false;
+                setStore('show-tracker', false);
+            }
         }
         function disposeEngine() {
             if (disposed) return;
@@ -586,6 +605,10 @@ class _Engine3DPageState extends State<Engine3DPage> {
                         }
                         return;
                     }
+                    if (data.type === 'global_tracking_config') {
+                        applyGlobalTrackingConfig(data.useGlobal === true);
+                        return;
+                    }
                     if (data.type === 'load_preset_state') {
                         if (data.state) {
                             applyState(data.state);
@@ -653,6 +676,10 @@ class _Engine3DPageState extends State<Engine3DPage> {
             deadZonePitch = parseFloat(getStore('dz-pitch') || 0.0);
             manualMode = getStore('manual-mode') === 'true';
             showTracker = getStore('show-tracker') === 'true';
+            if (useGlobalTracking) {
+                showTracker = false;
+                setStore('show-tracker', false);
+            }
             cameraMode = getStore('camera-mode') || 'orbit';
             document.getElementById('manual-controls').style.display = manualMode ? 'block' : 'none';
         }
@@ -1610,7 +1637,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
       return iframe;
     });
 
-    if (widget.externalHeadPose == null) {
+    if (widget.externalHeadPose == null && !widget.useGlobalTracking) {
       ui_web.platformViewRegistry.registerViewFactory(trackerViewID,
           (int viewId) {
         final web.HTMLIFrameElement iframe = web.HTMLIFrameElement();
@@ -1641,6 +1668,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
       final String? type = messageData['type']?.toString();
       if (fromEngine) {
         if (type == 'toggle_tracker') {
+          if (widget.useGlobalTracking) return;
           setState(() {
             showTracker = messageData['show'] == true;
           });
@@ -1681,6 +1709,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
       }
 
       if (fromTracker) {
+        if (widget.useGlobalTracking) return;
         if (type == 'hide_tracker') {
           if (showTracker) {
             setState(() => showTracker = false);
@@ -1716,6 +1745,39 @@ class _Engine3DPageState extends State<Engine3DPage> {
       });
     });
 
+    if (widget.externalHeadPose == null && widget.useGlobalTracking) {
+      _globalTrackingListener = () {
+        if (!mounted) return;
+        final frame = TrackingService.instance.frameNotifier.value;
+        if (!manualMode) {
+          _applyTrackerDeadZone(<String, dynamic>{
+            'x': frame.headX,
+            'y': frame.headY,
+            'z': frame.headZ,
+            'yaw': frame.yaw,
+            'pitch': frame.pitch,
+          });
+        } else {
+          headX = frame.headX;
+          headY = frame.headY;
+          zValue = frame.headZ;
+          yaw = frame.yaw;
+          pitch = frame.pitch;
+        }
+        _postToEngine(<String, dynamic>{
+          'head': <String, dynamic>{
+            'x': headX,
+            'y': headY,
+            'z': zValue,
+            'yaw': yaw,
+            'pitch': pitch,
+          },
+        });
+      };
+      TrackingService.instance.frameNotifier
+          .addListener(_globalTrackingListener!);
+    }
+
     if (widget.externalHeadPose != null) {
       _applyExternalHeadPose(widget.externalHeadPose!);
     }
@@ -1728,10 +1790,17 @@ class _Engine3DPageState extends State<Engine3DPage> {
       'type': 'dispose_engine',
       'channel': _bridgeChannel,
     });
-    _postToTracker(<String, dynamic>{
-      'type': 'dispose_tracker',
-      'channel': _bridgeChannel,
-    });
+    if (!widget.useGlobalTracking) {
+      _postToTracker(<String, dynamic>{
+        'type': 'dispose_tracker',
+        'channel': _bridgeChannel,
+      });
+    }
+    final listener = _globalTrackingListener;
+    if (listener != null) {
+      TrackingService.instance.frameNotifier.removeListener(listener);
+      _globalTrackingListener = null;
+    }
     _messageSubscription?.cancel();
     _trackingDataSubscription?.cancel();
     _dataController.close();
@@ -1744,6 +1813,51 @@ class _Engine3DPageState extends State<Engine3DPage> {
     super.didUpdateWidget(oldWidget);
     if (widget.externalHeadPose != null) {
       _applyExternalHeadPose(widget.externalHeadPose!);
+      return;
+    }
+    if (widget.useGlobalTracking && !oldWidget.useGlobalTracking) {
+      _globalTrackingListener ??= () {
+        if (!mounted) return;
+        final frame = TrackingService.instance.frameNotifier.value;
+        if (!manualMode) {
+          _applyTrackerDeadZone(<String, dynamic>{
+            'x': frame.headX,
+            'y': frame.headY,
+            'z': frame.headZ,
+            'yaw': frame.yaw,
+            'pitch': frame.pitch,
+          });
+        } else {
+          headX = frame.headX;
+          headY = frame.headY;
+          zValue = frame.headZ;
+          yaw = frame.yaw;
+          pitch = frame.pitch;
+        }
+        _postToEngine(<String, dynamic>{
+          'head': <String, dynamic>{
+            'x': headX,
+            'y': headY,
+            'z': zValue,
+            'yaw': yaw,
+            'pitch': pitch,
+          },
+        });
+      };
+      TrackingService.instance.frameNotifier
+          .addListener(_globalTrackingListener!);
+    } else if (!widget.useGlobalTracking && oldWidget.useGlobalTracking) {
+      final listener = _globalTrackingListener;
+      if (listener != null) {
+        TrackingService.instance.frameNotifier.removeListener(listener);
+        _globalTrackingListener = null;
+      }
+    }
+    if (widget.useGlobalTracking != oldWidget.useGlobalTracking) {
+      _postToEngine(<String, dynamic>{
+        'type': 'global_tracking_config',
+        'useGlobal': widget.useGlobalTracking,
+      });
     }
   }
 
@@ -1774,7 +1888,9 @@ class _Engine3DPageState extends State<Engine3DPage> {
         deadZoneYaw = _toDouble(settings?['dz-yaw'], deadZoneYaw);
         deadZonePitch = _toDouble(settings?['dz-pitch'], deadZonePitch);
         manualMode = settings?['manual-mode']?.toString() == 'true';
-        showTracker = settings?['show-tracker']?.toString() == 'true';
+        if (!widget.useGlobalTracking) {
+          showTracker = settings?['show-tracker']?.toString() == 'true';
+        }
       }
     } catch (e) {
       debugPrint('Failed to load 3D mode state: $e');
@@ -1818,6 +1934,9 @@ class _Engine3DPageState extends State<Engine3DPage> {
       manualMode = value.toString() == 'true';
     }
     if (key == 'show-tracker') {
+      if (widget.useGlobalTracking) {
+        return;
+      }
       setState(() => showTracker = value.toString() == 'true');
       _postTrackerConfig();
     }
@@ -1968,6 +2087,9 @@ class _Engine3DPageState extends State<Engine3DPage> {
     final Map<String, dynamic> settings =
         ((_modeState['settings'] as Map?)?.cast<String, dynamic>()) ??
             <String, dynamic>{};
+    if (widget.useGlobalTracking) {
+      settings.remove('show-tracker');
+    }
     final adaptedInitial = _adaptPresetPayload(widget.initialPresetPayload);
     if (adaptedInitial != null && adaptedInitial.controls.isNotEmpty) {
       settings.addAll(adaptedInitial.controls);
@@ -1982,6 +2104,10 @@ class _Engine3DPageState extends State<Engine3DPage> {
       'settings': settings,
       'presets': presets,
       'sceneState': sceneState,
+    });
+    _postToEngine(<String, dynamic>{
+      'type': 'global_tracking_config',
+      'useGlobal': widget.useGlobalTracking,
     });
     _postTrackerConfig();
   }
@@ -2007,7 +2133,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
   }
 
   void _postTrackerConfig() {
-    if (widget.externalHeadPose != null) return;
+    if (widget.externalHeadPose != null || widget.useGlobalTracking) return;
     _postToTracker(<String, dynamic>{
       'type': 'tracker_config',
       'enabled': true,
@@ -2114,7 +2240,9 @@ class _Engine3DPageState extends State<Engine3DPage> {
           height: double.infinity,
           child: HtmlElementView(viewType: viewID),
         ),
-        if (!widget.cleanView && widget.externalHeadPose == null)
+        if (!widget.cleanView &&
+            widget.externalHeadPose == null &&
+            !widget.useGlobalTracking)
           Positioned.fill(
             child: IgnorePointer(
               ignoring: !showTracker,

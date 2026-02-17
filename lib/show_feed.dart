@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:swipable_stack/swipable_stack.dart';
 
@@ -15,6 +16,7 @@ import 'models/preset_payload_v2.dart';
 import 'models/preset_comment.dart';
 import 'models/profile_stats.dart';
 import 'models/render_preset.dart';
+import 'models/tracking_frame.dart';
 import 'services/app_repository.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
@@ -78,11 +80,11 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   final GlobalKey<_CollectionTabState> _collectionKey =
       GlobalKey<_CollectionTabState>();
   final GlobalKey<_ChatTabState> _chatKey = GlobalKey<_ChatTabState>();
-  final GlobalKey<_ProfileTabState> _profileKey =
-      GlobalKey<_ProfileTabState>();
+  final GlobalKey<_ProfileTabState> _profileKey = GlobalKey<_ProfileTabState>();
 
   _ShellTab _activeTab = _ShellTab.home;
   bool _navExpanded = false;
+  bool _headerVisible = true;
   AppUserProfile? _currentProfile;
 
   @override
@@ -134,6 +136,14 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     }
   }
 
+  void _onScrollableDirection(bool showHeader) {
+    if (_activeTab != _ShellTab.home && _activeTab != _ShellTab.collection) {
+      return;
+    }
+    if (_headerVisible == showHeader) return;
+    setState(() => _headerVisible = showHeader);
+  }
+
   String get _title {
     switch (_activeTab) {
       case _ShellTab.home:
@@ -151,12 +161,20 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     }
   }
 
-  Widget _buildActiveTab() {
+  Widget _buildActiveTab(double topInset) {
     switch (_activeTab) {
       case _ShellTab.home:
-        return _HomeFeedTab(key: _homeKey);
+        return _HomeFeedTab(
+          key: _homeKey,
+          topInset: topInset,
+          onScrollDirection: _onScrollableDirection,
+        );
       case _ShellTab.collection:
-        return _CollectionTab(key: _collectionKey);
+        return _CollectionTab(
+          key: _collectionKey,
+          topInset: topInset,
+          onScrollDirection: _onScrollableDirection,
+        );
       case _ShellTab.post:
         return const _PostStudioTab();
       case _ShellTab.chat:
@@ -175,7 +193,13 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final bool hideHomeBrand = _activeTab == _ShellTab.home && _navExpanded;
+    final bool isDark = theme.brightness == Brightness.dark;
+    final Color headerTitleColor = isDark ? Colors.white : cs.onSurface;
+    final bool swapHomeTitle = _activeTab == _ShellTab.home && _navExpanded;
+    const double headerHeight = 84;
+    final String headerTitle = _activeTab == _ShellTab.home
+        ? (swapHomeTitle ? 'Home' : 'DeepX')
+        : _title;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -189,7 +213,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
               curve: Curves.easeOutCubic,
               width: _navExpanded ? 224 : 78,
               decoration: BoxDecoration(
-                color: cs.surface.withValues(alpha: 0.95),
+                color: const Color(0xFF1E1E1E),
                 border: Border(
                   right: BorderSide(color: cs.outline.withValues(alpha: 0.25)),
                 ),
@@ -202,13 +226,13 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Row(
                         children: [
-                          Icon(Icons.blur_on, color: cs.onSurface),
+                          Icon(Icons.blur_on, color: headerTitleColor),
                           const SizedBox(width: 10),
                           if (_navExpanded)
                             Text(
                               'DeepX',
                               style: GoogleFonts.orbitron(
-                                color: cs.onSurface,
+                                color: headerTitleColor,
                                 fontSize: 22,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 0.5,
@@ -244,96 +268,109 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
           ),
           Expanded(
             child: SafeArea(
-              child: Column(
+              child: Stack(
                 children: [
-                  ClipRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                      child: Container(
-                        padding: const EdgeInsets.fromLTRB(18, 10, 10, 10),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.3),
-                          border: Border(
-                            bottom: BorderSide(
-                              color: cs.outline.withValues(alpha: 0.2),
+                  Positioned.fill(child: _buildActiveTab(headerHeight + 12)),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: AnimatedSlide(
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeOutCubic,
+                      offset: _headerVisible ? Offset.zero : const Offset(0, -1.05),
+                      child: ClipRect(
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                          child: Container(
+                            height: headerHeight,
+                            margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+                            padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.6),
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: cs.outline.withValues(alpha: 0.2),
+                                ),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 220),
+                                  child: Text(
+                                    headerTitle,
+                                    key: ValueKey<String>(headerTitle),
+                                    style: (_activeTab == _ShellTab.home
+                                                ? GoogleFonts.orbitron(
+                                                    fontWeight: FontWeight.w700,
+                                                  )
+                                                : null)
+                                            ?.copyWith(
+                                          color: headerTitleColor,
+                                          fontSize: 28,
+                                        ) ??
+                                        TextStyle(
+                                          color: headerTitleColor,
+                                          fontSize: 28,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (_currentProfile != null)
+                                  Row(
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 15,
+                                        backgroundImage:
+                                            (_currentProfile!.avatarUrl != null &&
+                                                    _currentProfile!
+                                                        .avatarUrl!.isNotEmpty)
+                                                ? NetworkImage(
+                                                    _currentProfile!.avatarUrl!)
+                                                : null,
+                                        backgroundColor:
+                                            cs.surfaceContainerHighest,
+                                        child: (_currentProfile!.avatarUrl ==
+                                                    null ||
+                                                _currentProfile!.avatarUrl!
+                                                    .isEmpty)
+                                            ? Icon(Icons.person,
+                                                color: cs.onSurfaceVariant,
+                                                size: 15)
+                                            : null,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        _currentProfile!.displayName,
+                                        style: TextStyle(
+                                          color: cs.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                IconButton(
+                                  tooltip: 'Reload',
+                                  onPressed: _reloadActiveTab,
+                                  icon: Icon(Icons.refresh, color: headerTitleColor),
+                                ),
+                                IconButton(
+                                  tooltip: 'Sign out',
+                                  onPressed: () async {
+                                    await _repository.signOut();
+                                    if (!context.mounted) return;
+                                    Navigator.pushReplacementNamed(
+                                        context, '/auth');
+                                  },
+                                  icon: Icon(Icons.logout, color: headerTitleColor),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                        child: Row(
-                          children: [
-                            AnimatedOpacity(
-                              duration: const Duration(milliseconds: 220),
-                              opacity: hideHomeBrand ? 0 : 1,
-                              child: Text(
-                                _title,
-                                style: (_activeTab == _ShellTab.home
-                                        ? GoogleFonts.orbitron(
-                                            fontWeight: FontWeight.w700,
-                                          )
-                                        : null)
-                                    ?.copyWith(
-                                      color: cs.onSurface,
-                                      fontSize: 28,
-                                    ) ??
-                                    TextStyle(
-                                      color: cs.onSurface,
-                                      fontSize: 28,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                              ),
-                            ),
-                            const Spacer(),
-                            if (_currentProfile != null)
-                              Row(
-                                children: [
-                                  CircleAvatar(
-                                    radius: 15,
-                                    backgroundImage:
-                                        (_currentProfile!.avatarUrl != null &&
-                                                _currentProfile!
-                                                    .avatarUrl!.isNotEmpty)
-                                            ? NetworkImage(
-                                                _currentProfile!.avatarUrl!)
-                                            : null,
-                                    backgroundColor:
-                                        cs.surfaceContainerHighest,
-                                    child: (_currentProfile!.avatarUrl ==
-                                                null ||
-                                            _currentProfile!
-                                                .avatarUrl!.isEmpty)
-                                        ? Icon(Icons.person,
-                                            color: cs.onSurfaceVariant,
-                                            size: 15)
-                                        : null,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Text(
-                                    _currentProfile!.displayName,
-                                    style: TextStyle(color: cs.onSurfaceVariant),
-                                  ),
-                                ],
-                              ),
-                            IconButton(
-                              tooltip: 'Reload',
-                              onPressed: _reloadActiveTab,
-                              icon: Icon(Icons.refresh, color: cs.onSurface),
-                            ),
-                            IconButton(
-                              tooltip: 'Sign out',
-                              onPressed: () async {
-                                await _repository.signOut();
-                                if (!context.mounted) return;
-                                Navigator.pushReplacementNamed(context, '/auth');
-                              },
-                              icon: Icon(Icons.logout, color: cs.onSurface),
-                            ),
-                          ],
-                        ),
                       ),
                     ),
-                  ),
-                  Expanded(
-                    child: _buildActiveTab(),
                   ),
                 ],
               ),
@@ -371,7 +408,8 @@ class _NavButtonState extends State<_NavButton> {
 
   @override
   Widget build(BuildContext context) {
-    final Color fg = widget.active ? Colors.black : widget.colorScheme.onSurface;
+    final Color fg =
+        widget.active ? Colors.black : widget.colorScheme.onSurface;
     Color bg = Colors.transparent;
     if (widget.active) {
       bg = Colors.white;
@@ -420,7 +458,14 @@ class _NavButtonState extends State<_NavButton> {
 }
 
 class _HomeFeedTab extends StatefulWidget {
-  const _HomeFeedTab({super.key});
+  const _HomeFeedTab({
+    super.key,
+    required this.topInset,
+    required this.onScrollDirection,
+  });
+
+  final double topInset;
+  final ValueChanged<bool> onScrollDirection;
 
   @override
   State<_HomeFeedTab> createState() => _HomeFeedTabState();
@@ -467,18 +512,6 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     await _repository.recordPresetView(post.preset.id);
     if (!mounted) return;
 
-    final String? me = _repository.currentUser?.id;
-    final bool mine = me != null && post.preset.userId == me;
-
-    if (mine) {
-      final Widget page = post.preset.mode == '2d'
-          ? LayerMode(initialPresetPayload: post.preset.payload)
-          : Engine3DPage(initialPresetPayload: post.preset.payload);
-      await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
-      await _loadFeed();
-      return;
-    }
-
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -520,42 +553,60 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final double width = constraints.maxWidth;
-        int crossAxisCount = 1;
-        if (width >= 1500) {
-          crossAxisCount = 4;
-        } else if (width >= 1150) {
-          crossAxisCount = 3;
-        } else if (width >= 760) {
-          crossAxisCount = 2;
+    return NotificationListener<UserScrollNotification>(
+      onNotification: (notification) {
+        if (notification.direction == ScrollDirection.reverse) {
+          widget.onScrollDirection(false);
+        } else if (notification.direction == ScrollDirection.forward ||
+            notification.metrics.pixels <= 1) {
+          widget.onScrollDirection(true);
         }
-
-        return GridView.builder(
-          padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
-          itemCount: _posts.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 16 / 9,
-          ),
-          itemBuilder: (context, index) {
-            final post = _posts[index];
-            return _FeedTile(
-              post: post,
-              onTap: () => _openPost(post),
-            );
-          },
-        );
+        return false;
       },
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final double width = constraints.maxWidth;
+          int crossAxisCount = 1;
+          if (width >= 1500) {
+            crossAxisCount = 4;
+          } else if (width >= 1150) {
+            crossAxisCount = 3;
+          } else if (width >= 760) {
+            crossAxisCount = 2;
+          }
+
+          return GridView.builder(
+            padding: EdgeInsets.fromLTRB(14, widget.topInset, 14, 14),
+            itemCount: _posts.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 16 / 9,
+            ),
+            itemBuilder: (context, index) {
+              final post = _posts[index];
+              return _FeedTile(
+                post: post,
+                onTap: () => _openPost(post),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
 
 class _CollectionTab extends StatefulWidget {
-  const _CollectionTab({super.key});
+  const _CollectionTab({
+    super.key,
+    required this.topInset,
+    required this.onScrollDirection,
+  });
+
+  final double topInset;
+  final ValueChanged<bool> onScrollDirection;
 
   @override
   State<_CollectionTab> createState() => _CollectionTabState();
@@ -581,7 +632,8 @@ class _CollectionTabState extends State<_CollectionTab> {
     });
 
     try {
-      final collections = await _repository.fetchPublishedCollections(limit: 120);
+      final collections =
+          await _repository.fetchPublishedCollections(limit: 120);
       if (!mounted) return;
       setState(() {
         _collections
@@ -643,41 +695,52 @@ class _CollectionTabState extends State<_CollectionTab> {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        int crossAxisCount = 1;
-        if (width >= 1500) {
-          crossAxisCount = 4;
-        } else if (width >= 1150) {
-          crossAxisCount = 3;
-        } else if (width >= 760) {
-          crossAxisCount = 2;
+    return NotificationListener<UserScrollNotification>(
+      onNotification: (notification) {
+        if (notification.direction == ScrollDirection.reverse) {
+          widget.onScrollDirection(false);
+        } else if (notification.direction == ScrollDirection.forward ||
+            notification.metrics.pixels <= 1) {
+          widget.onScrollDirection(true);
         }
-
-        return GridView.builder(
-          padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
-          itemCount: _collections.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 16 / 9,
-          ),
-          itemBuilder: (context, index) {
-            final summary = _collections[index];
-            return _CollectionFeedTile(
-              summary: summary,
-              onTap: () => _openCollection(summary),
-            );
-          },
-        );
+        return false;
       },
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          int crossAxisCount = 1;
+          if (width >= 1500) {
+            crossAxisCount = 4;
+          } else if (width >= 1150) {
+            crossAxisCount = 3;
+          } else if (width >= 760) {
+            crossAxisCount = 2;
+          }
+
+          return GridView.builder(
+            padding: EdgeInsets.fromLTRB(14, widget.topInset, 14, 14),
+            itemCount: _collections.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 16 / 9,
+            ),
+            itemBuilder: (context, index) {
+              final summary = _collections[index];
+              return _CollectionFeedTile(
+                summary: summary,
+                onTap: () => _openCollection(summary),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
 
-class _CollectionFeedTile extends StatefulWidget {
+class _CollectionFeedTile extends StatelessWidget {
   const _CollectionFeedTile({
     required this.summary,
     required this.onTap,
@@ -687,16 +750,9 @@ class _CollectionFeedTile extends StatefulWidget {
   final VoidCallback onTap;
 
   @override
-  State<_CollectionFeedTile> createState() => _CollectionFeedTileState();
-}
-
-class _CollectionFeedTileState extends State<_CollectionFeedTile> {
-  bool _hovered = false;
-
-  @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final item = widget.summary.firstItem;
+    final item = summary.firstItem;
     final preview = item == null
         ? Container(
             color: cs.surfaceContainerLow,
@@ -708,13 +764,10 @@ class _CollectionFeedTileState extends State<_CollectionFeedTile> {
               ),
             ),
           )
-        : _PresetCardPreview(
-            mode: item.mode,
-            payload: item.snapshot,
-            live3d: _hovered,
-          );
+        : _GridPresetPreview(mode: item.mode, payload: item.snapshot);
 
-    Widget deckPlate({required double dx, required double dy, required double a}) {
+    Widget deckPlate(
+        {required double dx, required double dy, required double a}) {
       return Positioned(
         left: dx,
         right: dx,
@@ -731,98 +784,94 @@ class _CollectionFeedTileState extends State<_CollectionFeedTile> {
 
     return Material(
       color: Colors.transparent,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: widget.onTap,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: <Widget>[
-              deckPlate(dx: 12, dy: 8, a: 0.35),
-              deckPlate(dx: 6, dy: 4, a: 0.5),
-              Positioned.fill(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Material(
-                    color: cs.surfaceContainerLow,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(child: IgnorePointer(child: preview)),
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.bottomCenter,
-                                end: Alignment.topCenter,
-                                colors: [
-                                  Colors.black.withValues(alpha: 0.78),
-                                  Colors.transparent,
-                                ],
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.summary.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: cs.onSurface,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  widget.summary.author?.displayName ??
-                                      'Unknown creator',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: cs.onSurface.withValues(alpha: 0.82),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.layers,
-                                        size: 14, color: Colors.white70),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      '${widget.summary.itemsCount} items',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            deckPlate(dx: 12, dy: 8, a: 0.35),
+            deckPlate(dx: 6, dy: 4, a: 0.5),
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Material(
+                  color: cs.surfaceContainerLow,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(child: IgnorePointer(child: preview)),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.bottomCenter,
+                              end: Alignment.topCenter,
+                              colors: [
+                                Colors.black.withValues(alpha: 0.78),
+                                Colors.transparent,
                               ],
                             ),
                           ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                summary.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: cs.onSurface,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                summary.author?.displayName ??
+                                    'Unknown creator',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: cs.onSurface.withValues(alpha: 0.82),
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.layers,
+                                      size: 14, color: Colors.white70),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${summary.itemsCount} items',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _FeedTile extends StatefulWidget {
+class _FeedTile extends StatelessWidget {
   const _FeedTile({
     required this.post,
     required this.onTap,
@@ -832,90 +881,75 @@ class _FeedTile extends StatefulWidget {
   final VoidCallback onTap;
 
   @override
-  State<_FeedTile> createState() => _FeedTileState();
-}
-
-class _FeedTileState extends State<_FeedTile> {
-  bool _hovered = false;
-
-  @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final Widget preview = _PresetCardPreview(
-      mode: widget.post.preset.mode,
-      payload: widget.post.preset.payload,
-      live3d: _hovered,
-    );
+    final Widget preview =
+        _GridPresetPreview(mode: post.preset.mode, payload: post.preset.payload);
 
     return Material(
       color: cs.surfaceContainerLow,
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: InkWell(
-          onTap: widget.onTap,
-          child: Stack(
-            children: [
-              Positioned.fill(child: IgnorePointer(child: preview)),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: [
-                        Colors.black.withValues(alpha: 0.78),
-                        Colors.transparent
-                      ],
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.post.author?.displayName ?? 'Unknown creator',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: cs.onSurface,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        widget.post.preset.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: cs.onSurface.withValues(alpha: 0.8),
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          _miniStat(
-                              Icons.thumb_up_alt_outlined, widget.post.likesCount),
-                          _miniStat(Icons.thumb_down_alt_outlined,
-                              widget.post.dislikesCount),
-                          _miniStat(Icons.mode_comment_outlined,
-                              widget.post.commentsCount),
-                          _miniStat(Icons.bookmark_border, widget.post.savesCount),
-                        ],
-                      ),
+      child: InkWell(
+        onTap: onTap,
+        child: Stack(
+          children: [
+            Positioned.fill(child: IgnorePointer(child: preview)),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.78),
+                      Colors.transparent
                     ],
                   ),
                 ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      post.author?.displayName ?? 'Unknown creator',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: cs.onSurface,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      post.preset.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: cs.onSurface.withValues(alpha: 0.8),
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        _miniStat(Icons.thumb_up_alt_outlined, post.likesCount),
+                        _miniStat(
+                            Icons.thumb_down_alt_outlined, post.dislikesCount),
+                        _miniStat(
+                            Icons.mode_comment_outlined, post.commentsCount),
+                        _miniStat(Icons.bookmark_border, post.savesCount),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -936,164 +970,85 @@ class _FeedTileState extends State<_FeedTile> {
   }
 }
 
-class _PresetCardPreview extends StatelessWidget {
-  const _PresetCardPreview({
+class _GridPresetPreview extends StatelessWidget {
+  const _GridPresetPreview({
     required this.mode,
     required this.payload,
-    required this.live3d,
   });
 
   final String mode;
   final Map<String, dynamic> payload;
-  final bool live3d;
-
-  @override
-  Widget build(BuildContext context) {
-    final adapted = PresetPayloadV2.fromMap(payload, fallbackMode: mode);
-    if (adapted.mode == '3d') {
-      if (live3d) {
-        return PresetViewer(
-          mode: adapted.mode,
-          payload: adapted.toMap(),
-          cleanView: true,
-          embedded: true,
-          disableAudio: true,
-        );
-      }
-      return const _ThreeDPosterPreview();
-    }
-    return _TwoDPosterPreview(scene: adapted.scene);
-  }
-}
-
-class _ThreeDPosterPreview extends StatelessWidget {
-  const _ThreeDPosterPreview();
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return ValueListenableBuilder(
-      valueListenable: TrackingService.instance.frameNotifier,
-      builder: (context, frame, _) {
-        final double nx = ((frame.headX - 0.5).clamp(-0.6, 0.6)) * 16;
-        final double ny = ((frame.headY - 0.5).clamp(-0.6, 0.6)) * 16;
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: <Color>[
-                    Color(0xFF131313),
-                    Color(0xFF070707),
-                  ],
-                ),
-              ),
-            ),
-            Transform.translate(
-              offset: Offset(nx, ny),
-              child: Icon(
-                Icons.view_in_ar_outlined,
-                size: 72,
-                color: cs.onSurface.withValues(alpha: 0.7),
-              ),
-            ),
-          ],
-        );
-      },
+    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
+      payload,
+      fallbackMode: mode,
     );
-  }
-}
 
-class _PosterLayerSnapshot {
-  const _PosterLayerSnapshot({
-    required this.url,
-    required this.order,
-    required this.scale,
-  });
-
-  final String url;
-  final int order;
-  final double scale;
-}
-
-class _TwoDPosterPreview extends StatelessWidget {
-  const _TwoDPosterPreview({required this.scene});
-
-  final Map<String, dynamic> scene;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final layers = _extractLayers(scene);
-    if (layers.isEmpty) {
-      return Container(
-        color: cs.surfaceContainerLow,
-        alignment: Alignment.center,
-        child: Icon(Icons.image_outlined, color: cs.onSurfaceVariant, size: 44),
-      );
-    }
-
-    return ValueListenableBuilder(
-      valueListenable: TrackingService.instance.frameNotifier,
-      builder: (context, frame, _) {
-        final double nx = (frame.headX - 0.5).clamp(-0.6, 0.6);
-        final double ny = (frame.headY - 0.5).clamp(-0.6, 0.6);
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            for (int i = 0; i < layers.length; i++)
-              Positioned.fill(
-                child: Transform.translate(
-                  offset: Offset(
-                    nx * (8 + (i * 3)),
-                    ny * (8 + (i * 3)),
-                  ),
-                  child: Transform.scale(
-                    scale: layers[i].scale,
-                    child: Image.network(
-                      layers[i].url,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, _, __) => Container(
-                        color: cs.surfaceContainerHighest,
-                      ),
+    if (adapted.mode == '3d') {
+      return ValueListenableBuilder<TrackingFrame>(
+        valueListenable: TrackingService.instance.frameNotifier,
+        builder: (context, frame, _) {
+          final double dx = (frame.headX * 26).clamp(-18, 18);
+          final double dy = (-frame.headY * 24).clamp(-14, 14);
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  cs.surfaceContainerHighest.withValues(alpha: 0.9),
+                  cs.surfaceContainerLow.withValues(alpha: 0.95),
+                  cs.surfaceContainerHighest.withValues(alpha: 0.88),
+                ],
+              ),
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Transform.translate(
+                  offset: Offset(dx, dy),
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.view_in_ar_outlined,
+                      color: cs.onSurface.withValues(alpha: 0.78),
+                      size: 54,
                     ),
                   ),
                 ),
-              ),
-          ],
-        );
-      },
+              ],
+            ),
+          );
+        },
+      );
+    }
+
+    if (adapted.scene.isEmpty) {
+      return DecoratedBox(
+        decoration: BoxDecoration(color: cs.surfaceContainerLow),
+        child: Center(
+          child: Icon(
+            adapted.mode == '3d'
+                ? Icons.view_in_ar_outlined
+                : Icons.layers_outlined,
+            color: cs.onSurfaceVariant,
+            size: 28,
+          ),
+        ),
+      );
+    }
+
+    return PresetViewer(
+      mode: adapted.mode,
+      payload: adapted.toMap(),
+      cleanView: true,
+      embedded: true,
+      disableAudio: true,
+      useGlobalTracking: true,
     );
-  }
-
-  List<_PosterLayerSnapshot> _extractLayers(Map<String, dynamic> map) {
-    final List<_PosterLayerSnapshot> layers = <_PosterLayerSnapshot>[];
-    for (final entry in map.entries) {
-      final value = entry.value;
-      if (value is! Map) continue;
-      final snapshot = Map<String, dynamic>.from(value);
-      final String url = snapshot['url']?.toString() ?? '';
-      if (url.isEmpty) continue;
-      if (snapshot['isVisible'] == false) continue;
-      final int order = snapshot['order'] is num
-          ? (snapshot['order'] as num).toInt()
-          : layers.length;
-      final double scale = _toDouble(snapshot['scale'], 1.0).clamp(0.5, 2.5);
-      layers.add(_PosterLayerSnapshot(url: url, order: order, scale: scale));
-    }
-    layers.sort((a, b) => a.order.compareTo(b.order));
-    if (layers.length > 5) {
-      return layers.sublist(0, 5);
-    }
-    return layers;
-  }
-
-  double _toDouble(dynamic value, double fallback) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? fallback;
   }
 }
 
@@ -1235,9 +1190,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
 
     try {
       final chatId = await _repository.createOrGetDirectChat(profile.userId);
-      if (chatId.isEmpty) {
-        throw Exception('Unable to open chat for selected user.');
-      }
       await _repository.sendChatMessage(
         chatId: chatId,
         body: 'Shared a preset',
@@ -1286,9 +1238,24 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
           Positioned(
             top: 14,
             left: 14,
-            child: IconButton.filledTonal(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back_ios_new_rounded),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
           Positioned(
@@ -1361,7 +1328,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             bottom: 24,
             child: Center(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(999),
@@ -1392,7 +1360,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       active: _commentsOpen,
                       activeColor: cs.primary,
                       label: _post.commentsCount.toString(),
-                      onTap: () => setState(() => _commentsOpen = !_commentsOpen),
+                      onTap: () =>
+                          setState(() => _commentsOpen = !_commentsOpen),
                     ),
                     _engagementButton(
                       icon: Icons.send_outlined,
@@ -1402,8 +1371,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       onTap: _shareToUser,
                     ),
                     _engagementButton(
-                      icon:
-                          _post.isSaved ? Icons.bookmark : Icons.bookmark_border,
+                      icon: _post.isSaved
+                          ? Icons.bookmark
+                          : Icons.bookmark_border,
                       active: _post.isSaved,
                       activeColor: Colors.amberAccent,
                       label: _post.savesCount.toString(),
@@ -1422,7 +1392,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                     child: GestureDetector(
                       onTap: () => setState(() => _commentsOpen = false),
                       child: Container(
-                        color: Colors.black.withValues(alpha: 0.2),
+                        color: Colors.black.withValues(alpha: 0.3),
                       ),
                     ),
                   ),
@@ -1430,87 +1400,88 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                     width: MediaQuery.of(context).size.width * 0.25,
                     child: ClipRect(
                       child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                         child: Container(
-                          color: Colors.black.withValues(alpha: 0.3),
+                          color: Colors.black.withValues(alpha: 0.6),
                           child: Column(
-                            children: [
-                              const SizedBox(height: 14),
-                              const Text(
-                                'Comments',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Expanded(
-                                child: _loadingComments
+                        children: [
+                          const SizedBox(height: 14),
+                          const Text(
+                            'Comments',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: _loadingComments
+                                ? const Center(
+                                    child: CircularProgressIndicator(),
+                                  )
+                                : _comments.isEmpty
                                     ? const Center(
-                                        child: CircularProgressIndicator(),
-                                      )
-                                    : _comments.isEmpty
-                                        ? const Center(
-                                            child: Text(
-                                              'No comments yet',
-                                              style: TextStyle(color: Colors.white70),
-                                            ),
-                                          )
-                                        : ListView.builder(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 12),
-                                            itemCount: _comments.length,
-                                            itemBuilder: (context, index) {
-                                              final c = _comments[index];
-                                              return Padding(
-                                                padding: const EdgeInsets.symmetric(
-                                                    vertical: 6),
-                                                child: RichText(
-                                                  text: TextSpan(
-                                                    style: const TextStyle(
-                                                        color: Colors.white70),
-                                                    children: [
-                                                      TextSpan(
-                                                        text:
-                                                            '${c.author?.displayName ?? 'User'}: ',
-                                                        style: const TextStyle(
-                                                          color: Colors.white,
-                                                          fontWeight: FontWeight.w600,
-                                                        ),
-                                                      ),
-                                                      TextSpan(text: c.content),
-                                                    ],
-                                                  ),
-                                                ),
-                                              );
-                                            },
-                                          ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _commentController,
-                                        decoration: const InputDecoration(
-                                          hintText: 'Write a comment...',
-                                          filled: true,
+                                        child: Text(
+                                          'No comments yet',
+                                          style:
+                                              TextStyle(color: Colors.white70),
                                         ),
+                                      )
+                                    : ListView.builder(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12),
+                                        itemCount: _comments.length,
+                                        itemBuilder: (context, index) {
+                                          final c = _comments[index];
+                                          return Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 6),
+                                            child: RichText(
+                                              text: TextSpan(
+                                                style: const TextStyle(
+                                                    color: Colors.white70),
+                                                children: [
+                                                  TextSpan(
+                                                    text:
+                                                        '${c.author?.displayName ?? 'User'}: ',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                  TextSpan(text: c.content),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                        },
                                       ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _commentController,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Write a comment...',
+                                      filled: true,
                                     ),
-                                    const SizedBox(width: 8),
-                                    FilledButton(
-                                      onPressed:
-                                          _sendingComment ? null : _sendComment,
-                                      child:
-                                          Text(_sendingComment ? '...' : 'Send'),
-                                    ),
-                                  ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 8),
+                                FilledButton(
+                                  onPressed:
+                                      _sendingComment ? null : _sendComment,
+                                  child: Text(_sendingComment ? '...' : 'Send'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                           ),
                         ),
                       ),
@@ -1576,36 +1547,32 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   int _editorSeed = 0;
   int _selectedItemIndex = -1;
   bool _publishing = false;
-  bool _overlayVisible = true;
-  Timer? _overlayHideTimer;
+  bool _studioChromeVisible = true;
+  Timer? _studioChromeTimer;
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
 
   @override
   void initState() {
     super.initState();
-    _armOverlayAutoHide();
+    _wakeStudioChrome();
   }
 
   @override
   void dispose() {
-    _overlayHideTimer?.cancel();
     _collectionNameController.dispose();
+    _studioChromeTimer?.cancel();
     super.dispose();
   }
 
-  void _armOverlayAutoHide() {
-    _overlayHideTimer?.cancel();
-    _overlayHideTimer = Timer(const Duration(seconds: 3), () {
-      if (!mounted) return;
-      setState(() => _overlayVisible = false);
-    });
-  }
-
-  void _wakeOverlay() {
-    if (!_overlayVisible && mounted) {
-      setState(() => _overlayVisible = true);
+  void _wakeStudioChrome() {
+    _studioChromeTimer?.cancel();
+    if (!_studioChromeVisible && mounted) {
+      setState(() => _studioChromeVisible = true);
     }
-    _armOverlayAutoHide();
+    _studioChromeTimer = Timer(const Duration(milliseconds: 2600), () {
+      if (!mounted) return;
+      setState(() => _studioChromeVisible = false);
+    });
   }
 
   void _onPresetSaved(String name, Map<String, dynamic> payload) {
@@ -1696,18 +1663,20 @@ class _PostStudioTabState extends State<_PostStudioTab> {
 
   Widget _buildEditor() {
     final bool persistPresets = _postTypeIndex == 0;
-    final activeItem = (_selectedItemIndex >= 0 &&
-            _selectedItemIndex < _draftItems.length)
-        ? _draftItems[_selectedItemIndex]
-        : null;
+    final activeItem =
+        (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length)
+            ? _draftItems[_selectedItemIndex]
+            : null;
 
     if (_modeIndex == 0) {
       return LayerMode(
         key: ValueKey('studio-2d-$_editorSeed-${activeItem?.name ?? 'none'}'),
         embedded: true,
         embeddedStudio: true,
+        useGlobalTracking: true,
         persistPresets: persistPresets,
-        initialPresetPayload: activeItem?.mode == '2d' ? activeItem!.snapshot : null,
+        initialPresetPayload:
+            activeItem?.mode == '2d' ? activeItem!.snapshot : null,
         onPresetSaved: _onPresetSaved,
       );
     }
@@ -1715,85 +1684,110 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       key: ValueKey('studio-3d-$_editorSeed-${activeItem?.name ?? 'none'}'),
       embedded: true,
       embeddedStudio: true,
+      useGlobalTracking: true,
       persistPresets: persistPresets,
-      initialPresetPayload: activeItem?.mode == '3d' ? activeItem!.snapshot : null,
+      initialPresetPayload:
+          activeItem?.mode == '3d' ? activeItem!.snapshot : null,
       onPresetSaved: _onPresetSaved,
     );
   }
 
-  Widget _buildTopOverlay(ColorScheme cs, bool collectionMode) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.56),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cs.outline.withValues(alpha: 0.24)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bool collectionMode = _postTypeIndex == 1;
+    final TrackingService tracking = TrackingService.instance;
+    final bool trackerEnabled = tracking.trackerEnabled;
+    final bool trackerUiVisible = tracking.trackerUiVisible;
+
+    final Widget topOverlay = ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.6),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment<int>(value: 0, label: Text('2D Mode')),
-                  ButtonSegment<int>(value: 1, label: Text('3D Mode')),
+              Row(
+                children: [
+                  SegmentedButton<int>(
+                    segments: const [
+                      ButtonSegment<int>(value: 0, label: Text('2D Mode')),
+                      ButtonSegment<int>(value: 1, label: Text('3D Mode')),
+                    ],
+                    selected: <int>{_modeIndex},
+                    onSelectionChanged: (values) {
+                      setState(() => _modeIndex = values.first);
+                    },
+                  ),
+                  const SizedBox(width: 10),
+                  SegmentedButton<int>(
+                    segments: const [
+                      ButtonSegment<int>(value: 0, label: Text('Single')),
+                      ButtonSegment<int>(value: 1, label: Text('Collection')),
+                    ],
+                    selected: <int>{_postTypeIndex},
+                    onSelectionChanged: (values) {
+                      setState(() => _postTypeIndex = values.first);
+                    },
+                  ),
+                  const SizedBox(width: 10),
+                  FilterChip(
+                    selected: trackerUiVisible,
+                    showCheckmark: false,
+                    label: const Text('Show Tracker UI'),
+                    onSelected: trackerEnabled
+                        ? (value) async {
+                            await tracking.setTrackerUiVisible(value);
+                            if (!mounted) return;
+                            setState(() {});
+                          }
+                        : null,
+                  ),
+                  const Spacer(),
+                  if (collectionMode) ...[
+                    OutlinedButton.icon(
+                      onPressed: _previewCollection,
+                      icon: const Icon(Icons.preview_outlined),
+                      label: const Text('Preview'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _publishing ? null : _publishCollection,
+                      icon: const Icon(Icons.publish_outlined),
+                      label: Text(_publishing ? 'Publishing...' : 'Publish'),
+                    ),
+                  ],
                 ],
-                selected: <int>{_modeIndex},
-                onSelectionChanged: (values) {
-                  setState(() => _modeIndex = values.first);
-                  _wakeOverlay();
-                },
               ),
-              const SizedBox(width: 10),
-              SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment<int>(value: 0, label: Text('Single')),
-                  ButtonSegment<int>(value: 1, label: Text('Collection')),
-                ],
-                selected: <int>{_postTypeIndex},
-                onSelectionChanged: (values) {
-                  setState(() => _postTypeIndex = values.first);
-                  _wakeOverlay();
-                },
-              ),
-              const Spacer(),
               if (collectionMode) ...[
-                OutlinedButton.icon(
-                  onPressed: _previewCollection,
-                  icon: const Icon(Icons.preview_outlined),
-                  label: const Text('Preview'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _publishing ? null : _publishCollection,
-                  icon: const Icon(Icons.publish_outlined),
-                  label: Text(_publishing ? 'Publishing...' : 'Publish'),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _collectionNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Collection Name',
+                    prefixIcon: Icon(Icons.collections_bookmark_outlined),
+                  ),
                 ),
               ],
             ],
           ),
-          if (collectionMode) ...[
-            const SizedBox(height: 8),
-            TextField(
-              controller: _collectionNameController,
-              decoration: const InputDecoration(
-                labelText: 'Collection Name',
-                prefixIcon: Icon(Icons.collections_bookmark_outlined),
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
-  }
 
-  Widget _buildCollectionManagerOverlay(ColorScheme cs) {
-    return Container(
+    final Widget collectionManagerPanel = Container(
+      width: 320,
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.58),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cs.outline.withValues(alpha: 0.22)),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
       ),
       child: Column(
         children: [
@@ -1861,58 +1855,59 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         ],
       ),
     );
-  }
 
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final bool collectionMode = _postTypeIndex == 1;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: MouseRegion(
-        onEnter: (_) => _wakeOverlay(),
-        onHover: (_) => _wakeOverlay(),
+    return MouseRegion(
+      onEnter: (_) => _wakeStudioChrome(),
+      onHover: (_) => _wakeStudioChrome(),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _wakeStudioChrome,
         child: Stack(
           children: [
             Positioned.fill(
-              child: DecoratedBox(
+              child: Container(
+                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 decoration: BoxDecoration(
                   color: Colors.black,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: cs.outline.withValues(alpha: 0.16)),
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: _buildEditor(),
-                ),
+                clipBehavior: Clip.antiAlias,
+                child: _buildEditor(),
               ),
             ),
             Positioned(
-              top: 12,
+              top: 8,
               left: 12,
               right: 12,
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 220),
-                opacity: _overlayVisible ? 1 : 0,
-                child: IgnorePointer(
-                  ignoring: !_overlayVisible,
-                  child: _buildTopOverlay(cs, collectionMode),
+              child: IgnorePointer(
+                ignoring: !_studioChromeVisible,
+                child: AnimatedOpacity(
+                  opacity: _studioChromeVisible ? 1 : 0,
+                  duration: const Duration(milliseconds: 220),
+                  child: topOverlay,
                 ),
               ),
             ),
             if (collectionMode)
               Positioned(
                 left: 12,
-                top: 116,
+                top: 132,
                 bottom: 12,
                 width: 320,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 220),
-                  opacity: _overlayVisible ? 1 : 0,
-                  child: IgnorePointer(
-                    ignoring: !_overlayVisible,
-                    child: _buildCollectionManagerOverlay(cs),
+                child: IgnorePointer(
+                  ignoring: !_studioChromeVisible,
+                  child: AnimatedSlide(
+                    offset: _studioChromeVisible
+                        ? Offset.zero
+                        : const Offset(-0.08, 0),
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    child: AnimatedOpacity(
+                      opacity: _studioChromeVisible ? 1 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: collectionManagerPanel,
+                    ),
                   ),
                 ),
               ),
@@ -2362,19 +2357,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   Future<void> _openPost(RenderPreset preset) async {
-    final String? me = _repository.currentUser?.id;
-    final bool mine = me != null && preset.userId == me;
     await _repository.recordPresetView(preset.id);
-
-    if (mine) {
-      final Widget page = preset.mode == '2d'
-          ? LayerMode(initialPresetPayload: preset.payload)
-          : Engine3DPage(initialPresetPayload: preset.payload);
-      if (!mounted) return;
-      await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
-      await _load();
-      return;
-    }
 
     final FeedPost? post = await _repository.fetchFeedPostById(preset.id);
     if (!mounted) return;
@@ -2384,7 +2367,41 @@ class _ProfileTabState extends State<_ProfileTab> {
         MaterialPageRoute(builder: (_) => _PresetDetailPage(initialPost: post)),
       );
       await _load();
+      return;
     }
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          body: SafeArea(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: PresetViewer(
+                    mode: preset.mode,
+                    payload: preset.payload,
+                    cleanView: true,
+                    embedded: true,
+                    disableAudio: true,
+                  ),
+                ),
+                Positioned(
+                  top: 14,
+                  left: 14,
+                  child: IconButton.filledTonal(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _load();
   }
 
   Future<void> _editProfile() async {
@@ -2402,6 +2419,9 @@ class _ProfileTabState extends State<_ProfileTab> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color profilePanelColor =
+        isDark ? const Color(0xFF1E1E1E) : cs.surface;
     if (_loading) {
       return Center(
         child: CircularProgressIndicator(color: cs.primary),
@@ -2425,7 +2445,7 @@ class _ProfileTabState extends State<_ProfileTab> {
             margin: const EdgeInsets.fromLTRB(14, 0, 14, 10),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: cs.surfaceContainerLow,
+              color: profilePanelColor,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
             ),
@@ -2443,7 +2463,8 @@ class _ProfileTabState extends State<_ProfileTab> {
                       backgroundColor: cs.surfaceContainerHighest,
                       child: (_profile!.avatarUrl == null ||
                               _profile!.avatarUrl!.isEmpty)
-                          ? Icon(Icons.person, color: cs.onSurfaceVariant, size: 34)
+                          ? Icon(Icons.person,
+                              color: cs.onSurfaceVariant, size: 34)
                           : null,
                     ),
                     const SizedBox(width: 14),
@@ -2547,7 +2568,9 @@ class _ProfileTabState extends State<_ProfileTab> {
             fontWeight: FontWeight.w700,
           ),
         ),
-        Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        Text(label,
+            style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ],
     );
   }
@@ -2637,30 +2660,31 @@ class _EditProfilePageState extends State<_EditProfilePage> {
 
   Future<void> _uploadAvatar() async {
     if (_uploadingAvatar) return;
-    final file = await pickDeviceFile(accept: 'image/*');
-    if (file == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No image selected.')),
-      );
-      return;
-    }
     setState(() => _uploadingAvatar = true);
     try {
+      final file = await pickDeviceFile(accept: 'image/*');
+      if (file == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No file selected.')),
+        );
+        return;
+      }
       final String url = await _repository.uploadProfileAvatar(
         bytes: file.bytes,
         fileName: file.name,
         contentType: file.contentType,
       );
+      await _repository.updateCurrentProfile(avatarUrl: url);
       if (!mounted) return;
       setState(() => _avatarUrl = url);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile photo uploaded.')),
+        const SnackBar(content: Text('Profile picture uploaded.')),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Profile upload failed: $e')),
+        SnackBar(content: Text('Upload failed: $e')),
       );
     } finally {
       if (mounted) {
@@ -2715,22 +2739,25 @@ class _EditProfilePageState extends State<_EditProfilePage> {
                             : null,
                     backgroundColor: cs.surfaceContainerHighest,
                     child: (_avatarUrl == null || _avatarUrl!.isEmpty)
-                        ? Icon(Icons.person, color: cs.onSurfaceVariant, size: 32)
+                        ? Icon(Icons.person,
+                            color: cs.onSurfaceVariant, size: 32)
                         : null,
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton(
                     onPressed: _uploadingAvatar ? null : _uploadAvatar,
-                    child: Text(_uploadingAvatar
-                        ? 'Uploading...'
-                        : 'Upload Profile Picture'),
+                    child: Text(
+                      _uploadingAvatar
+                          ? 'Uploading...'
+                          : 'Upload Profile Picture',
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 16),
-              TextFormField(
+              TextField(
                 enabled: false,
-                initialValue: widget.profile.email,
+                controller: TextEditingController(text: widget.profile.email),
                 decoration: InputDecoration(
                   labelText: 'Email',
                   filled: true,
@@ -2812,7 +2839,7 @@ class _ChatTabState extends State<_ChatTab> {
     super.dispose();
   }
 
-  Future<void> _bootstrap() async {
+  Future<void> _bootstrap({String? preferredChatId}) async {
     setState(() {
       _loading = true;
       _error = null;
@@ -2824,7 +2851,8 @@ class _ChatTabState extends State<_ChatTab> {
       ChatSummary? active;
       List<AppUserProfile> members = const <AppUserProfile>[];
       if (chats.isNotEmpty) {
-        active = chats.first;
+        final String? currentId = preferredChatId ?? _activeChat?.id;
+        active = _chatById(chats, currentId) ?? chats.first;
         members = await _repository.fetchChatMembers(active.id);
       }
 
@@ -2845,6 +2873,37 @@ class _ChatTabState extends State<_ChatTab> {
     }
   }
 
+  ChatSummary? _chatById(List<ChatSummary> chats, String? id) {
+    if (id == null || id.isEmpty) return null;
+    for (final ChatSummary chat in chats) {
+      if (chat.id == id) return chat;
+    }
+    return null;
+  }
+
+  void _touchChat(String chatId, String messagePreview) {
+    final List<ChatSummary> updated = _chats
+        .map((ChatSummary chat) => chat.id == chatId
+            ? ChatSummary(
+                id: chat.id,
+                isGroup: chat.isGroup,
+                name: chat.name,
+                members: chat.members,
+                lastMessage: messagePreview,
+                lastMessageAt: DateTime.now(),
+              )
+            : chat)
+        .toList();
+    updated.sort((a, b) {
+      final DateTime aTime =
+          a.lastMessageAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final DateTime bTime =
+          b.lastMessageAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+    _chats = updated;
+  }
+
   Future<void> _selectChat(ChatSummary chat) async {
     final members = await _repository.fetchChatMembers(chat.id);
     if (!mounted) return;
@@ -2863,7 +2922,8 @@ class _ChatTabState extends State<_ChatTab> {
     _messageController.clear();
     try {
       await _repository.sendChatMessage(chatId: chat.id, body: text);
-      await _bootstrap();
+      if (!mounted) return;
+      setState(() => _touchChat(chat.id, text));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2881,6 +2941,8 @@ class _ChatTabState extends State<_ChatTab> {
         body: 'Shared a preset',
         sharedPresetId: preset.id,
       );
+      if (!mounted) return;
+      setState(() => _touchChat(chat.id, 'Shared a preset'));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2923,14 +2985,7 @@ class _ChatTabState extends State<_ChatTab> {
     if (profile == null) return;
     try {
       final chatId = await _repository.createOrGetDirectChat(profile.userId);
-      await _bootstrap();
-      if (!mounted) return;
-      for (final chat in _chats) {
-        if (chat.id == chatId) {
-          await _selectChat(chat);
-          break;
-        }
-      }
+      await _bootstrap(preferredChatId: chatId);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2950,22 +3005,10 @@ class _ChatTabState extends State<_ChatTab> {
         name: result.name,
         memberIds: result.memberIds,
       );
-      await _bootstrap();
-      if (!mounted) return;
-      ChatSummary? created;
-      for (final chat in _chats) {
-        if (chat.id == chatId) {
-          created = chat;
-          break;
-        }
+      if (chatId.isEmpty) {
+        throw Exception('Empty chat id returned by server.');
       }
-      if (created != null) {
-        await _selectChat(created);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Group created but not yet visible. Refreshing chats...')),
-        );
-      }
+      await _bootstrap(preferredChatId: chatId);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2977,6 +3020,10 @@ class _ChatTabState extends State<_ChatTab> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color panelColor = isDark ? const Color(0xFF1E1E1E) : cs.surface;
+    final Color messageInputColor =
+        isDark ? const Color(0xFF1E1E1E) : cs.surfaceContainerHighest;
     if (_loading) {
       return Center(
         child: CircularProgressIndicator(color: cs.primary),
@@ -3010,7 +3057,7 @@ class _ChatTabState extends State<_ChatTab> {
             width: 320,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: cs.surfaceContainerLow,
+                color: panelColor,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
               ),
@@ -3077,7 +3124,7 @@ class _ChatTabState extends State<_ChatTab> {
           Expanded(
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: cs.surfaceContainerLow,
+                color: panelColor,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
               ),
@@ -3161,7 +3208,8 @@ class _ChatTabState extends State<_ChatTab> {
                                 return Center(
                                   child: Text(
                                     'No messages yet',
-                                    style: TextStyle(color: cs.onSurfaceVariant),
+                                    style:
+                                        TextStyle(color: cs.onSurfaceVariant),
                                   ),
                                 );
                               }
@@ -3194,10 +3242,8 @@ class _ChatTabState extends State<_ChatTab> {
                                           const BoxConstraints(maxWidth: 420),
                                       decoration: BoxDecoration(
                                         color: mine
-                                            ? cs.primary
-                                                .withValues(alpha: 0.18)
-                                            : cs.surfaceContainerHighest
-                                                .withValues(alpha: 0.45),
+                                            ? cs.primary.withValues(alpha: 0.18)
+                                            : panelColor.withValues(alpha: 0.95),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: Column(
@@ -3220,8 +3266,8 @@ class _ChatTabState extends State<_ChatTab> {
                                                   const EdgeInsets.only(top: 2),
                                               child: Text(
                                                 msg.body,
-                                                style:
-                                                    TextStyle(color: cs.onSurface),
+                                                style: TextStyle(
+                                                    color: cs.onSurface),
                                               ),
                                             ),
                                           if (msg.sharedPresetId != null)
@@ -3270,8 +3316,8 @@ class _ChatTabState extends State<_ChatTab> {
                                   decoration: InputDecoration(
                                     hintText: 'Type a message...',
                                     filled: true,
-                                    fillColor:
-                                        cs.surfaceContainerHighest.withValues(alpha: 0.4),
+                                    fillColor: messageInputColor
+                                        .withValues(alpha: 0.4),
                                     border: const OutlineInputBorder(),
                                   ),
                                 ),
@@ -3308,47 +3354,49 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
   final TextEditingController _searchController = TextEditingController();
   List<AppUserProfile> _profiles = const <AppUserProfile>[];
   bool _loading = true;
-  Timer? _debounce;
-  int _searchToken = 0;
   String? _error;
+  Timer? _debounce;
+  int _queryToken = 0;
 
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(_onQueryChanged);
     _search();
   }
 
   @override
   void dispose() {
-    _debounce?.cancel();
+    _searchController.removeListener(_onQueryChanged);
     _searchController.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
-  void _scheduleSearch() {
+  void _onQueryChanged() {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 250), _search);
+    _debounce = Timer(const Duration(milliseconds: 280), _search);
   }
 
   Future<void> _search() async {
-    final int token = ++_searchToken;
+    final int token = ++_queryToken;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final profiles = await _repository.searchProfiles(_searchController.text);
-      if (!mounted || token != _searchToken) return;
+      if (!mounted || token != _queryToken) return;
       setState(() {
         _profiles = profiles;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted || token != _searchToken) return;
+      if (!mounted || token != _queryToken) return;
       setState(() {
         _profiles = const <AppUserProfile>[];
         _loading = false;
-        _error = 'Search failed: $e';
+        _error = e.toString();
       });
     }
   }
@@ -3369,7 +3417,6 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
                 Expanded(
                   child: TextField(
                     controller: _searchController,
-                    onChanged: (_) => _scheduleSearch(),
                     decoration: InputDecoration(
                       hintText: 'Search username/full name/email',
                       filled: true,
@@ -3378,70 +3425,59 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                if (_loading)
-                  SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      color: cs.primary,
-                    ),
-                  )
-                else
-                  Icon(Icons.search, color: cs.onSurfaceVariant),
               ],
             ),
             const SizedBox(height: 10),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  _error!,
-                  style: TextStyle(color: cs.error),
-                ),
-              ),
             if (_loading)
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: CircularProgressIndicator(color: cs.primary),
               )
+            else if (_error != null)
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  'Search failed: $_error',
+                  style: TextStyle(color: cs.error),
+                ),
+              )
+            else if (_profiles.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  'No users found.',
+                  style: TextStyle(color: cs.onSurfaceVariant),
+                ),
+              )
             else
               SizedBox(
                 height: 340,
-                child: _profiles.isEmpty
-                    ? Center(
-                        child: Text(
-                          'No users found',
-                          style: TextStyle(color: cs.onSurfaceVariant),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: _profiles.length,
-                        itemBuilder: (context, index) {
-                          final p = _profiles[index];
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundImage:
-                                  (p.avatarUrl != null && p.avatarUrl!.isNotEmpty)
-                                      ? NetworkImage(p.avatarUrl!)
-                                      : null,
-                              child: (p.avatarUrl == null || p.avatarUrl!.isEmpty)
-                                  ? const Icon(Icons.person)
-                                  : null,
-                            ),
-                            title: Text(
-                              p.displayName,
-                              style: TextStyle(color: cs.onSurface),
-                            ),
-                            subtitle: Text(
-                              p.email,
-                              style: TextStyle(color: cs.onSurfaceVariant),
-                            ),
-                            onTap: () => Navigator.pop(context, p),
-                          );
-                        },
+                child: ListView.builder(
+                  itemCount: _profiles.length,
+                  itemBuilder: (context, index) {
+                    final p = _profiles[index];
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundImage:
+                            (p.avatarUrl != null && p.avatarUrl!.isNotEmpty)
+                                ? NetworkImage(p.avatarUrl!)
+                                : null,
+                        child: (p.avatarUrl == null || p.avatarUrl!.isEmpty)
+                            ? const Icon(Icons.person)
+                            : null,
                       ),
+                      title: Text(
+                        p.displayName,
+                        style: TextStyle(color: cs.onSurface),
+                      ),
+                      subtitle: Text(
+                        p.email,
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                      onTap: () => Navigator.pop(context, p),
+                    );
+                  },
+                ),
               ),
           ],
         ),
@@ -3467,47 +3503,68 @@ class _GroupChatDialog extends StatefulWidget {
 class _GroupChatDialogState extends State<_GroupChatDialog> {
   final AppRepository _repository = AppRepository.instance;
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
 
   bool _loading = true;
+  String? _error;
   List<AppUserProfile> _profiles = const <AppUserProfile>[];
   final Set<String> _selected = <String>{};
+  Timer? _debounce;
+  int _queryToken = 0;
 
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(_onSearchChanged);
     _loadProfiles();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
+  void _onSearchChanged() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 260), _loadProfiles);
+  }
+
   Future<void> _loadProfiles() async {
+    final int token = ++_queryToken;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
-      final profiles = await _repository.searchProfiles('', limit: 40);
-      if (!mounted) return;
+      final profiles = await _repository.searchProfiles(
+        _searchController.text,
+        limit: 80,
+      );
+      if (!mounted || token != _queryToken) return;
       setState(() {
         _profiles = profiles;
         _loading = false;
       });
-    } catch (_) {
-      if (!mounted) return;
+    } catch (e) {
+      if (!mounted || token != _queryToken) return;
       setState(() {
         _profiles = const <AppUserProfile>[];
         _loading = false;
+        _error = e.toString();
       });
     }
-  }
-
-  bool get _canCreate {
-    return _nameController.text.trim().isNotEmpty && _selected.isNotEmpty;
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final bool canCreate =
+        _nameController.text.trim().isNotEmpty && _selected.isNotEmpty;
+    final List<AppUserProfile> visibleProfiles = _profiles;
     return AlertDialog(
       backgroundColor: cs.surface,
       title: Text('Create Group Chat', style: TextStyle(color: cs.onSurface)),
@@ -3527,18 +3584,45 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
               ),
             ),
             const SizedBox(height: 10),
+            TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search users',
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: cs.surfaceContainerLow,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
             if (_loading)
               Padding(
                 padding: const EdgeInsets.all(20),
                 child: CircularProgressIndicator(color: cs.primary),
               )
+            else if (_error != null)
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  'Search failed: $_error',
+                  style: TextStyle(color: cs.error),
+                ),
+              )
+            else if (visibleProfiles.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  'No users found.',
+                  style: TextStyle(color: cs.onSurfaceVariant),
+                ),
+              )
             else
               SizedBox(
                 height: 320,
                 child: ListView.builder(
-                  itemCount: _profiles.length,
+                  itemCount: visibleProfiles.length,
                   itemBuilder: (context, index) {
-                    final p = _profiles[index];
+                    final p = visibleProfiles[index];
                     final bool checked = _selected.contains(p.userId);
                     return CheckboxListTile(
                       value: checked,
@@ -3574,7 +3658,7 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _canCreate
+          onPressed: canCreate
               ? () {
                   final String name = _nameController.text.trim();
                   Navigator.pop(
@@ -3583,9 +3667,6 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
                   );
                 }
               : null,
-          style: ElevatedButton.styleFrom(
-            disabledBackgroundColor: cs.surfaceContainerHighest,
-          ),
           child: const Text('Create'),
         ),
       ],
