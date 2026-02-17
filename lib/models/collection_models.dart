@@ -34,7 +34,11 @@ class CollectionSummary {
     required this.userId,
     required this.name,
     required this.description,
+    required this.tags,
+    required this.mentionUserIds,
     required this.published,
+    required this.thumbnailPayload,
+    required this.thumbnailMode,
     required this.itemsCount,
     required this.createdAt,
     required this.updatedAt,
@@ -46,7 +50,11 @@ class CollectionSummary {
   final String userId;
   final String name;
   final String description;
+  final List<String> tags;
+  final List<String> mentionUserIds;
   final bool published;
+  final Map<String, dynamic> thumbnailPayload;
+  final String? thumbnailMode;
   final int itemsCount;
   final DateTime createdAt;
   final DateTime updatedAt;

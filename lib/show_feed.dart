@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:swipable_stack/swipable_stack.dart';
 
@@ -12,11 +14,12 @@ import 'models/app_user_profile.dart';
 import 'models/chat_models.dart';
 import 'models/collection_models.dart';
 import 'models/feed_post.dart';
+import 'models/notification_item.dart';
 import 'models/preset_payload_v2.dart';
 import 'models/preset_comment.dart';
 import 'models/profile_stats.dart';
 import 'models/render_preset.dart';
-import 'models/tracking_frame.dart';
+import 'models/tracker_runtime_config.dart';
 import 'services/app_repository.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
@@ -29,6 +32,11 @@ enum _ShellTab {
   chat,
   profile,
   settings,
+}
+
+enum _ComposerKind {
+  single,
+  collection,
 }
 
 class _NavItem {
@@ -58,6 +66,9 @@ class ShowFeedPage extends StatefulWidget {
 }
 
 class _ShowFeedPageState extends State<ShowFeedPage> {
+  static const double _headerHeight = 84;
+  static const double _tabTopPadding = _headerHeight + 8;
+
   static const List<_NavItem> _primaryNav = <_NavItem>[
     _NavItem(tab: _ShellTab.home, icon: Icons.home_outlined, label: 'Home'),
     _NavItem(
@@ -81,16 +92,32 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
       GlobalKey<_CollectionTabState>();
   final GlobalKey<_ChatTabState> _chatKey = GlobalKey<_ChatTabState>();
   final GlobalKey<_ProfileTabState> _profileKey = GlobalKey<_ProfileTabState>();
+  final GlobalKey _navRegionKey = GlobalKey();
 
   _ShellTab _activeTab = _ShellTab.home;
   bool _navExpanded = false;
-  bool _headerVisible = true;
+  bool _realNavHover = false;
+  bool _trackerNavHover = false;
+  VoidCallback? _trackerNavListener;
   AppUserProfile? _currentProfile;
+
+  bool get _isGuest => _repository.currentUser == null;
 
   @override
   void initState() {
     super.initState();
     _loadProfile();
+    _trackerNavListener = _syncTrackerCursorHover;
+    TrackingService.instance.frameNotifier.addListener(_trackerNavListener!);
+  }
+
+  @override
+  void dispose() {
+    final listener = _trackerNavListener;
+    if (listener != null) {
+      TrackingService.instance.frameNotifier.removeListener(listener);
+    }
+    super.dispose();
   }
 
   Future<void> _reloadActiveTab() async {
@@ -116,12 +143,69 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   }
 
   Future<void> _loadProfile() async {
+    if (_repository.currentUser == null) {
+      if (!mounted) return;
+      setState(() => _currentProfile = null);
+      return;
+    }
     final profile = await _repository.ensureCurrentProfile();
     if (!mounted) return;
     setState(() => _currentProfile = profile);
   }
 
+  void _syncTrackerCursorHover() {
+    if (!mounted) return;
+    final RenderBox? box =
+        _navRegionKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) {
+      _setTrackerNavHover(false);
+      return;
+    }
+    final frame = TrackingService.instance.frameNotifier.value;
+    final Offset local = box.globalToLocal(Offset(frame.cursorX, frame.cursorY));
+    final bool inside = local.dx >= 0 &&
+        local.dy >= 0 &&
+        local.dx <= box.size.width &&
+        local.dy <= box.size.height;
+    _setTrackerNavHover(inside);
+  }
+
+  void _setTrackerNavHover(bool value) {
+    if (_trackerNavHover == value) return;
+    _trackerNavHover = value;
+    _syncNavExpanded();
+  }
+
+  void _setRealNavHover(bool value) {
+    if (_realNavHover == value) return;
+    _realNavHover = value;
+    _syncNavExpanded();
+  }
+
+  void _syncNavExpanded() {
+    final bool next = _realNavHover || _trackerNavHover;
+    if (_navExpanded == next) return;
+    if (!mounted) return;
+    setState(() => _navExpanded = next);
+  }
+
+  bool _tabNeedsAuth(_ShellTab tab) {
+    return tab != _ShellTab.home && tab != _ShellTab.collection;
+  }
+
+  void _promptSignIn() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please sign in to access this section.')),
+    );
+    Navigator.pushNamed(context, '/auth');
+  }
+
   void _switchTab(_ShellTab tab) {
+    if (_isGuest && _tabNeedsAuth(tab)) {
+      _promptSignIn();
+      return;
+    }
     setState(() => _activeTab = tab);
     if (tab == _ShellTab.home) {
       unawaited(_homeKey.currentState?._loadFeed());
@@ -137,11 +221,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   }
 
   void _onScrollableDirection(bool showHeader) {
-    if (_activeTab != _ShellTab.home && _activeTab != _ShellTab.collection) {
-      return;
-    }
-    if (_headerVisible == showHeader) return;
-    setState(() => _headerVisible = showHeader);
+    // Home and Collection keep a pinned header in v1.0.021.
   }
 
   String get _title {
@@ -176,11 +256,15 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
           onScrollDirection: _onScrollableDirection,
         );
       case _ShellTab.post:
-        return const _PostStudioTab();
+        return _PostStudioTab(topInset: topInset);
       case _ShellTab.chat:
-        return _ChatTab(key: _chatKey);
+        return _ChatTab(key: _chatKey, topInset: topInset);
       case _ShellTab.profile:
-        return _ProfileTab(key: _profileKey, onProfileChanged: _loadProfile);
+        return _ProfileTab(
+          key: _profileKey,
+          onProfileChanged: _loadProfile,
+          topInset: topInset,
+        );
       case _ShellTab.settings:
         return _SettingsTab(
           currentThemeMode: widget.themeMode,
@@ -196,7 +280,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     final bool isDark = theme.brightness == Brightness.dark;
     final Color headerTitleColor = isDark ? Colors.white : cs.onSurface;
     final bool swapHomeTitle = _activeTab == _ShellTab.home && _navExpanded;
-    const double headerHeight = 84;
     final String headerTitle = _activeTab == _ShellTab.home
         ? (swapHomeTitle ? 'Home' : 'DeepX')
         : _title;
@@ -206,8 +289,9 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
       body: Row(
         children: [
           MouseRegion(
-            onEnter: (_) => setState(() => _navExpanded = true),
-            onExit: (_) => setState(() => _navExpanded = false),
+            key: _navRegionKey,
+            onEnter: (_) => _setRealNavHover(true),
+            onExit: (_) => _setRealNavHover(false),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 240),
               curve: Curves.easeOutCubic,
@@ -224,21 +308,25 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                     const SizedBox(height: 14),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Row(
-                        children: [
-                          Icon(Icons.blur_on, color: headerTitleColor),
-                          const SizedBox(width: 10),
-                          if (_navExpanded)
-                            Text(
-                              'DeepX',
-                              style: GoogleFonts.orbitron(
-                                color: headerTitleColor,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.5,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () => _switchTab(_ShellTab.home),
+                        child: Row(
+                          children: [
+                            Icon(Icons.blur_on, color: headerTitleColor),
+                            const SizedBox(width: 10),
+                            if (_navExpanded)
+                              Text(
+                                'DeepX',
+                                style: GoogleFonts.orbitron(
+                                  color: headerTitleColor,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.5,
+                                ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                     const Spacer(),
@@ -270,104 +358,133 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
             child: SafeArea(
               child: Stack(
                 children: [
-                  Positioned.fill(child: _buildActiveTab(headerHeight + 12)),
+                  Positioned.fill(child: _buildActiveTab(_tabTopPadding)),
                   Positioned(
                     top: 0,
                     left: 0,
                     right: 0,
-                    child: AnimatedSlide(
-                      duration: const Duration(milliseconds: 240),
-                      curve: Curves.easeOutCubic,
-                      offset: _headerVisible ? Offset.zero : const Offset(0, -1.05),
-                      child: ClipRect(
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                          child: Container(
-                            height: headerHeight,
-                            margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-                            padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.6),
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: cs.outline.withValues(alpha: 0.2),
+                    child: ClipRect(
+                      child: SizedBox(
+                        height: _headerHeight,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: ShaderMask(
+                                shaderCallback: (Rect rect) {
+                                  return const LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: <Color>[
+                                      Colors.white,
+                                      Colors.transparent,
+                                    ],
+                                  ).createShader(rect);
+                                },
+                                blendMode: BlendMode.dstIn,
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                                  child: Container(
+                                    color: Colors.black.withValues(alpha: 0.6),
+                                  ),
                                 ),
                               ),
                             ),
-                            child: Row(
-                              children: [
-                                AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 220),
-                                  child: Text(
-                                    headerTitle,
-                                    key: ValueKey<String>(headerTitle),
-                                    style: (_activeTab == _ShellTab.home
-                                                ? GoogleFonts.orbitron(
-                                                    fontWeight: FontWeight.w700,
-                                                  )
-                                                : null)
-                                            ?.copyWith(
-                                          color: headerTitleColor,
-                                          fontSize: 28,
-                                        ) ??
-                                        TextStyle(
-                                          color: headerTitleColor,
-                                          fontSize: 28,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                  ),
-                                ),
-                                const Spacer(),
-                                if (_currentProfile != null)
-                                  Row(
-                                    children: [
-                                      CircleAvatar(
-                                        radius: 15,
-                                        backgroundImage:
-                                            (_currentProfile!.avatarUrl != null &&
-                                                    _currentProfile!
-                                                        .avatarUrl!.isNotEmpty)
-                                                ? NetworkImage(
-                                                    _currentProfile!.avatarUrl!)
-                                                : null,
-                                        backgroundColor:
-                                            cs.surfaceContainerHighest,
-                                        child: (_currentProfile!.avatarUrl ==
-                                                    null ||
-                                                _currentProfile!.avatarUrl!
-                                                    .isEmpty)
-                                            ? Icon(Icons.person,
-                                                color: cs.onSurfaceVariant,
-                                                size: 15)
-                                            : null,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Text(
-                                        _currentProfile!.displayName,
-                                        style: TextStyle(
-                                          color: cs.onSurfaceVariant,
-                                        ),
-                                      ),
+                            Positioned.fill(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: <Color>[
+                                      Colors.black.withValues(alpha: 0.6),
+                                      Colors.transparent,
                                     ],
                                   ),
-                                IconButton(
-                                  tooltip: 'Reload',
-                                  onPressed: _reloadActiveTab,
-                                  icon: Icon(Icons.refresh, color: headerTitleColor),
                                 ),
-                                IconButton(
-                                  tooltip: 'Sign out',
-                                  onPressed: () async {
-                                    await _repository.signOut();
-                                    if (!context.mounted) return;
-                                    Navigator.pushReplacementNamed(
-                                        context, '/auth');
-                                  },
-                                  icon: Icon(Icons.logout, color: headerTitleColor),
-                                ),
-                              ],
+                              ),
                             ),
-                          ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+                              child: Row(
+                                children: [
+                                  AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 220),
+                                    child: Text(
+                                      headerTitle,
+                                      key: ValueKey<String>(headerTitle),
+                                      style: (_activeTab == _ShellTab.home
+                                                  ? GoogleFonts.orbitron(
+                                                      fontWeight: FontWeight.w700,
+                                                    )
+                                                  : null)
+                                              ?.copyWith(
+                                            color: headerTitleColor,
+                                            fontSize: 28,
+                                          ) ??
+                                          TextStyle(
+                                            color: headerTitleColor,
+                                            fontSize: 28,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  if (_currentProfile != null)
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(24),
+                                      onTap: () => _switchTab(_ShellTab.profile),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 4,
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 15,
+                                              backgroundImage:
+                                                  (_currentProfile!.avatarUrl != null &&
+                                                          _currentProfile!
+                                                              .avatarUrl!.isNotEmpty)
+                                                      ? NetworkImage(
+                                                          _currentProfile!.avatarUrl!)
+                                                      : null,
+                                              backgroundColor:
+                                                  cs.surfaceContainerHighest,
+                                              child: (_currentProfile!.avatarUrl ==
+                                                          null ||
+                                                      _currentProfile!.avatarUrl!
+                                                          .isEmpty)
+                                                  ? Icon(Icons.person,
+                                                      color: cs.onSurfaceVariant,
+                                                      size: 15)
+                                                  : null,
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Text(
+                                              _currentProfile!.displayName,
+                                              style: TextStyle(
+                                                color: cs.onSurfaceVariant,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    FilledButton.tonal(
+                                      onPressed: _promptSignIn,
+                                      child: const Text('Sign In'),
+                                    ),
+                                  IconButton(
+                                    tooltip: 'Reload',
+                                    onPressed: _reloadActiveTab,
+                                    icon: Icon(Icons.refresh, color: headerTitleColor),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -521,6 +638,79 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     await _loadFeed();
   }
 
+  Future<void> _openPostEditor(FeedPost post) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _PostCardComposerPage.single(
+          name: post.preset.name,
+          mode: post.preset.mode,
+          payload: post.preset.payload,
+          existingPreset: post.preset,
+        ),
+      ),
+    );
+    await _loadFeed();
+  }
+
+  Future<void> _toggleVisibility(FeedPost post) async {
+    try {
+      await _repository.setPresetVisibility(
+        presetId: post.preset.id,
+        isPublic: !post.preset.isPublic,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            post.preset.isPublic ? 'Post set to private.' : 'Post set to public.',
+          ),
+        ),
+      );
+      await _loadFeed();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update visibility: $e')),
+      );
+    }
+  }
+
+  Future<void> _deletePost(FeedPost post) async {
+    final bool shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete post?'),
+            content: const Text('This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldDelete) return;
+    try {
+      await _repository.deletePresetPost(post.preset.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post deleted.')),
+      );
+      await _loadFeed();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -586,9 +776,15 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
             ),
             itemBuilder: (context, index) {
               final post = _posts[index];
+              final bool mine =
+                  _repository.currentUser?.id == post.preset.userId;
               return _FeedTile(
                 post: post,
                 onTap: () => _openPost(post),
+                isMine: mine,
+                onEdit: mine ? () => _openPostEditor(post) : null,
+                onToggleVisibility: mine ? () => _toggleVisibility(post) : null,
+                onDelete: mine ? () => _deletePost(post) : null,
               );
             },
           );
@@ -632,8 +828,20 @@ class _CollectionTabState extends State<_CollectionTab> {
     });
 
     try {
-      final collections =
-          await _repository.fetchPublishedCollections(limit: 120);
+      final Map<String, CollectionSummary> merged =
+          <String, CollectionSummary>{};
+      final published = await _repository.fetchPublishedCollections(limit: 120);
+      for (final c in published) {
+        merged[c.id] = c;
+      }
+      if (_repository.currentUser != null) {
+        final mine = await _repository.fetchCollectionsForCurrentUser();
+        for (final c in mine) {
+          merged[c.id] = c;
+        }
+      }
+      final collections = merged.values.toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       if (!mounted) return;
       setState(() {
         _collections
@@ -661,6 +869,96 @@ class _CollectionTabState extends State<_CollectionTab> {
       ),
     );
     await _loadCollections();
+  }
+
+  Future<void> _toggleCollectionVisibility(CollectionSummary summary) async {
+    try {
+      await _repository.setCollectionPublished(
+        collectionId: summary.id,
+        published: !summary.published,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            summary.published
+                ? 'Collection set to private.'
+                : 'Collection set to public.',
+          ),
+        ),
+      );
+      await _loadCollections();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update collection: $e')),
+      );
+    }
+  }
+
+  Future<void> _deleteCollection(CollectionSummary summary) async {
+    final bool shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete collection?'),
+            content: const Text('This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldDelete) return;
+    try {
+      await _repository.deleteCollection(summary.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Collection deleted.')),
+      );
+      await _loadCollections();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e')),
+      );
+    }
+  }
+
+  Future<void> _updateCollection(CollectionSummary summary) async {
+    final detail = await _repository.fetchCollectionById(summary.id);
+    if (!mounted || detail == null) return;
+    final updated = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _PostCardComposerPage.collection(
+          collectionId: summary.id,
+          collectionName: summary.name,
+          collectionDescription: summary.description,
+          tags: summary.tags,
+          mentionUserIds: summary.mentionUserIds,
+          published: summary.published,
+          items: detail.items
+              .map(
+                (item) => CollectionDraftItem(
+                  mode: item.mode,
+                  name: item.name,
+                  snapshot: item.snapshot,
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+    if (updated == true) {
+      await _loadCollections();
+    }
   }
 
   @override
@@ -728,9 +1026,16 @@ class _CollectionTabState extends State<_CollectionTab> {
             ),
             itemBuilder: (context, index) {
               final summary = _collections[index];
+              final bool mine =
+                  _repository.currentUser?.id == summary.userId;
               return _CollectionFeedTile(
                 summary: summary,
                 onTap: () => _openCollection(summary),
+                isMine: mine,
+                onToggleVisibility:
+                    mine ? () => _toggleCollectionVisibility(summary) : null,
+                onDelete: mine ? () => _deleteCollection(summary) : null,
+                onUpdate: mine ? () => _updateCollection(summary) : null,
               );
             },
           );
@@ -744,10 +1049,18 @@ class _CollectionFeedTile extends StatelessWidget {
   const _CollectionFeedTile({
     required this.summary,
     required this.onTap,
+    required this.isMine,
+    this.onUpdate,
+    this.onDelete,
+    this.onToggleVisibility,
   });
 
   final CollectionSummary summary;
   final VoidCallback onTap;
+  final bool isMine;
+  final VoidCallback? onUpdate;
+  final VoidCallback? onDelete;
+  final VoidCallback? onToggleVisibility;
 
   @override
   Widget build(BuildContext context) {
@@ -800,6 +1113,53 @@ class _CollectionFeedTile extends StatelessWidget {
                   child: Stack(
                     children: [
                       Positioned.fill(child: IgnorePointer(child: preview)),
+                      if (isMine)
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: PopupMenuButton<String>(
+                            tooltip: 'Collection actions',
+                            color: cs.surfaceContainerHighest,
+                            onSelected: (value) {
+                              if (value == 'update') onUpdate?.call();
+                              if (value == 'visibility') onToggleVisibility?.call();
+                              if (value == 'delete') onDelete?.call();
+                            },
+                            itemBuilder: (context) => [
+                              const PopupMenuItem<String>(
+                                value: 'update',
+                                child: Text('Update'),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'visibility',
+                                child: Text(
+                                  summary.published
+                                      ? 'Make Private'
+                                      : 'Make Public',
+                                ),
+                              ),
+                              const PopupMenuItem<String>(
+                                value: 'delete',
+                                child: Text('Delete'),
+                              ),
+                            ],
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: BackdropFilter(
+                                filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  color: Colors.black.withValues(alpha: 0.35),
+                                  child: const Icon(
+                                    Icons.more_vert,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       Positioned(
                         left: 0,
                         right: 0,
@@ -875,10 +1235,18 @@ class _FeedTile extends StatelessWidget {
   const _FeedTile({
     required this.post,
     required this.onTap,
+    required this.isMine,
+    this.onEdit,
+    this.onDelete,
+    this.onToggleVisibility,
   });
 
   final FeedPost post;
   final VoidCallback onTap;
+  final bool isMine;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+  final VoidCallback? onToggleVisibility;
 
   @override
   Widget build(BuildContext context) {
@@ -895,6 +1263,51 @@ class _FeedTile extends StatelessWidget {
         child: Stack(
           children: [
             Positioned.fill(child: IgnorePointer(child: preview)),
+            if (isMine)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: PopupMenuButton<String>(
+                  tooltip: 'Post actions',
+                  color: cs.surfaceContainerHighest,
+                  onSelected: (value) {
+                    if (value == 'edit') onEdit?.call();
+                    if (value == 'visibility') onToggleVisibility?.call();
+                    if (value == 'delete') onDelete?.call();
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem<String>(
+                      value: 'edit',
+                      child: Text('Update'),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'visibility',
+                      child: Text(
+                        post.preset.isPublic ? 'Make Private' : 'Make Public',
+                      ),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: 'delete',
+                      child: Text('Delete'),
+                    ),
+                  ],
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        color: Colors.black.withValues(alpha: 0.35),
+                        child: const Icon(
+                          Icons.more_vert,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             Positioned(
               left: 0,
               right: 0,
@@ -925,7 +1338,9 @@ class _FeedTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      post.preset.name,
+                      post.preset.title.isNotEmpty
+                          ? post.preset.title
+                          : post.preset.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -988,41 +1403,13 @@ class _GridPresetPreview extends StatelessWidget {
     );
 
     if (adapted.mode == '3d') {
-      return ValueListenableBuilder<TrackingFrame>(
-        valueListenable: TrackingService.instance.frameNotifier,
-        builder: (context, frame, _) {
-          final double dx = (frame.headX * 26).clamp(-18, 18);
-          final double dy = (-frame.headY * 24).clamp(-14, 14);
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  cs.surfaceContainerHighest.withValues(alpha: 0.9),
-                  cs.surfaceContainerLow.withValues(alpha: 0.95),
-                  cs.surfaceContainerHighest.withValues(alpha: 0.88),
-                ],
-              ),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Transform.translate(
-                  offset: Offset(dx, dy),
-                  child: Align(
-                    alignment: Alignment.center,
-                    child: Icon(
-                      Icons.view_in_ar_outlined,
-                      color: cs.onSurface.withValues(alpha: 0.78),
-                      size: 54,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+      return PresetViewer(
+        mode: adapted.mode,
+        payload: adapted.toMap(),
+        cleanView: true,
+        embedded: true,
+        disableAudio: true,
+        useGlobalTracking: true,
       );
     }
 
@@ -1064,16 +1451,30 @@ class _PresetDetailPage extends StatefulWidget {
 class _PresetDetailPageState extends State<_PresetDetailPage> {
   final AppRepository _repository = AppRepository.instance;
   final TextEditingController _commentController = TextEditingController();
+  final FocusNode _immersiveFocusNode =
+      FocusNode(debugLabel: 'detail-immersive-focus');
 
   late FeedPost _post;
   bool _loadingComments = true;
   bool _sendingComment = false;
   bool _commentsOpen = false;
+  bool _immersive = false;
+  bool? _cursorBeforeImmersive;
   List<PresetComment> _comments = const <PresetComment>[];
 
   bool get _mine =>
       _repository.currentUser != null &&
       _repository.currentUser!.id == _post.preset.userId;
+
+  bool _requireAuthAction() {
+    if (_repository.currentUser != null) return true;
+    if (!mounted) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please sign in to use this action.')),
+    );
+    Navigator.pushNamed(context, '/auth');
+    return false;
+  }
 
   @override
   void initState() {
@@ -1084,8 +1485,28 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
 
   @override
   void dispose() {
+    if (_cursorBeforeImmersive != null) {
+      TrackingService.instance.setDartCursorEnabled(_cursorBeforeImmersive!);
+      _cursorBeforeImmersive = null;
+    }
+    _immersiveFocusNode.dispose();
     _commentController.dispose();
     super.dispose();
+  }
+
+  void _toggleImmersive() {
+    final TrackingService tracking = TrackingService.instance;
+    if (!_immersive) {
+      _cursorBeforeImmersive = tracking.dartCursorEnabled;
+      tracking.setDartCursorEnabled(false);
+      setState(() => _immersive = true);
+      return;
+    }
+    setState(() => _immersive = false);
+    if (_cursorBeforeImmersive != null) {
+      tracking.setDartCursorEnabled(_cursorBeforeImmersive!);
+      _cursorBeforeImmersive = null;
+    }
   }
 
   Future<void> _loadComments() async {
@@ -1110,6 +1531,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _toggleReaction(int value) async {
+    if (!_requireAuthAction()) return;
     final int newReaction = _post.myReaction == value ? 0 : value;
     await _repository.setReaction(
         presetId: _post.preset.id, reaction: newReaction);
@@ -1138,6 +1560,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _toggleSave() async {
+    if (!_requireAuthAction()) return;
     final bool shouldSave = !_post.isSaved;
     await _repository.toggleSavePreset(_post.preset.id, save: shouldSave);
     if (!mounted) return;
@@ -1159,6 +1582,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _toggleFollow() async {
+    if (!_requireAuthAction()) return;
     final bool follow = !_post.isFollowingAuthor;
     await _repository.setFollow(
       targetUserId: _post.preset.userId,
@@ -1181,6 +1605,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _shareToUser() async {
+    if (!_requireAuthAction()) return;
     final profile = await showDialog<AppUserProfile>(
       context: context,
       builder: (context) =>
@@ -1208,6 +1633,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _sendComment() async {
+    if (!_requireAuthAction()) return;
     final String text = _commentController.text.trim();
     if (text.isEmpty || _sendingComment) return;
     setState(() => _sendingComment = true);
@@ -1217,6 +1643,86 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     _commentController.clear();
     setState(() => _sendingComment = false);
     await _loadComments();
+  }
+
+  Future<void> _editOwnPost() async {
+    final updated = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _PostCardComposerPage.single(
+          name: _post.preset.name,
+          mode: _post.preset.mode,
+          payload: _post.preset.payload,
+          existingPreset: _post.preset,
+        ),
+      ),
+    );
+    if (updated == true) {
+      final refreshed = await _repository.fetchFeedPostById(_post.preset.id);
+      if (!mounted || refreshed == null) return;
+      setState(() => _post = refreshed);
+    }
+  }
+
+  Future<void> _toggleOwnVisibility() async {
+    try {
+      await _repository.setPresetVisibility(
+        presetId: _post.preset.id,
+        isPublic: !_post.preset.isPublic,
+      );
+      final refreshed = await _repository.fetchFeedPostById(_post.preset.id);
+      if (!mounted) return;
+      if (refreshed != null) {
+        setState(() => _post = refreshed);
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _post.preset.isPublic ? 'Post set to private.' : 'Post set to public.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update visibility: $e')),
+      );
+    }
+  }
+
+  Future<void> _deleteOwnPost() async {
+    final bool shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete post?'),
+            content: const Text('This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldDelete) return;
+    try {
+      await _repository.deletePresetPost(_post.preset.id);
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post deleted.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e')),
+      );
+    }
   }
 
   @override
@@ -1232,265 +1738,333 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(child: viewer),
-          Positioned(
-            top: 14,
-            left: 14,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 18,
-            bottom: 20,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                _post.preset.name,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 18,
-            bottom: 18,
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircleAvatar(
-                        radius: 16,
-                        backgroundImage: (_post.author?.avatarUrl != null &&
-                                _post.author!.avatarUrl!.isNotEmpty)
-                            ? NetworkImage(_post.author!.avatarUrl!)
-                            : null,
-                        child: (_post.author?.avatarUrl == null ||
-                                _post.author!.avatarUrl!.isEmpty)
-                            ? const Icon(Icons.person, size: 14)
-                            : null,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _post.author?.displayName ?? 'Unknown creator',
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (!_mine)
-                    FilledButton.tonal(
-                      onPressed: _toggleFollow,
-                      child: Text(
-                        _post.isFollowingAuthor ? 'Following' : 'Follow',
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 24,
-            child: Center(
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _engagementButton(
-                      icon: _post.myReaction == 1
-                          ? Icons.thumb_up_alt
-                          : Icons.thumb_up_alt_outlined,
-                      active: _post.myReaction == 1,
-                      activeColor: cs.primary,
-                      label: _post.likesCount.toString(),
-                      onTap: () => _toggleReaction(1),
-                    ),
-                    _engagementButton(
-                      icon: _post.myReaction == -1
-                          ? Icons.thumb_down_alt
-                          : Icons.thumb_down_alt_outlined,
-                      active: _post.myReaction == -1,
-                      activeColor: Colors.redAccent,
-                      label: _post.dislikesCount.toString(),
-                      onTap: () => _toggleReaction(-1),
-                    ),
-                    _engagementButton(
-                      icon: Icons.mode_comment_outlined,
-                      active: _commentsOpen,
-                      activeColor: cs.primary,
-                      label: _post.commentsCount.toString(),
-                      onTap: () =>
-                          setState(() => _commentsOpen = !_commentsOpen),
-                    ),
-                    _engagementButton(
-                      icon: Icons.send_outlined,
-                      active: false,
-                      activeColor: cs.primary,
-                      label: '',
-                      onTap: _shareToUser,
-                    ),
-                    _engagementButton(
-                      icon: _post.isSaved
-                          ? Icons.bookmark
-                          : Icons.bookmark_border,
-                      active: _post.isSaved,
-                      activeColor: Colors.amberAccent,
-                      label: _post.savesCount.toString(),
-                      onTap: _toggleSave,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (_commentsOpen)
-            Positioned.fill(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => setState(() => _commentsOpen = false),
+      body: KeyboardListener(
+        autofocus: true,
+        focusNode: _immersiveFocusNode,
+        onKeyEvent: (event) {
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.keyF) {
+            _toggleImmersive();
+          }
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onDoubleTap: _toggleImmersive,
+          child: Stack(
+            children: [
+              Positioned.fill(child: viewer),
+              if (!_immersive)
+                Positioned(
+                  top: 14,
+                  left: 14,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                       child: Container(
-                        color: Colors.black.withValues(alpha: 0.3),
-                      ),
-                    ),
-                  ),
-                  SizedBox(
-                    width: MediaQuery.of(context).size.width * 0.25,
-                    child: ClipRect(
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                        child: Container(
+                        decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.6),
-                          child: Column(
-                        children: [
-                          const SizedBox(height: 14),
-                          const Text(
-                            'Comments',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Expanded(
-                            child: _loadingComments
-                                ? const Center(
-                                    child: CircularProgressIndicator(),
-                                  )
-                                : _comments.isEmpty
-                                    ? const Center(
-                                        child: Text(
-                                          'No comments yet',
-                                          style:
-                                              TextStyle(color: Colors.white70),
-                                        ),
-                                      )
-                                    : ListView.builder(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 12),
-                                        itemCount: _comments.length,
-                                        itemBuilder: (context, index) {
-                                          final c = _comments[index];
-                                          return Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 6),
-                                            child: RichText(
-                                              text: TextSpan(
-                                                style: const TextStyle(
-                                                    color: Colors.white70),
-                                                children: [
-                                                  TextSpan(
-                                                    text:
-                                                        '${c.author?.displayName ?? 'User'}: ',
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                    ),
-                                                  ),
-                                                  TextSpan(text: c.content),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _commentController,
-                                    decoration: const InputDecoration(
-                                      hintText: 'Write a comment...',
-                                      filled: true,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                FilledButton(
-                                  onPressed:
-                                      _sendingComment ? null : _sendComment,
-                                  child: Text(_sendingComment ? '...' : 'Send'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: Colors.white,
                           ),
                         ),
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-        ],
+                ),
+              if (!_immersive && _mine)
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  child: PopupMenuButton<String>(
+                    color: cs.surfaceContainerHighest,
+                    onSelected: (value) {
+                      if (value == 'edit') _editOwnPost();
+                      if (value == 'visibility') _toggleOwnVisibility();
+                      if (value == 'delete') _deleteOwnPost();
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem<String>(
+                        value: 'edit',
+                        child: Text('Update'),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'visibility',
+                        child: Text(
+                          _post.preset.isPublic ? 'Make Private' : 'Make Public',
+                        ),
+                      ),
+                      const PopupMenuItem<String>(
+                        value: 'delete',
+                        child: Text('Delete'),
+                      ),
+                    ],
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          color: Colors.black.withValues(alpha: 0.6),
+                          child: const Icon(
+                            Icons.more_vert,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (!_immersive)
+                Positioned(
+                  left: 18,
+                  bottom: 20,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _post.preset.title.isNotEmpty
+                          ? _post.preset.title
+                          : _post.preset.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              if (!_immersive)
+                Positioned(
+                  right: 18,
+                  bottom: 18,
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircleAvatar(
+                              radius: 16,
+                              backgroundImage: (_post.author?.avatarUrl != null &&
+                                      _post.author!.avatarUrl!.isNotEmpty)
+                                  ? NetworkImage(_post.author!.avatarUrl!)
+                                  : null,
+                              child: (_post.author?.avatarUrl == null ||
+                                      _post.author!.avatarUrl!.isEmpty)
+                                  ? const Icon(Icons.person, size: 14)
+                                  : null,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _post.author?.displayName ?? 'Unknown creator',
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (!_mine)
+                          FilledButton.tonal(
+                            onPressed: _toggleFollow,
+                            child: Text(
+                              _post.isFollowingAuthor ? 'Following' : 'Follow',
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (!_immersive)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 24,
+                  child: Center(
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _engagementButton(
+                            icon: _post.myReaction == 1
+                                ? Icons.thumb_up_alt
+                                : Icons.thumb_up_alt_outlined,
+                            active: _post.myReaction == 1,
+                            activeColor: cs.primary,
+                            label: _post.likesCount.toString(),
+                            onTap: () => _toggleReaction(1),
+                          ),
+                          _engagementButton(
+                            icon: _post.myReaction == -1
+                                ? Icons.thumb_down_alt
+                                : Icons.thumb_down_alt_outlined,
+                            active: _post.myReaction == -1,
+                            activeColor: Colors.redAccent,
+                            label: _post.dislikesCount.toString(),
+                            onTap: () => _toggleReaction(-1),
+                          ),
+                          _engagementButton(
+                            icon: Icons.mode_comment_outlined,
+                            active: _commentsOpen,
+                            activeColor: cs.primary,
+                            label: _post.commentsCount.toString(),
+                            onTap: () =>
+                                setState(() => _commentsOpen = !_commentsOpen),
+                          ),
+                          _engagementButton(
+                            icon: Icons.send_outlined,
+                            active: false,
+                            activeColor: cs.primary,
+                            label: '',
+                            onTap: _shareToUser,
+                          ),
+                          _engagementButton(
+                            icon: _post.isSaved
+                                ? Icons.bookmark
+                                : Icons.bookmark_border,
+                            active: _post.isSaved,
+                            activeColor: Colors.amberAccent,
+                            label: _post.savesCount.toString(),
+                            onTap: _toggleSave,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              if (!_immersive && _commentsOpen)
+                Positioned.fill(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => setState(() => _commentsOpen = false),
+                          child: Container(
+                            color: Colors.black.withValues(alpha: 0.3),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: MediaQuery.of(context).size.width * 0.25,
+                        child: ClipRect(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                            child: Container(
+                              color: Colors.black.withValues(alpha: 0.6),
+                              child: Column(
+                                children: [
+                                  const SizedBox(height: 14),
+                                  const Text(
+                                    'Comments',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Expanded(
+                                    child: _loadingComments
+                                        ? const Center(
+                                            child: CircularProgressIndicator(),
+                                          )
+                                        : _comments.isEmpty
+                                            ? const Center(
+                                                child: Text(
+                                                  'No comments yet',
+                                                  style: TextStyle(
+                                                      color: Colors.white70),
+                                                ),
+                                              )
+                                            : ListView.builder(
+                                                padding: const EdgeInsets.symmetric(
+                                                    horizontal: 12),
+                                                itemCount: _comments.length,
+                                                itemBuilder: (context, index) {
+                                                  final c = _comments[index];
+                                                  return Padding(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                            vertical: 6),
+                                                    child: RichText(
+                                                      text: TextSpan(
+                                                        style: const TextStyle(
+                                                            color: Colors.white70),
+                                                        children: [
+                                                          TextSpan(
+                                                            text:
+                                                                '${c.author?.displayName ?? 'User'}: ',
+                                                            style:
+                                                                const TextStyle(
+                                                              color: Colors.white,
+                                                              fontWeight:
+                                                                  FontWeight.w600,
+                                                            ),
+                                                          ),
+                                                          TextSpan(text: c.content),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                  ),
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: TextField(
+                                            controller: _commentController,
+                                            decoration: const InputDecoration(
+                                              hintText: 'Write a comment...',
+                                              filled: true,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        FilledButton(
+                                          onPressed:
+                                              _sendingComment ? null : _sendComment,
+                                          child:
+                                              Text(_sendingComment ? '...' : 'Send'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1530,14 +2104,15 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
 }
 
 class _PostStudioTab extends StatefulWidget {
-  const _PostStudioTab();
+  const _PostStudioTab({required this.topInset});
+
+  final double topInset;
 
   @override
   State<_PostStudioTab> createState() => _PostStudioTabState();
 }
 
 class _PostStudioTabState extends State<_PostStudioTab> {
-  final AppRepository _repository = AppRepository.instance;
   final TextEditingController _collectionNameController =
       TextEditingController(text: 'My Collection');
 
@@ -1547,6 +2122,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   int _editorSeed = 0;
   int _selectedItemIndex = -1;
   bool _publishing = false;
+  bool _openingComposer = false;
   bool _studioChromeVisible = true;
   Timer? _studioChromeTimer;
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
@@ -1576,7 +2152,10 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   }
 
   void _onPresetSaved(String name, Map<String, dynamic> payload) {
-    if (_postTypeIndex == 0) return;
+    if (_postTypeIndex == 0) {
+      unawaited(_openSingleComposer(name: name, payload: payload));
+      return;
+    }
     final item = CollectionDraftItem(
       mode: _modeIndex == 0 ? '2d' : '3d',
       name: name,
@@ -1627,27 +2206,67 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       );
       return;
     }
-
-    setState(() => _publishing = true);
-    try {
-      final id = await _repository.saveCollectionWithItems(
-        collectionId: _collectionId,
-        name: _collectionNameController.text.trim(),
-        publish: true,
-        items: _draftItems,
-      );
-      _collectionId = id;
-      if (!mounted) return;
+    if (_openingComposer) return;
+    setState(() {
+      _openingComposer = true;
+      _publishing = true;
+    });
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _PostCardComposerPage.collection(
+          collectionId: _collectionId,
+          collectionName: _collectionNameController.text.trim(),
+          collectionDescription: '',
+          tags: const <String>[],
+          mentionUserIds: const <String>[],
+          published: true,
+          items: List<CollectionDraftItem>.from(_draftItems),
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        _openingComposer = false;
+        _publishing = false;
+      });
+    }
+    if (result == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Collection published successfully.')),
       );
-    } catch (e) {
-      if (!mounted) return;
+    }
+  }
+
+  Future<void> _openSingleComposer({
+    required String name,
+    required Map<String, dynamic> payload,
+  }) async {
+    if (_openingComposer) return;
+    setState(() {
+      _openingComposer = true;
+      _publishing = true;
+    });
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _PostCardComposerPage.single(
+          name: name,
+          mode: _modeIndex == 0 ? '2d' : '3d',
+          payload: payload,
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        _openingComposer = false;
+        _publishing = false;
+      });
+    }
+    if (result == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Publish failed: $e')),
+        const SnackBar(content: Text('Post published successfully.')),
       );
-    } finally {
-      if (mounted) setState(() => _publishing = false);
     }
   }
 
@@ -1662,7 +2281,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   }
 
   Widget _buildEditor() {
-    final bool persistPresets = _postTypeIndex == 0;
+    const bool persistPresets = false;
     final activeItem =
         (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length)
             ? _draftItems[_selectedItemIndex]
@@ -1856,62 +2475,66 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       ),
     );
 
-    return MouseRegion(
-      onEnter: (_) => _wakeStudioChrome(),
-      onHover: (_) => _wakeStudioChrome(),
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: _wakeStudioChrome,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: cs.outline.withValues(alpha: 0.16)),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: _buildEditor(),
-              ),
-            ),
-            Positioned(
-              top: 8,
-              left: 12,
-              right: 12,
-              child: IgnorePointer(
-                ignoring: !_studioChromeVisible,
-                child: AnimatedOpacity(
-                  opacity: _studioChromeVisible ? 1 : 0,
-                  duration: const Duration(milliseconds: 220),
-                  child: topOverlay,
+    return Padding(
+      padding: EdgeInsets.only(top: widget.topInset),
+      child: MouseRegion(
+        onEnter: (_) => _wakeStudioChrome(),
+        onHover: (_) => _wakeStudioChrome(),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: _wakeStudioChrome,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Container(
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(16),
+                    border:
+                        Border.all(color: cs.outline.withValues(alpha: 0.16)),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _buildEditor(),
                 ),
               ),
-            ),
-            if (collectionMode)
               Positioned(
+                top: 8,
                 left: 12,
-                top: 132,
-                bottom: 12,
-                width: 320,
+                right: 12,
                 child: IgnorePointer(
                   ignoring: !_studioChromeVisible,
-                  child: AnimatedSlide(
-                    offset: _studioChromeVisible
-                        ? Offset.zero
-                        : const Offset(-0.08, 0),
+                  child: AnimatedOpacity(
+                    opacity: _studioChromeVisible ? 1 : 0,
                     duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    child: AnimatedOpacity(
-                      opacity: _studioChromeVisible ? 1 : 0,
-                      duration: const Duration(milliseconds: 200),
-                      child: collectionManagerPanel,
-                    ),
+                    child: topOverlay,
                   ),
                 ),
               ),
-          ],
+              if (collectionMode)
+                Positioned(
+                  left: 12,
+                  top: 132,
+                  bottom: 12,
+                  width: 320,
+                  child: IgnorePointer(
+                    ignoring: !_studioChromeVisible,
+                    child: AnimatedSlide(
+                      offset: _studioChromeVisible
+                          ? Offset.zero
+                          : const Offset(-0.08, 0),
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      child: AnimatedOpacity(
+                        opacity: _studioChromeVisible ? 1 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: collectionManagerPanel,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -2097,6 +2720,14 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   CollectionDetail? _detail;
   int _index = 0;
 
+  bool get _mine {
+    final String? me = _repository.currentUser?.id;
+    if (me == null) return false;
+    final String ownerId =
+        _detail?.summary.userId ?? widget.initialSummary?.userId ?? '';
+    return ownerId == me;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2148,6 +2779,101 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         _loading = false;
         _error = e.toString();
       });
+    }
+  }
+
+  Future<void> _toggleVisibility() async {
+    final summary = _detail?.summary;
+    if (summary == null) return;
+    try {
+      await _repository.setCollectionPublished(
+        collectionId: summary.id,
+        published: !summary.published,
+      );
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            summary.published
+                ? 'Collection set to private.'
+                : 'Collection set to public.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update collection: $e')),
+      );
+    }
+  }
+
+  Future<void> _updateCollection() async {
+    final detail = _detail;
+    if (detail == null) return;
+    final bool updated = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => _PostCardComposerPage.collection(
+              collectionId: detail.summary.id,
+              collectionName: detail.summary.name,
+              collectionDescription: detail.summary.description,
+              tags: detail.summary.tags,
+              mentionUserIds: detail.summary.mentionUserIds,
+              published: detail.summary.published,
+              items: detail.items
+                  .map(
+                    (item) => CollectionDraftItem(
+                      mode: item.mode,
+                      name: item.name,
+                      snapshot: item.snapshot,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ) ??
+        false;
+    if (updated) {
+      await _load();
+    }
+  }
+
+  Future<void> _deleteCollection() async {
+    final summary = _detail?.summary;
+    if (summary == null) return;
+    final bool shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete collection?'),
+            content: const Text('This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldDelete) return;
+    try {
+      await _repository.deleteCollection(summary.id);
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Collection deleted.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e')),
+      );
     }
   }
 
@@ -2241,6 +2967,45 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                     ),
                   ),
                   if (_detail != null && _detail!.items.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(
+                        '${_index + 1}/${_detail!.items.length}',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                    ),
+                  if (_mine)
+                    PopupMenuButton<String>(
+                      color: cs.surfaceContainerHighest,
+                      onSelected: (value) {
+                        if (value == 'update') _updateCollection();
+                        if (value == 'visibility') _toggleVisibility();
+                        if (value == 'delete') _deleteCollection();
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem<String>(
+                          value: 'update',
+                          child: Text('Update'),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'visibility',
+                          child: Text(
+                            (_detail?.summary.published ?? false)
+                                ? 'Make Private'
+                                : 'Make Public',
+                          ),
+                        ),
+                        const PopupMenuItem<String>(
+                          value: 'delete',
+                          child: Text('Delete'),
+                        ),
+                      ],
+                      child: Icon(
+                        Icons.more_vert,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  if (_detail != null && _detail!.items.isNotEmpty && !_mine)
                     Text(
                       '${_index + 1}/${_detail!.items.length}',
                       style: TextStyle(color: cs.onSurfaceVariant),
@@ -2306,9 +3071,14 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
 }
 
 class _ProfileTab extends StatefulWidget {
-  const _ProfileTab({super.key, required this.onProfileChanged});
+  const _ProfileTab({
+    super.key,
+    required this.onProfileChanged,
+    required this.topInset,
+  });
 
   final Future<void> Function() onProfileChanged;
+  final double topInset;
 
   @override
   State<_ProfileTab> createState() => _ProfileTabState();
@@ -2327,6 +3097,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   List<RenderPreset> _saved = const <RenderPreset>[];
   List<RenderPreset> _posts = const <RenderPreset>[];
   List<RenderPreset> _history = const <RenderPreset>[];
+  List<NotificationItem> _notifications = const <NotificationItem>[];
 
   @override
   void initState() {
@@ -2344,6 +3115,7 @@ class _ProfileTabState extends State<_ProfileTab> {
     final saved = await _repository.fetchSavedPresetsForCurrentUser();
     final posts = await _repository.fetchUserPosts(user.id);
     final history = await _repository.fetchHistoryPresetsForCurrentUser();
+    final notifications = await _repository.fetchNotifications(limit: 80);
 
     if (!mounted) return;
     setState(() {
@@ -2352,8 +3124,77 @@ class _ProfileTabState extends State<_ProfileTab> {
       _saved = saved;
       _posts = posts;
       _history = history;
+      _notifications = notifications;
       _loading = false;
     });
+  }
+
+  Future<void> _openNotifications() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final cs = Theme.of(context).colorScheme;
+        if (_notifications.isEmpty) {
+          return SizedBox(
+            height: 280,
+            child: Center(
+              child: Text(
+                'No notifications yet.',
+                style: TextStyle(color: cs.onSurfaceVariant),
+              ),
+            ),
+          );
+        }
+        return SizedBox(
+          height: 420,
+          child: ListView.separated(
+            itemCount: _notifications.length,
+            separatorBuilder: (_, __) =>
+                Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
+            itemBuilder: (context, index) {
+              final item = _notifications[index];
+              return ListTile(
+                title: Text(
+                  item.title,
+                  style: TextStyle(
+                    fontWeight: item.read ? FontWeight.w500 : FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(item.body),
+                trailing: item.read
+                    ? null
+                    : const Icon(Icons.fiber_manual_record, size: 10),
+                onTap: () async {
+                  if (!item.read) {
+                    await _repository.markNotificationRead(item.id, read: true);
+                    if (!mounted) return;
+                    setState(() {
+                      _notifications = _notifications
+                          .map((n) => n.id == item.id
+                              ? NotificationItem(
+                                  id: n.id,
+                                  userId: n.userId,
+                                  actorUserId: n.actorUserId,
+                                  kind: n.kind,
+                                  title: n.title,
+                                  body: n.body,
+                                  data: n.data,
+                                  read: true,
+                                  createdAt: n.createdAt,
+                                )
+                              : n)
+                          .toList();
+                    });
+                  }
+                },
+              );
+            },
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _openPost(RenderPreset preset) async {
@@ -2416,6 +3257,33 @@ class _ProfileTabState extends State<_ProfileTab> {
     await widget.onProfileChanged();
   }
 
+  Future<void> _confirmSignOut() async {
+    final bool shouldSignOut = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Sign out?'),
+            content: const Text('You can sign back in anytime.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Sign Out'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldSignOut) return;
+    await _repository.signOut();
+    if (!mounted) return;
+    await widget.onProfileChanged();
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/feed');
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -2437,11 +3305,13 @@ class _ProfileTabState extends State<_ProfileTab> {
       );
     }
 
-    return DefaultTabController(
-      length: 3,
-      child: Column(
-        children: [
-          Container(
+    return Padding(
+      padding: EdgeInsets.only(top: widget.topInset),
+      child: DefaultTabController(
+        length: 3,
+        child: Column(
+          children: [
+            Container(
             margin: const EdgeInsets.fromLTRB(14, 0, 14, 10),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -2497,9 +3367,43 @@ class _ProfileTabState extends State<_ProfileTab> {
                         ],
                       ),
                     ),
-                    FilledButton.tonal(
-                      onPressed: _editProfile,
-                      child: const Text('Edit Profile'),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            IconButton.filledTonal(
+                              onPressed: _openNotifications,
+                              icon: const Icon(Icons.notifications_outlined),
+                            ),
+                            if (_notifications.any((n) => !n.read))
+                              Positioned(
+                                right: 3,
+                                top: 3,
+                                child: Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.redAccent,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        FilledButton.tonal(
+                          onPressed: _editProfile,
+                          child: const Text('Edit Profile'),
+                        ),
+                        const SizedBox(height: 6),
+                        OutlinedButton.icon(
+                          onPressed: _confirmSignOut,
+                          icon: const Icon(Icons.logout, size: 16),
+                          label: const Text('Logout'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -2521,38 +3425,39 @@ class _ProfileTabState extends State<_ProfileTab> {
               ],
             ),
           ),
-          TabBar(
-            indicatorColor: cs.primary,
-            labelColor: cs.onSurface,
-            unselectedLabelColor: cs.onSurfaceVariant,
-            tabs: const [
-              Tab(text: 'Saved Collection'),
-              Tab(text: 'My Posts'),
-              Tab(text: 'History'),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _PresetListView(
-                  presets: _saved,
-                  emptyMessage: 'Nothing saved yet.',
-                  onTap: _openPost,
-                ),
-                _PresetListView(
-                  presets: _posts,
-                  emptyMessage: 'No posts yet.',
-                  onTap: _openPost,
-                ),
-                _PresetListView(
-                  presets: _history,
-                  emptyMessage: 'No history yet.',
-                  onTap: _openPost,
-                ),
+            TabBar(
+              indicatorColor: cs.primary,
+              labelColor: cs.onSurface,
+              unselectedLabelColor: cs.onSurfaceVariant,
+              tabs: const [
+                Tab(text: 'Saved Collection'),
+                Tab(text: 'My Posts'),
+                Tab(text: 'History'),
               ],
             ),
-          ),
-        ],
+            Expanded(
+              child: TabBarView(
+                children: [
+                  _PresetListView(
+                    presets: _saved,
+                    emptyMessage: 'Nothing saved yet.',
+                    onTap: _openPost,
+                  ),
+                  _PresetListView(
+                    presets: _posts,
+                    emptyMessage: 'No posts yet.',
+                    onTap: _openPost,
+                  ),
+                  _PresetListView(
+                    presets: _history,
+                    emptyMessage: 'No history yet.',
+                    onTap: _openPost,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2810,7 +3715,9 @@ class _EditProfilePageState extends State<_EditProfilePage> {
 }
 
 class _ChatTab extends StatefulWidget {
-  const _ChatTab({super.key});
+  const _ChatTab({super.key, required this.topInset});
+
+  final double topInset;
 
   @override
   State<_ChatTab> createState() => _ChatTabState();
@@ -3050,7 +3957,7 @@ class _ChatTabState extends State<_ChatTab> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+      padding: EdgeInsets.fromLTRB(10, widget.topInset, 10, 10),
       child: Row(
         children: [
           SizedBox(
@@ -3674,6 +4581,649 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
   }
 }
 
+class _PostCardComposerPage extends StatefulWidget {
+  const _PostCardComposerPage.single({
+    required this.name,
+    required this.mode,
+    required this.payload,
+    this.existingPreset,
+  })  : kind = _ComposerKind.single,
+        collectionId = null,
+        collectionName = '',
+        collectionDescription = '',
+        items = const <CollectionDraftItem>[],
+        published = true,
+        tags = const <String>[],
+        mentionUserIds = const <String>[];
+
+  const _PostCardComposerPage.collection({
+    this.collectionId,
+    required this.collectionName,
+    required this.collectionDescription,
+    required this.tags,
+    required this.mentionUserIds,
+    required this.published,
+    required this.items,
+  })  : kind = _ComposerKind.collection,
+        existingPreset = null,
+        name = '',
+        mode = '',
+        payload = const <String, dynamic>{};
+
+  final _ComposerKind kind;
+  final String name;
+  final String mode;
+  final Map<String, dynamic> payload;
+  final RenderPreset? existingPreset;
+
+  final String? collectionId;
+  final String collectionName;
+  final String collectionDescription;
+  final List<String> tags;
+  final List<String> mentionUserIds;
+  final bool published;
+  final List<CollectionDraftItem> items;
+
+  bool get isEdit {
+    if (kind == _ComposerKind.single) return existingPreset != null;
+    return collectionId != null && collectionId!.isNotEmpty;
+  }
+
+  @override
+  State<_PostCardComposerPage> createState() => _PostCardComposerPageState();
+}
+
+class _PostCardComposerPageState extends State<_PostCardComposerPage> {
+  final AppRepository _repository = AppRepository.instance;
+
+  late final TextEditingController _titleController;
+  late final TextEditingController _descriptionController;
+  late final TextEditingController _tagsController;
+  final TextEditingController _mentionController = TextEditingController();
+
+  final Set<String> _selectedMentionIds = <String>{};
+  final Map<String, AppUserProfile> _selectedMentionProfiles =
+      <String, AppUserProfile>{};
+
+  List<AppUserProfile> _mentionResults = const <AppUserProfile>[];
+  Timer? _mentionDebounce;
+  int _mentionToken = 0;
+  bool _mentionLoading = false;
+
+  bool _submitting = false;
+  bool _isPublic = true;
+  int _thumbnailIndex = 0;
+  late String _thumbnailMode;
+  late Map<String, dynamic> _thumbnailPayload;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.kind == _ComposerKind.single) {
+      _titleController = TextEditingController(
+        text: widget.existingPreset?.title.isNotEmpty == true
+            ? widget.existingPreset!.title
+            : widget.name,
+      );
+      _descriptionController =
+          TextEditingController(text: widget.existingPreset?.description ?? '');
+      _tagsController = TextEditingController(
+        text: (widget.existingPreset?.tags ?? const <String>[])
+            .join(' ')
+            .trim(),
+      );
+      _isPublic = widget.existingPreset?.isPublic ?? true;
+      _thumbnailMode = widget.existingPreset?.thumbnailMode ?? widget.mode;
+      _thumbnailPayload = widget.existingPreset?.thumbnailPayload.isNotEmpty ==
+              true
+          ? widget.existingPreset!.thumbnailPayload
+          : widget.payload;
+      _selectedMentionIds
+          .addAll(widget.existingPreset?.mentionUserIds ?? const <String>[]);
+    } else {
+      _titleController = TextEditingController(text: widget.collectionName);
+      _descriptionController =
+          TextEditingController(text: widget.collectionDescription);
+      _tagsController = TextEditingController(text: widget.tags.join(' '));
+      _selectedMentionIds.addAll(widget.mentionUserIds);
+      _isPublic = widget.published;
+      if (widget.items.isNotEmpty) {
+        _thumbnailMode = widget.items.first.mode;
+        _thumbnailPayload = widget.items.first.snapshot;
+      } else {
+        _thumbnailMode = '2d';
+        _thumbnailPayload = const <String, dynamic>{};
+      }
+    }
+    _mentionController.addListener(_onMentionQueryChanged);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    _tagsController.dispose();
+    _mentionController.removeListener(_onMentionQueryChanged);
+    _mentionController.dispose();
+    _mentionDebounce?.cancel();
+    super.dispose();
+  }
+
+  void _onMentionQueryChanged() {
+    _mentionDebounce?.cancel();
+    _mentionDebounce = Timer(const Duration(milliseconds: 260), _searchMentions);
+  }
+
+  Future<void> _searchMentions() async {
+    final query = _mentionController.text.trim();
+    if (query.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _mentionLoading = false;
+        _mentionResults = const <AppUserProfile>[];
+      });
+      return;
+    }
+    final int token = ++_mentionToken;
+    setState(() => _mentionLoading = true);
+    try {
+      final results = await _repository.searchMentionTargets(query, limit: 12);
+      if (!mounted || token != _mentionToken) return;
+      setState(() {
+        _mentionLoading = false;
+        _mentionResults = results
+            .where((profile) => !_selectedMentionIds.contains(profile.userId))
+            .toList();
+      });
+    } catch (_) {
+      if (!mounted || token != _mentionToken) return;
+      setState(() {
+        _mentionLoading = false;
+        _mentionResults = const <AppUserProfile>[];
+      });
+    }
+  }
+
+  void _addMention(AppUserProfile profile) {
+    setState(() {
+      _selectedMentionIds.add(profile.userId);
+      _selectedMentionProfiles[profile.userId] = profile;
+      _mentionResults = _mentionResults
+          .where((element) => element.userId != profile.userId)
+          .toList();
+      _mentionController.clear();
+    });
+  }
+
+  void _removeMention(String userId) {
+    setState(() {
+      _selectedMentionIds.remove(userId);
+      _selectedMentionProfiles.remove(userId);
+    });
+  }
+
+  List<String> _parseTags(String raw) {
+    return raw
+        .split(RegExp(r'[\s,]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .map((e) => e.startsWith('#') ? e : '#$e')
+        .toSet()
+        .toList();
+  }
+
+  void _setThumbnailFromCollectionIndex(int index) {
+    if (index < 0 || index >= widget.items.length) return;
+    final item = widget.items[index];
+    setState(() {
+      _thumbnailIndex = index;
+      _thumbnailMode = item.mode;
+      _thumbnailPayload = item.snapshot;
+    });
+  }
+
+  Future<void> _openThumbnailEditor() async {
+    final Map<String, dynamic>? payload = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _ThumbnailEditorPage(
+          mode: _thumbnailMode,
+          payload: _thumbnailPayload,
+        ),
+      ),
+    );
+    if (payload == null || !mounted) return;
+    setState(() => _thumbnailPayload = payload);
+  }
+
+  Future<void> _submit() async {
+    if (_submitting) return;
+    final String title = _titleController.text.trim();
+    final String description = _descriptionController.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Title is required.')),
+      );
+      return;
+    }
+
+    setState(() => _submitting = true);
+    try {
+      final tags = _parseTags(_tagsController.text);
+      final mentions = _selectedMentionIds.toList();
+
+      if (widget.kind == _ComposerKind.single) {
+        final String presetId;
+        if (widget.existingPreset != null) {
+          presetId = widget.existingPreset!.id;
+          await _repository.updatePresetPost(
+            presetId: presetId,
+            title: title,
+            description: description,
+            tags: tags,
+            mentionUserIds: mentions,
+            payload: widget.payload,
+            thumbnailPayload: _thumbnailPayload,
+            thumbnailMode: _thumbnailMode,
+            visibility: _isPublic ? 'public' : 'private',
+          );
+        } else {
+          presetId = await _repository.publishPresetPost(
+            mode: widget.mode,
+            name: widget.name.isEmpty ? title : widget.name,
+            payload: widget.payload,
+            title: title,
+            description: description,
+            tags: tags,
+            mentionUserIds: mentions,
+            visibility: _isPublic ? 'public' : 'private',
+            thumbnailPayload: _thumbnailPayload,
+            thumbnailMode: _thumbnailMode,
+          );
+        }
+        if (mentions.isNotEmpty) {
+          await _repository.createMentionNotifications(
+            mentionedUserIds: mentions,
+            presetId: presetId,
+            presetTitle: title,
+          );
+        }
+      } else {
+        if (widget.items.isEmpty) {
+          throw Exception('Collection is empty.');
+        }
+        final String collectionId = await _repository.saveCollectionWithItems(
+          collectionId: widget.collectionId,
+          name: title,
+          description: description,
+          tags: tags,
+          mentionUserIds: mentions,
+          thumbnailPayload: _thumbnailPayload,
+          thumbnailMode: _thumbnailMode,
+          publish: _isPublic,
+          items: widget.items,
+        );
+        if (mentions.isNotEmpty) {
+          await _repository.createMentionNotifications(
+            mentionedUserIds: mentions,
+            presetId: collectionId,
+            presetTitle: title,
+          );
+        }
+      }
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Publish failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    final preview = ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Material(
+        color: Colors.black,
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: PresetViewer(
+            mode: _thumbnailMode,
+            payload: _thumbnailPayload,
+            cleanView: true,
+            embedded: true,
+            disableAudio: true,
+            useGlobalTracking: true,
+          ),
+        ),
+      ),
+    );
+
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        backgroundColor: cs.surface,
+        title: Text(
+          widget.kind == _ComposerKind.single
+              ? (widget.isEdit ? 'Update Post' : 'Compose Post')
+              : (widget.isEdit ? 'Update Collection' : 'Compose Collection'),
+        ),
+      ),
+      body: Row(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Card Preview (16:9)',
+                    style: TextStyle(
+                      color: cs.onSurface,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (widget.kind == _ComposerKind.collection &&
+                      widget.items.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: List<Widget>.generate(
+                          widget.items.length,
+                          (index) {
+                            final bool active = index == _thumbnailIndex;
+                            return ChoiceChip(
+                              selected: active,
+                              label: Text(
+                                '${index + 1}. ${widget.items[index].name}',
+                              ),
+                              onSelected: (_) =>
+                                  _setThumbnailFromCollectionIndex(index),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  Expanded(
+                    child: Center(
+                      child: Container(
+                        constraints: const BoxConstraints(maxWidth: 1000),
+                        child: widget.kind == _ComposerKind.collection
+                            ? Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  Positioned.fill(
+                                    top: 12,
+                                    left: 12,
+                                    right: 12,
+                                    bottom: -12,
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(18),
+                                        color: cs.surfaceContainerHighest
+                                            .withValues(alpha: 0.32),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned.fill(
+                                    top: 6,
+                                    left: 6,
+                                    right: 6,
+                                    bottom: -6,
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(18),
+                                        color: cs.surfaceContainerHighest
+                                            .withValues(alpha: 0.48),
+                                      ),
+                                    ),
+                                  ),
+                                  preview,
+                                ],
+                              )
+                            : preview,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.tonalIcon(
+                      onPressed: _openThumbnailEditor,
+                      icon: const Icon(Icons.tune),
+                      label: const Text('Edit Thumbnail in Full Editor'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 430,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: cs.surface,
+                border: Border(
+                  left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
+                ),
+              ),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  TextField(
+                    controller: _titleController,
+                    decoration: const InputDecoration(
+                      labelText: 'Title',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _descriptionController,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Description',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _tagsController,
+                    decoration: const InputDecoration(
+                      labelText: 'Tags',
+                      hintText: '#parallax #fyp',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _mentionController,
+                    decoration: const InputDecoration(
+                      labelText: 'Mention',
+                      hintText: '@username',
+                    ),
+                  ),
+                  if (_mentionLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: LinearProgressIndicator(),
+                    ),
+                  if (_mentionResults.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerLow,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: cs.outline.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _mentionResults.length,
+                        itemBuilder: (context, index) {
+                          final user = _mentionResults[index];
+                          return ListTile(
+                            dense: true,
+                            title: Text(user.displayName),
+                            subtitle: Text(user.email),
+                            onTap: () => _addMention(user),
+                          );
+                        },
+                      ),
+                    ),
+                  if (_selectedMentionIds.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: _selectedMentionIds.map((id) {
+                          final profile = _selectedMentionProfiles[id];
+                          final label = profile != null
+                              ? '@${profile.username ?? profile.displayName}'
+                              : '@${id.substring(0, math.min(8, id.length))}';
+                          return InputChip(
+                            label: Text(label),
+                            onDeleted: () => _removeMention(id),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  const SizedBox(height: 14),
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment<bool>(
+                        value: true,
+                        label: Text('Public'),
+                      ),
+                      ButtonSegment<bool>(
+                        value: false,
+                        label: Text('Private'),
+                      ),
+                    ],
+                    selected: <bool>{_isPublic},
+                    onSelectionChanged: (values) {
+                      setState(() => _isPublic = values.first);
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _submitting
+                              ? null
+                              : () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: _submitting ? null : _submit,
+                          child: Text(
+                            _submitting
+                                ? 'Working...'
+                                : widget.isEdit
+                                    ? 'Update'
+                                    : 'Publish',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThumbnailEditorPage extends StatelessWidget {
+  const _ThumbnailEditorPage({
+    required this.mode,
+    required this.payload,
+  });
+
+  final String mode;
+  final Map<String, dynamic> payload;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget editor = mode == '2d'
+        ? LayerMode(
+            embedded: true,
+            embeddedStudio: true,
+            useGlobalTracking: true,
+            persistPresets: false,
+            initialPresetPayload: payload,
+            onPresetSaved: (name, updatedPayload) {
+              Navigator.pop(context, updatedPayload);
+            },
+          )
+        : Engine3DPage(
+            embedded: true,
+            embeddedStudio: true,
+            useGlobalTracking: true,
+            persistPresets: false,
+            disableAudio: true,
+            initialPresetPayload: payload,
+            onPresetSaved: (name, updatedPayload) {
+              Navigator.pop(context, updatedPayload);
+            },
+          );
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: const Text('Thumbnail Editor'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          Positioned.fill(child: editor),
+          Positioned(
+            left: 16,
+            bottom: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Text(
+                'Use Save Preset inside editor to apply thumbnail changes.',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SettingsTab extends StatefulWidget {
   const _SettingsTab({
     required this.currentThemeMode,
@@ -3695,6 +5245,7 @@ class _SettingsTabState extends State<_SettingsTab> {
   bool _trackerUiVisible = false;
   bool _cursorEnabled = true;
   bool _prefsLoading = true;
+  TrackerRuntimeConfig _trackerConfig = TrackerRuntimeConfig.defaults;
 
   @override
   void initState() {
@@ -3721,12 +5272,16 @@ class _SettingsTabState extends State<_SettingsTab> {
   Future<void> _loadTrackerPrefs() async {
     try {
       final prefs = await _repository.fetchTrackerPreferencesForCurrentUser();
+      final config =
+          await _repository.fetchTrackerRuntimeConfigForCurrentUser();
       if (!mounted) return;
       setState(() {
         _trackerEnabled = prefs['trackerEnabled'] ?? true;
         _trackerUiVisible = prefs['trackerUiVisible'] ?? false;
+        _trackerConfig = config;
         _prefsLoading = false;
       });
+      TrackingService.instance.setRuntimeConfig(config);
     } catch (_) {
       if (!mounted) return;
       setState(() => _prefsLoading = false);
@@ -3746,6 +5301,37 @@ class _SettingsTabState extends State<_SettingsTab> {
   void _setCursorEnabled(bool value) {
     setState(() => _cursorEnabled = value);
     TrackingService.instance.setDartCursorEnabled(value);
+  }
+
+  Future<void> _updateTrackerConfig(TrackerRuntimeConfig next) async {
+    setState(() => _trackerConfig = next);
+    TrackingService.instance.setRuntimeConfig(next);
+    await _repository.updateTrackerRuntimeConfigForCurrentUser(next);
+  }
+
+  Future<void> _confirmSignOut() async {
+    final bool shouldSignOut = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Sign out?'),
+            content: const Text('You can sign back in anytime.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Sign Out'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldSignOut) return;
+    await _repository.signOut();
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/feed');
   }
 
   @override
@@ -3855,11 +5441,184 @@ class _SettingsTabState extends State<_SettingsTab> {
                   ),
                   onChanged: _trackerEnabled ? _setCursorEnabled : null,
                 ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _trackerConfig.cursorMode,
+                  decoration: const InputDecoration(
+                    labelText: 'Cursor Mode',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'head', child: Text('Head Pose')),
+                    DropdownMenuItem(value: 'iris', child: Text('Iris')),
+                    DropdownMenuItem(value: 'hand', child: Text('Hand')),
+                  ],
+                  onChanged: _trackerEnabled
+                      ? (value) {
+                          if (value == null) return;
+                          _updateTrackerConfig(
+                            _trackerConfig.copyWith(cursorMode: value),
+                          );
+                        }
+                      : null,
+                ),
+                const SizedBox(height: 10),
+                _settingsSlider(
+                  label: 'Sensitivity X',
+                  value: _trackerConfig.sensitivityX,
+                  min: 1,
+                  max: 1000,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sensitivityX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Sensitivity Y',
+                  value: _trackerConfig.sensitivityY,
+                  min: 1,
+                  max: 1000,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sensitivityY: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Smoothing',
+                  value: _trackerConfig.smoothing,
+                  min: 0,
+                  max: 98,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(smoothing: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Iris Dead Zone X',
+                  value: _trackerConfig.deadZoneIrisX,
+                  min: 0.001,
+                  max: 0.1,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(deadZoneIrisX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Iris Dead Zone Y',
+                  value: _trackerConfig.deadZoneIrisY,
+                  min: 0.001,
+                  max: 0.1,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(deadZoneIrisY: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Head Dead Zone Yaw',
+                  value: _trackerConfig.deadZoneHeadYaw,
+                  min: 0,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(deadZoneHeadYaw: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Head Dead Zone Pitch',
+                  value: _trackerConfig.deadZoneHeadPitch,
+                  min: 0,
+                  max: 10,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(deadZoneHeadPitch: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Dead Zone X',
+                  value: _trackerConfig.deadZoneHandX,
+                  min: 0.001,
+                  max: 0.5,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(deadZoneHandX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Dead Zone Y',
+                  value: _trackerConfig.deadZoneHandY,
+                  min: 0.001,
+                  max: 0.5,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(deadZoneHandY: v),
+                          )
+                      : null,
+                ),
               ],
             ],
           ),
         ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Session',
+                style: TextStyle(
+                  color: cs.onSurface,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.tonalIcon(
+                onPressed: _confirmSignOut,
+                icon: const Icon(Icons.logout),
+                label: const Text('Logout'),
+              ),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _settingsSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double>? onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$label: ${value.toStringAsFixed(3)}'),
+          Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
     );
   }
 }

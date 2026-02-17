@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 
+import '../models/tracker_runtime_config.dart';
 import '../models/tracking_frame.dart';
 import 'app_repository.dart';
 
@@ -32,6 +33,9 @@ class TrackingService {
 
   bool get dartCursorEnabled => _dartCursorEnabled;
   bool _dartCursorEnabled = true;
+
+  TrackerRuntimeConfig get runtimeConfig => _runtimeConfig;
+  TrackerRuntimeConfig _runtimeConfig = TrackerRuntimeConfig.defaults;
 
   StreamSubscription? _messageSub;
   Timer? _configRetryTimer;
@@ -120,6 +124,8 @@ class TrackingService {
     if (!kIsWeb) return;
     final prefs =
         await AppRepository.instance.fetchTrackerPreferencesForCurrentUser();
+    _runtimeConfig =
+        await AppRepository.instance.fetchTrackerRuntimeConfigForCurrentUser();
     _trackerEnabled = prefs['trackerEnabled'] ?? true;
     _trackerUiVisible = prefs['trackerUiVisible'] ?? false;
     _syncHostVisibilityStyle();
@@ -153,6 +159,11 @@ class TrackingService {
     _bumpOverlayTick();
   }
 
+  void setRuntimeConfig(TrackerRuntimeConfig config) {
+    _runtimeConfig = config;
+    _postConfig(force: true);
+  }
+
   void _postConfig({bool force = false}) {
     if (!kIsWeb || !_initialized) return;
     final element = _trackerIframe;
@@ -162,8 +173,9 @@ class TrackingService {
       'channel': _bridgeChannel,
       'enabled': _trackerEnabled,
       'uiVisible': _trackerUiVisible,
-      'showCursor': !_dartCursorEnabled,
+      'showCursor': !_dartCursorEnabled && _runtimeConfig.showCursor,
       'headless': !_trackerUiVisible,
+      'settings': _runtimeConfig.toMap(),
     };
     try {
       element.contentWindow?.postMessage(jsonEncode(payload).toJS, '*'.toJS);
@@ -195,19 +207,6 @@ class TrackingService {
     final dispatchTarget = _resolveDispatchTarget(target);
 
     final bool active = frame.wink || frame.pinch;
-    _dispatchMouse(
-      target: dispatchTarget,
-      type: 'mousemove',
-      x: x,
-      y: y,
-    );
-    _dispatchPointer(
-      target: dispatchTarget,
-      type: 'pointermove',
-      x: x,
-      y: y,
-      buttons: _pointerDown ? 1 : 0,
-    );
 
     if (active && !_pointerDown) {
       _pointerDown = true;
@@ -487,16 +486,12 @@ class TrackingService {
   void _syncHostVisibilityStyle() {
     final element = _trackerIframe;
     if (element == null) return;
-    final bool enabled = _trackerEnabled;
     final bool visibleUi = _trackerEnabled && _trackerUiVisible;
     element.style.setProperty('pointer-events', visibleUi ? 'auto' : 'none');
-    element.style.setProperty('visibility', enabled ? 'visible' : 'hidden');
+    element.style.setProperty('visibility', visibleUi ? 'visible' : 'hidden');
     element.style.setProperty('opacity', visibleUi ? '1' : '0');
     element.style.setProperty('background', 'transparent');
-    element.style.setProperty(
-      'transform',
-      visibleUi ? 'none' : 'translate(-200vw, -200vh)',
-    );
+    element.style.setProperty('transform', 'none');
   }
 
   void _bumpOverlayTick() {

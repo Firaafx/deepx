@@ -124,7 +124,7 @@ class _MyAppState extends State<MyApp> {
           ),
         ),
       ),
-      initialRoute: SupabaseConfig.isConfigured ? '/auth' : '/config',
+      initialRoute: SupabaseConfig.isConfigured ? '/feed' : '/config',
       builder: (context, child) {
         final safeChild = child ?? const SizedBox.shrink();
         if (!_trackerReady) return safeChild;

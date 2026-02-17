@@ -135,6 +135,7 @@ let activeChannel = params.get('channel') || null;
 let headlessMode = params.get('headless') === '1';
 let trackerRuntimeEnabled = true;
 let runtimeShowCursor = true;
+let runtimeSettings = {};
 let lastWinkTime = 0;
 let lastPinchTime = 0;
 let doubleClickThreshold = 600; // Changed to 600ms
@@ -142,6 +143,8 @@ let doubleDragThreshold = 300;
 let lastDoubleDragTime = 0;
 const inputSmooth = 0.7;
 let trackerDisposed = false;
+let lastHandProbeAt = 0;
+let handSuspendUntil = 0;
 
 function emitToParent(payload) {
     const message = activeChannel ? { ...payload, channel: activeChannel } : payload;
@@ -160,6 +163,55 @@ function parseBridgePayload(rawData) {
         return rawData;
     }
     return null;
+}
+
+function _toNumber(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function _videoReady(video) {
+    return !!video &&
+        video.readyState >= 2 &&
+        Number.isFinite(video.videoWidth) &&
+        Number.isFinite(video.videoHeight) &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0;
+}
+
+function _applySliderValue(id, value, digits = 3) {
+    const el = document.getElementById(id);
+    if (!el || value === undefined || value === null) return;
+    const next = _toNumber(value, parseFloat(el.value || '0'));
+    el.value = next;
+    const display = document.getElementById(`${id}-val`);
+    if (display) display.innerText = next.toFixed(digits);
+    if (el.oninput) el.oninput({target: el});
+}
+
+function applyRuntimeSettings(settings) {
+    if (!settings || typeof settings !== 'object') return;
+    runtimeSettings = settings;
+    const mode = (settings.cursorMode || '').toString().toLowerCase();
+    const cursorModeSelect = document.getElementById('cursor-mode');
+    if (cursorModeSelect && ['head', 'iris', 'hand'].includes(mode)) {
+        cursorModeSelect.value = mode;
+        currentMode = mode;
+    }
+    if (typeof settings.showCursor === 'boolean') {
+        runtimeShowCursor = settings.showCursor;
+        const cursorToggle = document.getElementById('show-cursor');
+        if (cursorToggle) cursorToggle.checked = runtimeShowCursor;
+    }
+    _applySliderValue('h-sens', settings.sensitivityX, 3);
+    _applySliderValue('v-sens', settings.sensitivityY, 3);
+    _applySliderValue('s-sens', settings.smoothing, 3);
+    _applySliderValue('dz-ix', settings.deadZoneIrisX, 3);
+    _applySliderValue('dz-iy', settings.deadZoneIrisY, 3);
+    _applySliderValue('dz-head-yaw', settings.deadZoneHeadYaw, 1);
+    _applySliderValue('dz-hp', settings.deadZoneHeadPitch, 1);
+    _applySliderValue('dz-hx', settings.deadZoneHandX, 3);
+    _applySliderValue('dz-hand-y', settings.deadZoneHandY, 3);
 }
 
 function disposeTrackerRuntime() {
@@ -194,16 +246,18 @@ function disposeTrackerRuntime() {
 function applyRuntimeVisibility() {
     const showUi = uiVisible && !headlessMode;
     document.body.classList.toggle('tracker-headless', !showUi);
-    const panelDisplay = showUi ? 'block' : 'none';
-    document.getElementById('tracker-panel').style.display = panelDisplay;
-    document.getElementById('ui-video-box').style.display = panelDisplay;
+    const showControlPanel = showUi && !GLOBAL_TRACKER;
+    document.getElementById('tracker-panel').style.display = showControlPanel ? 'block' : 'none';
+    document.getElementById('ui-video-box').style.display = showUi ? 'block' : 'none';
     document.getElementById('client-panel').style.display = (isClient && showUi) ? 'block' : 'none';
-    document.getElementById('toggle-btns').style.display = showUi ? 'flex' : 'none';
+    document.getElementById('toggle-btns').style.display = showControlPanel ? 'flex' : 'none';
     document.getElementById('ui-text-canvas').style.display = showUi ? 'block' : 'none';
     document.getElementById('timer-overlay').style.display = 'none';
     document.getElementById('cal-dot').style.display = 'none';
     if (cursor) {
-        cursor.style.display = showUi && runtimeShowCursor ? 'block' : 'none';
+        const localShowCursor = document.getElementById('show-cursor');
+        const allowCursor = localShowCursor ? localShowCursor.checked : runtimeShowCursor;
+        cursor.style.display = showUi && runtimeShowCursor && allowCursor ? 'block' : 'none';
     }
 }
 
@@ -231,6 +285,9 @@ function applyTrackerConfig(config) {
     }
     if (typeof config.headless === 'boolean') {
         headlessMode = config.headless;
+    }
+    if (config.settings && typeof config.settings === 'object') {
+        applyRuntimeSettings(config.settings);
     }
     applyRuntimeVisibility();
 }
@@ -732,12 +789,30 @@ async function updatePerformanceSettings() {
     if (cameraSvc) await cameraSvc.stop();
     cameraSvc = new Camera(document.getElementById('webcam-small'), {
         onFrame: async () => {
-            startTime = performance.now();
-            if (currentMode === 'hand') {
-                await hands.send({image: document.getElementById('webcam-small')});
-            } else {
-                await faceMesh.send({image: document.getElementById('webcam-small')});
+            const video = document.getElementById('webcam-small');
+            if (!_videoReady(video)) {
+                return;
             }
+            startTime = performance.now();
+            const now = performance.now();
+            const selectedMode = document.getElementById('cursor-mode').value;
+            const shouldRunHand =
+                selectedMode === 'hand' ||
+                (selectedMode !== 'hand' && now - lastHandProbeAt >= 120);
+
+            if (shouldRunHand && now >= handSuspendUntil) {
+                try {
+                    await hands.send({image: video});
+                    lastHandProbeAt = now;
+                } catch (err) {
+                    console.warn('Hands pipeline suspended after runtime error.', err);
+                    hasHand = false;
+                    handLm = null;
+                    isPinching = false;
+                    handSuspendUntil = performance.now() + 3000;
+                }
+            }
+            await faceMesh.send({image: video});
             frameCounter++;
         },
         width: vidSize,
@@ -1104,7 +1179,8 @@ function frameUpdate() {
         activeTracker = 'face';
     }
     if (document.getElementById('tracking-toggle').checked && !isPaused) {
-        const mode = document.getElementById('cursor-mode').value;
+        const selectedMode = document.getElementById('cursor-mode').value;
+        const mode = (hasHand && selectedMode !== 'hand') ? 'hand' : selectedMode;
         const isHead = mode === 'head';
         let rawRelYaw, rawRelPitch;
         if (mode === 'hand') {
@@ -1210,7 +1286,7 @@ function frameUpdate() {
                 const yaw = currentHeadYawNorm;
                 const pitch = currentHeadPitchNorm;
                 targetX = coeffX[0] + coeffX[1]*dx + coeffX[2]*dy + coeffX[3]*yaw + coeffX[4]*pitch + coeffX[5]*dx*dx + coeffX[6]*dx*dy + coeffX[7]*dy*dy;
-                targetY = coeffY[0] + coeffY[1]*dx + coeffY[2]*dy + coeffY[3]*yaw + coeffY[4]*pitch + coeffY[5]*dx*dx + coeffX[6]*dx*dy + coeffY[7]*dy*dy;
+                targetY = coeffY[0] + coeffY[1]*dx + coeffY[2]*dy + coeffY[3]*yaw + coeffY[4]*pitch + coeffY[5]*dx*dx + coeffY[6]*dx*dy + coeffY[7]*dy*dy;
                 targetX = Math.max(0, Math.min(window.innerWidth, targetX));
                 targetY = Math.max(0, Math.min(window.innerHeight, targetY));
             } else {
@@ -1697,7 +1773,22 @@ function setupTrackerEvents() {
                 while (performance.now() - startSample < 2000) {
                     await new Promise(r => setTimeout(r, 50));
                     if (!eyesClosed) {
-                        samples.push({dx: currentDx, dy: currentDy, yaw: currentHeadYawNorm, pitch: currentHeadPitchNorm});
+                        const dx = currentDx;
+                        const dy = currentDy;
+                        const yaw = currentHeadYawNorm;
+                        const pitch = currentHeadPitchNorm;
+                        if (
+                            Number.isFinite(dx) &&
+                            Number.isFinite(dy) &&
+                            Number.isFinite(yaw) &&
+                            Number.isFinite(pitch) &&
+                            Math.abs(dx) < 2 &&
+                            Math.abs(dy) < 2 &&
+                            Math.abs(yaw) < 4 &&
+                            Math.abs(pitch) < 4
+                        ) {
+                            samples.push({dx, dy, yaw, pitch});
+                        }
                     }
                     if (calibrationData.length >= 8) {
                         const dx = currentDx;
@@ -1711,14 +1802,14 @@ function setupTrackerEvents() {
                     }
                 }
                 isCapturing = false;
-                if (samples.length > 0) {
+                if (samples.length >= 12) {
                     const avgDx = samples.reduce((sum, s) => sum + s.dx, 0) / samples.length;
                     const avgDy = samples.reduce((sum, s) => sum + s.dy, 0) / samples.length;
                     const avgYaw = samples.reduce((sum, s) => sum + s.yaw, 0) / samples.length;
                     const avgPitch = samples.reduce((sum, s) => sum + s.pitch, 0) / samples.length;
                     calibrationData.push({dx: avgDx, dy: avgDy, yaw: avgYaw, pitch: avgPitch, screenX: w * p.x, screenY: h * p.y});
                 } else {
-                    alert('No valid samples for this point. Retry calibration.');
+                    alert('Not enough stable iris samples for this point. Retry calibration.');
                     overlay.style.display = 'none';
                     calDot.style.display = 'none';
                     return;

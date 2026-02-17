@@ -7,9 +7,11 @@ import '../models/app_user_profile.dart';
 import '../models/chat_models.dart';
 import '../models/collection_models.dart';
 import '../models/feed_post.dart';
+import '../models/notification_item.dart';
 import '../models/preset_comment.dart';
 import '../models/profile_stats.dart';
 import '../models/render_preset.dart';
+import '../models/tracker_runtime_config.dart';
 
 class AppRepository {
   AppRepository._();
@@ -96,6 +98,7 @@ class AppRepository {
         'theme_mode': 'dark',
         'tracker_enabled': true,
         'tracker_ui_visible': false,
+        'tracker_config': TrackerRuntimeConfig.defaults.toMap(),
       },
       onConflict: 'user_id',
       ignoreDuplicates: true,
@@ -248,6 +251,79 @@ class AppRepository {
     return merged.values.toList();
   }
 
+  Future<List<AppUserProfile>> searchMentionTargets(
+    String query, {
+    int limit = 12,
+  }) {
+    return searchProfiles(query, limit: limit);
+  }
+
+  Future<void> createMentionNotifications({
+    required List<String> mentionedUserIds,
+    required String presetId,
+    required String presetTitle,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    final List<String> targets = _normalizeUuidList(mentionedUserIds)
+        .where((String id) => id != user.id)
+        .toSet()
+        .toList();
+    if (targets.isEmpty) return;
+
+    final List<Map<String, dynamic>> rows = targets
+        .map(
+          (id) => <String, dynamic>{
+            'user_id': id,
+            'actor_user_id': user.id,
+            'kind': 'mention',
+            'title': 'You were mentioned',
+            'body': presetTitle,
+            'data': <String, dynamic>{
+              'preset_id': presetId,
+              'preset_title': presetTitle,
+            },
+          },
+        )
+        .toList();
+    await _client.from('notifications').insert(rows);
+  }
+
+  Future<List<NotificationItem>> fetchNotifications({
+    int limit = 100,
+    bool unreadOnly = false,
+  }) async {
+    final user = currentUser;
+    if (user == null) return const <NotificationItem>[];
+    dynamic query = _client
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', ascending: false)
+        .limit(limit);
+    if (unreadOnly) {
+      query = query.eq('read', false);
+    }
+    final List<dynamic> rows = await query;
+    return rows
+        .map((dynamic e) =>
+            NotificationItem.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  Future<void> markNotificationRead(
+    String notificationId, {
+    bool read = true,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    await _client
+        .from('notifications')
+        .update(<String, dynamic>{'read': read})
+        .eq('id', notificationId)
+        .eq('user_id', user.id);
+  }
+
   Future<ProfileStats> fetchProfileStats(String userId) async {
     final row = await _client
         .from('profile_stats')
@@ -361,11 +437,17 @@ class AppRepository {
   }
 
   Future<List<RenderPreset>> fetchUserPosts(String userId) async {
-    final List<dynamic> rows = await _client
+    dynamic query = _client
         .from('presets')
         .select('*')
         .eq('user_id', userId)
         .order('updated_at', ascending: false);
+
+    if (currentUser?.id != userId) {
+      query = query.eq('visibility', 'public');
+    }
+
+    final List<dynamic> rows = await query;
 
     return rows
         .map((dynamic e) =>
@@ -374,20 +456,64 @@ class AppRepository {
   }
 
   Future<List<RenderPreset>> fetchFeedPresets({int limit = 200}) async {
-    final List<dynamic> rows = await _client
+    final user = currentUser;
+    final List<RenderPreset> merged = <RenderPreset>[];
+    final Set<String> seen = <String>{};
+
+    final List<dynamic> publicRows = await _client
         .from('presets')
         .select('*')
+        .eq('visibility', 'public')
         .order('updated_at', ascending: false)
         .limit(limit);
+    for (final dynamic raw in publicRows) {
+      final RenderPreset preset =
+          RenderPreset.fromMap(Map<String, dynamic>.from(raw as Map));
+      if (seen.add(preset.id)) {
+        merged.add(preset);
+      }
+    }
 
-    return rows
-        .map((dynamic e) =>
-            RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
-        .toList();
+    if (user != null) {
+      final List<dynamic> mineRows = await _client
+          .from('presets')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('visibility', 'private')
+          .order('updated_at', ascending: false)
+          .limit(limit);
+      for (final dynamic raw in mineRows) {
+        final RenderPreset preset =
+            RenderPreset.fromMap(Map<String, dynamic>.from(raw as Map));
+        if (seen.add(preset.id)) {
+          merged.add(preset);
+        }
+      }
+    }
+
+    merged.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    if (merged.length > limit) {
+      return merged.sublist(0, limit);
+    }
+    return merged;
   }
 
   Future<List<FeedPost>> fetchFeedPosts({int limit = 200}) async {
     final List<RenderPreset> presets = await fetchFeedPresets(limit: limit);
+    return _hydrateFeedPosts(presets);
+  }
+
+  Future<List<FeedPost>> fetchGuestFeedPosts({int limit = 200}) async {
+    final List<dynamic> rows = await _client
+        .from('presets')
+        .select('*')
+        .eq('visibility', 'public')
+        .order('updated_at', ascending: false)
+        .limit(limit);
+    final List<RenderPreset> presets = rows
+        .map((dynamic e) =>
+            RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList();
     return _hydrateFeedPosts(presets);
   }
 
@@ -399,6 +525,8 @@ class AppRepository {
         .maybeSingle();
     if (row == null) return null;
     final RenderPreset preset = RenderPreset.fromMap(row);
+    final bool canView = preset.isPublic || preset.userId == currentUser?.id;
+    if (!canView) return null;
     final List<FeedPost> posts =
         await _hydrateFeedPosts(<RenderPreset>[preset]);
     if (posts.isEmpty) return null;
@@ -511,15 +639,143 @@ class AppRepository {
   }) async {
     final user = currentUser;
     if (user == null) return;
+    final String cleanName = name.trim();
+    if (cleanName.isEmpty) return;
 
-    await _client.from('presets').upsert(
-      <String, dynamic>{
-        'user_id': user.id,
-        'mode': mode,
-        'name': name,
-        'payload': payload,
-      },
-      onConflict: 'user_id,mode,name',
+    final existing = await _client
+        .from('presets')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('mode', mode)
+        .eq('name', cleanName)
+        .order('updated_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    final values = <String, dynamic>{
+      'user_id': user.id,
+      'mode': mode,
+      'name': cleanName,
+      'title': cleanName,
+      'description': '',
+      'tags': const <String>[],
+      'mention_user_ids': const <String>[],
+      'visibility': 'private',
+      'payload': payload,
+      'thumbnail_payload': payload,
+      'thumbnail_mode': mode,
+    };
+
+    if (existing == null) {
+      await _client.from('presets').insert(values);
+      return;
+    }
+
+    await _client.from('presets').update(values).eq('id', existing['id']);
+  }
+
+  Future<String> publishPresetPost({
+    required String mode,
+    required String name,
+    required Map<String, dynamic> payload,
+    required String title,
+    required String description,
+    required List<String> tags,
+    required List<String> mentionUserIds,
+    String visibility = 'public',
+    Map<String, dynamic>? thumbnailPayload,
+    String? thumbnailMode,
+  }) async {
+    final user = currentUser;
+    if (user == null) throw Exception('Not authenticated.');
+
+    final Map<String, dynamic> row = await _client
+        .from('presets')
+        .insert(
+          <String, dynamic>{
+            'user_id': user.id,
+            'mode': mode,
+            'name': name.trim().isEmpty ? 'Untitled' : name.trim(),
+            'title': title.trim().isEmpty ? 'Untitled' : title.trim(),
+            'description': description.trim(),
+            'tags': _normalizeTags(tags),
+            'mention_user_ids': _normalizeUuidList(mentionUserIds),
+            'visibility': visibility == 'private' ? 'private' : 'public',
+            'payload': payload,
+            'thumbnail_payload': thumbnailPayload ?? payload,
+            'thumbnail_mode': thumbnailMode ?? mode,
+          },
+        )
+        .select('*')
+        .single();
+    return row['id']?.toString() ?? '';
+  }
+
+  Future<void> updatePresetPost({
+    required String presetId,
+    String? title,
+    String? description,
+    List<String>? tags,
+    List<String>? mentionUserIds,
+    Map<String, dynamic>? payload,
+    Map<String, dynamic>? thumbnailPayload,
+    String? thumbnailMode,
+    String? visibility,
+  }) async {
+    final user = currentUser;
+    if (user == null) throw Exception('Not authenticated.');
+
+    final Map<String, dynamic> values = <String, dynamic>{};
+    if (title != null) {
+      values['title'] = title.trim().isEmpty ? 'Untitled' : title.trim();
+    }
+    if (description != null) {
+      values['description'] = description.trim();
+    }
+    if (tags != null) {
+      values['tags'] = _normalizeTags(tags);
+    }
+    if (mentionUserIds != null) {
+      values['mention_user_ids'] = _normalizeUuidList(mentionUserIds);
+    }
+    if (payload != null) {
+      values['payload'] = payload;
+    }
+    if (thumbnailPayload != null) {
+      values['thumbnail_payload'] = thumbnailPayload;
+    }
+    if (thumbnailMode != null) {
+      values['thumbnail_mode'] = thumbnailMode;
+    }
+    if (visibility != null) {
+      values['visibility'] = visibility == 'private' ? 'private' : 'public';
+    }
+    if (values.isEmpty) return;
+
+    await _client
+        .from('presets')
+        .update(values)
+        .eq('id', presetId)
+        .eq('user_id', user.id);
+  }
+
+  Future<void> deletePresetPost(String presetId) async {
+    final user = currentUser;
+    if (user == null) throw Exception('Not authenticated.');
+    await _client
+        .from('presets')
+        .delete()
+        .eq('id', presetId)
+        .eq('user_id', user.id);
+  }
+
+  Future<void> setPresetVisibility({
+    required String presetId,
+    required bool isPublic,
+  }) {
+    return updatePresetPost(
+      presetId: presetId,
+      visibility: isPublic ? 'public' : 'private',
     );
   }
 
@@ -536,6 +792,8 @@ class AppRepository {
         .eq('user_id', user.id)
         .eq('mode', mode)
         .eq('name', name)
+        .order('updated_at', ascending: false)
+        .limit(1)
         .maybeSingle();
 
     if (row == null) return null;
@@ -884,39 +1142,12 @@ class AppRepository {
     required String name,
     required List<String> memberIds,
   }) async {
-    try {
-      final chatId = await createGroupChatRpc(name: name, memberIds: memberIds);
-      if (chatId.isNotEmpty) return chatId;
-    } catch (_) {}
-
-    final user = currentUser;
-    if (user == null) return '';
-
-    final Map<String, dynamic> chatRow = await _client
-        .from('chats')
-        .insert(
-          <String, dynamic>{
-            'created_by': user.id,
-            'name': name.trim(),
-            'is_group': true,
-          },
-        )
-        .select('*')
-        .single();
-
-    final String chatId = chatRow['id'].toString();
-    final Set<String> uniqueMembers = <String>{...memberIds, user.id};
-    final List<Map<String, dynamic>> rows = uniqueMembers
-        .map(
-          (String id) => <String, dynamic>{
-            'chat_id': chatId,
-            'user_id': id,
-            'role': id == user.id ? 'owner' : 'member',
-          },
-        )
-        .toList();
-    await _client.from('chat_members').upsert(rows);
-
+    final chatId = await createGroupChatRpc(name: name, memberIds: memberIds);
+    if (chatId.isEmpty) {
+      throw Exception(
+        'Group chat creation RPC returned an empty id. Check migration state.',
+      );
+    }
     return chatId;
   }
 
@@ -986,7 +1217,11 @@ class AppRepository {
         userId: row['user_id'].toString(),
         name: row['name']?.toString() ?? 'Untitled collection',
         description: row['description']?.toString() ?? '',
+        tags: _stringListFrom(row['tags']),
+        mentionUserIds: _stringListFrom(row['mention_user_ids']),
         published: row['published'] == true,
+        thumbnailPayload: _mapFrom(row['thumbnail_payload']),
+        thumbnailMode: row['thumbnail_mode']?.toString(),
         itemsCount: items.length,
         createdAt: DateTime.tryParse(row['created_at']?.toString() ?? '') ??
             DateTime.fromMillisecondsSinceEpoch(0),
@@ -1003,6 +1238,10 @@ class AppRepository {
     String? collectionId,
     required String name,
     String description = '',
+    List<String> tags = const <String>[],
+    List<String> mentionUserIds = const <String>[],
+    Map<String, dynamic>? thumbnailPayload,
+    String? thumbnailMode,
     required bool publish,
     required List<CollectionDraftItem> items,
   }) async {
@@ -1020,6 +1259,10 @@ class AppRepository {
               'user_id': user.id,
               'name': name.trim().isEmpty ? 'Untitled collection' : name.trim(),
               'description': description,
+              'tags': _normalizeTags(tags),
+              'mention_user_ids': _normalizeUuidList(mentionUserIds),
+              'thumbnail_payload': thumbnailPayload ?? items.first.snapshot,
+              'thumbnail_mode': thumbnailMode ?? items.first.mode,
               'published': publish,
             },
           )
@@ -1031,6 +1274,10 @@ class AppRepository {
         <String, dynamic>{
           'name': name.trim().isEmpty ? 'Untitled collection' : name.trim(),
           'description': description,
+          'tags': _normalizeTags(tags),
+          'mention_user_ids': _normalizeUuidList(mentionUserIds),
+          'thumbnail_payload': thumbnailPayload ?? items.first.snapshot,
+          'thumbnail_mode': thumbnailMode ?? items.first.mode,
           'published': publish,
         },
       ).eq('id', id).eq('user_id', user.id);
@@ -1060,6 +1307,19 @@ class AppRepository {
     await _client
         .from('collections')
         .delete()
+        .eq('id', collectionId)
+        .eq('user_id', user.id);
+  }
+
+  Future<void> setCollectionPublished({
+    required String collectionId,
+    required bool published,
+  }) async {
+    final user = currentUser;
+    if (user == null) throw Exception('Not authenticated.');
+    await _client
+        .from('collections')
+        .update(<String, dynamic>{'published': published})
         .eq('id', collectionId)
         .eq('user_id', user.id);
   }
@@ -1106,7 +1366,11 @@ class AppRepository {
         userId: map['user_id']?.toString() ?? '',
         name: map['name']?.toString() ?? 'Untitled collection',
         description: map['description']?.toString() ?? '',
+        tags: _stringListFrom(map['tags']),
+        mentionUserIds: _stringListFrom(map['mention_user_ids']),
         published: map['published'] == true,
+        thumbnailPayload: _mapFrom(map['thumbnail_payload']),
+        thumbnailMode: map['thumbnail_mode']?.toString(),
         itemsCount: items.length,
         createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
             DateTime.fromMillisecondsSinceEpoch(0),
@@ -1174,6 +1438,36 @@ class AppRepository {
       'trackerEnabled': row?['tracker_enabled'] != false,
       'trackerUiVisible': row?['tracker_ui_visible'] == true,
     };
+  }
+
+  Future<TrackerRuntimeConfig> fetchTrackerRuntimeConfigForCurrentUser() async {
+    final user = currentUser;
+    if (user == null) return TrackerRuntimeConfig.defaults;
+    final row = await _client
+        .from('user_settings')
+        .select('tracker_config')
+        .eq('user_id', user.id)
+        .maybeSingle();
+    final dynamic raw = row?['tracker_config'];
+    final Map<String, dynamic> map = raw is Map<String, dynamic>
+        ? raw
+        : (raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{});
+    return TrackerRuntimeConfig.fromMap(map);
+  }
+
+  Future<void> updateTrackerRuntimeConfigForCurrentUser(
+    TrackerRuntimeConfig config,
+  ) async {
+    final user = currentUser;
+    if (user == null) return;
+    await _client.from('user_settings').upsert(
+      <String, dynamic>{
+        'user_id': user.id,
+        'tracker_config': config.toMap(),
+      },
+      onConflict: 'user_id',
+      defaultToNull: false,
+    );
   }
 
   Future<void> updateTrackerPreferencesForCurrentUser({
@@ -1267,6 +1561,41 @@ class AppRepository {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  List<String> _normalizeTags(List<String> raw) {
+    return raw
+        .map((String e) => e.trim().toLowerCase())
+        .where((String e) => e.isNotEmpty)
+        .map((String e) => e.startsWith('#') ? e : '#$e')
+        .toSet()
+        .toList();
+  }
+
+  List<String> _normalizeUuidList(List<String> raw) {
+    final Set<String> ids = <String>{};
+    for (final String item in raw) {
+      final String value = item.trim();
+      if (value.isEmpty) continue;
+      ids.add(value);
+    }
+    return ids.toList();
+  }
+
+  Map<String, dynamic> _mapFrom(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return <String, dynamic>{};
+  }
+
+  List<String> _stringListFrom(dynamic value) {
+    if (value is List) {
+      return value
+          .map((dynamic e) => e.toString().trim())
+          .where((String e) => e.isNotEmpty)
+          .toList();
+    }
+    return const <String>[];
   }
 
   String _sanitizeFileName(String input) {
