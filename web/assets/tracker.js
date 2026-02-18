@@ -128,8 +128,8 @@ let handTransX = 0.001;
 let handSlowY = 1.0;
 let handFastY = 10.0;
 let handTransY = 0.001;
-let handDetectionConfidence = 0.75;
-let handTrackingConfidence = 0.75;
+let handDetectionConfidence = 0.9;
+let handTrackingConfidence = 0.88;
 let handStableFrames = 0;
 let handMissingFrames = 0;
 let uiVisible = true;
@@ -235,6 +235,22 @@ function _applySliderValue(id, value, digits = 3) {
     if (el.oninput) el.oninput({target: el});
 }
 
+function _applyCheckboxValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el || typeof value !== 'boolean') return;
+    el.checked = value;
+    if (el.onchange) el.onchange({target: el});
+}
+
+function _applySelectValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el || value === undefined || value === null) return;
+    const next = value.toString();
+    if (!next || el.value === next) return;
+    el.value = next;
+    if (el.onchange) el.onchange({target: el});
+}
+
 function applyRuntimeSettings(settings) {
     if (!settings || typeof settings !== 'object') return;
     runtimeSettings = settings;
@@ -297,12 +313,24 @@ function applyRuntimeSettings(settings) {
         settings.handTrackingConfidence,
         handTrackingConfidence
     );
+    handDetectionConfidence = Math.max(0.82, Math.min(0.99, handDetectionConfidence));
+    handTrackingConfidence = Math.max(0.8, Math.min(0.99, handTrackingConfidence));
+    _applySelectValue('input-source', settings.inputSource);
+    _applyCheckboxValue('mouse-tracking', settings.mouseTracking);
+    _applyCheckboxValue('send-iris', settings.sendIris);
+    _applyCheckboxValue('send-nose', settings.sendNose);
+    _applyCheckboxValue('send-yaw-pitch', settings.sendYawPitch);
+    _applyCheckboxValue('send-fingertips', settings.sendFingertips);
+    _applyCheckboxValue('send-full-face', settings.sendFullFace);
+    _applyCheckboxValue('send-full-hand', settings.sendFullHand);
+    _applyCheckboxValue('send-all', settings.sendAll);
+    _applyCheckboxValue('send-none', settings.sendNone);
     if (hands) {
         hands.setOptions({
             modelComplexity: 0,
             maxNumHands: 1,
-            minDetectionConfidence: Math.max(0.3, Math.min(0.99, handDetectionConfidence)),
-            minTrackingConfidence: Math.max(0.3, Math.min(0.99, handTrackingConfidence)),
+            minDetectionConfidence: Math.max(0.82, Math.min(0.99, handDetectionConfidence)),
+            minTrackingConfidence: Math.max(0.8, Math.min(0.99, handTrackingConfidence)),
         });
     }
 }
@@ -348,12 +376,7 @@ function applyRuntimeVisibility() {
     document.getElementById('timer-overlay').style.display = 'none';
     document.getElementById('cal-dot').style.display = 'none';
     if (cursor) {
-        const localShowCursor = document.getElementById('show-cursor');
-        const allowCursor = localShowCursor ? localShowCursor.checked : runtimeShowCursor;
-        cursor.style.display =
-            showUi && !GLOBAL_TRACKER && runtimeShowCursor && allowCursor
-                ? 'block'
-                : 'none';
+        cursor.style.display = 'none';
     }
 }
 
@@ -894,6 +917,10 @@ async function updatePerformanceSettings() {
     }
     captureWidth = Math.max(160, Math.min(1280, captureWidth));
     captureHeight = Math.max(120, Math.min(1280, captureHeight));
+    const videoBox = document.getElementById('ui-video-box');
+    if (videoBox) {
+        videoBox.style.setProperty('--camera-aspect', `${captureWidth} / ${captureHeight}`);
+    }
 
     faceMesh.setOptions({
         refineLandmarks,
@@ -904,8 +931,8 @@ async function updatePerformanceSettings() {
     hands.setOptions({
         modelComplexity: 0,
         maxNumHands: 1,
-        minDetectionConfidence: Math.max(0.3, Math.min(0.99, handDetectionConfidence)),
-        minTrackingConfidence: Math.max(0.3, Math.min(0.99, handTrackingConfidence)),
+        minDetectionConfidence: Math.max(0.82, Math.min(0.99, handDetectionConfidence)),
+        minTrackingConfidence: Math.max(0.8, Math.min(0.99, handTrackingConfidence)),
     });
     if (cameraSvc) await cameraSvc.stop();
     cameraSvc = new Camera(document.getElementById('webcam-small'), {
@@ -1203,14 +1230,15 @@ function setupOnResults() {
             }
             return;
         } else {
-            if (activeTracker !== 'face') return;
             oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
             if (!document.getElementById('tracking-toggle').checked) { cursor.style.display = 'none'; return; }
             cursor.style.display = (!headlessMode && runtimeShowCursor && document.getElementById('show-cursor').checked) ? 'block' : 'none';
             if (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) {
                 faceLm = results.multiFaceLandmarks[0];
                 processFace(faceLm);
-                drawFaceDots(faceLm);
+                if (activeTracker !== 'hand') {
+                    drawFaceDots(faceLm);
+                }
             } else {
                 faceLm = null;
             }
@@ -1334,8 +1362,8 @@ function frameUpdate() {
                     const normalizedY = (speedY - thresholdY) / (0.8 - thresholdY);
                     accelY = handSlowY + (handFastY - handSlowY) * Math.pow(normalizedY, 1.5);
                 }
-                let cursorDeltaX = deltaX * baseSensH * accelX * -1;
-                let cursorDeltaY = deltaY * baseSensV * accelY;
+                let cursorDeltaX = deltaX * baseSensH * accelX * -2.5;
+                let cursorDeltaY = deltaY * baseSensV * accelY * 2.5;
                 targetX += cursorDeltaX;
                 targetY += cursorDeltaY;
                 targetX = Math.max(0, Math.min(window.innerWidth, targetX));

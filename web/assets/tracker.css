@@ -64,8 +64,10 @@ body.tracker-headless #cal-dot {
   position: absolute;
   top: 14px;
   left: 14px;
-  width: 268px;
-  height: 268px;
+  width: min(42vw, 420px);
+  max-height: min(42vh, 300px);
+  aspect-ratio: var(--camera-aspect, 16 / 9);
+  height: auto;
   border: 1px solid var(--line);
   border-radius: 18px;
   overflow: hidden;
@@ -79,8 +81,9 @@ body.tracker-headless #cal-dot {
 #webcam-small {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   transform: scaleX(-1);
+  background: #000;
 }
 
 #face-dots-overlay {

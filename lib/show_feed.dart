@@ -68,7 +68,8 @@ class ShowFeedPage extends StatefulWidget {
 
 class _ShowFeedPageState extends State<ShowFeedPage> {
   static const double _headerHeight = 84;
-  static const double _tabTopPadding = _headerHeight + 8;
+  static const double _feedTopPadding = _headerHeight;
+  static const double _tabContentTopPadding = 48;
 
   static const List<_NavItem> _primaryNav = <_NavItem>[
     _NavItem(tab: _ShellTab.home, icon: Icons.home_outlined, label: 'Home'),
@@ -104,6 +105,9 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   Timer? _trackerNavDebounce;
   VoidCallback? _trackerNavListener;
   AppUserProfile? _currentProfile;
+  List<NotificationItem> _headerNotifications = const <NotificationItem>[];
+  Map<String, AppUserProfile> _notificationActors =
+      const <String, AppUserProfile>{};
 
   bool get _isGuest => _repository.currentUser == null;
 
@@ -111,6 +115,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   void initState() {
     super.initState();
     _loadProfile();
+    _loadHeaderNotifications();
     _trackerNavListener = _syncTrackerCursorHover;
     TrackingService.instance.frameNotifier.addListener(_trackerNavListener!);
   }
@@ -150,12 +155,188 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   Future<void> _loadProfile() async {
     if (_repository.currentUser == null) {
       if (!mounted) return;
-      setState(() => _currentProfile = null);
+      setState(() {
+        _currentProfile = null;
+        _headerNotifications = const <NotificationItem>[];
+        _notificationActors = const <String, AppUserProfile>{};
+      });
       return;
     }
     final profile = await _repository.ensureCurrentProfile();
     if (!mounted) return;
     setState(() => _currentProfile = profile);
+    unawaited(_loadHeaderNotifications());
+  }
+
+  Future<void> _loadHeaderNotifications() async {
+    if (_repository.currentUser == null) {
+      if (!mounted) return;
+      setState(() {
+        _headerNotifications = const <NotificationItem>[];
+        _notificationActors = const <String, AppUserProfile>{};
+      });
+      return;
+    }
+    try {
+      final notifications = await _repository.fetchNotifications(limit: 80);
+      final Set<String> actorIds = notifications
+          .map((n) => n.actorUserId ?? '')
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      final actors = await _repository.fetchProfilesByIds(actorIds);
+      if (!mounted) return;
+      setState(() {
+        _headerNotifications = notifications;
+        _notificationActors = actors;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _headerNotifications = const <NotificationItem>[];
+        _notificationActors = const <String, AppUserProfile>{};
+      });
+    }
+  }
+
+  Future<void> _markNotificationReadLocal(NotificationItem item) async {
+    if (item.read) return;
+    await _repository.markNotificationRead(item.id, read: true);
+    if (!mounted) return;
+    setState(() {
+      _headerNotifications = _headerNotifications
+          .map((n) => n.id == item.id
+              ? NotificationItem(
+                  id: n.id,
+                  userId: n.userId,
+                  actorUserId: n.actorUserId,
+                  kind: n.kind,
+                  title: n.title,
+                  body: n.body,
+                  data: n.data,
+                  read: true,
+                  createdAt: n.createdAt,
+                )
+              : n)
+          .toList();
+    });
+  }
+
+  Future<void> _openNotificationTarget(NotificationItem item) async {
+    final String type = (item.data['type']?.toString() ?? '').toLowerCase();
+    if (type == 'chat_message') {
+      await _switchTab(_ShellTab.chat);
+      final String chatId = item.data['chat_id']?.toString() ?? '';
+      if (chatId.isNotEmpty) {
+        await _chatKey.currentState?._bootstrap(preferredChatId: chatId);
+      } else {
+        await _chatKey.currentState?._bootstrap();
+      }
+      return;
+    }
+
+    final String targetId = item.data['preset_id']?.toString() ?? '';
+    if (targetId.isEmpty) return;
+    final post = await _repository.fetchFeedPostById(targetId);
+    if (!mounted) return;
+    if (post != null) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _PresetDetailPage(initialPost: post),
+        ),
+      );
+      return;
+    }
+    final collection = await _repository.fetchCollectionById(targetId);
+    if (!mounted || collection == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _CollectionDetailPage(
+          collectionId: collection.summary.id,
+          initialSummary: collection.summary,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openHeaderNotifications() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      showDragHandle: true,
+      builder: (context) {
+        final cs = Theme.of(context).colorScheme;
+        if (_headerNotifications.isEmpty) {
+          return SizedBox(
+            height: 260,
+            child: Center(
+              child: Text(
+                'No notifications yet.',
+                style: TextStyle(color: cs.onSurfaceVariant),
+              ),
+            ),
+          );
+        }
+        return SizedBox(
+          height: 460,
+          child: ListView.separated(
+            itemCount: _headerNotifications.length,
+            separatorBuilder: (_, __) =>
+                Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
+            itemBuilder: (context, index) {
+              final item = _headerNotifications[index];
+              final actor = item.actorUserId == null
+                  ? null
+                  : _notificationActors[item.actorUserId!];
+              final bool isMessage =
+                  (item.data['type']?.toString() ?? '') == 'chat_message';
+              final String title = isMessage
+                  ? (item.title.isNotEmpty
+                      ? item.title
+                      : 'New message from ${actor?.displayName ?? 'User'}')
+                  : (item.kind == 'mention'
+                      ? '${actor?.displayName ?? 'Someone'} mentioned you'
+                      : item.title);
+              final String body = item.body.isNotEmpty
+                  ? item.body
+                  : (item.data['preset_title']?.toString() ?? '');
+              return ListTile(
+                leading: CircleAvatar(
+                  radius: 16,
+                  backgroundImage:
+                      actor?.avatarUrl != null && actor!.avatarUrl!.isNotEmpty
+                          ? NetworkImage(actor.avatarUrl!)
+                          : null,
+                  child: actor?.avatarUrl == null || actor!.avatarUrl!.isEmpty
+                      ? const Icon(Icons.person, size: 14)
+                      : null,
+                ),
+                title: Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: item.read ? FontWeight.w500 : FontWeight.w700,
+                  ),
+                ),
+                subtitle: body.isEmpty ? null : Text(body, maxLines: 2),
+                trailing: item.read
+                    ? null
+                    : const Icon(Icons.fiber_manual_record, size: 10),
+                onTap: () async {
+                  final navigator = Navigator.of(context);
+                  await _markNotificationReadLocal(item);
+                  if (!mounted) return;
+                  navigator.pop();
+                  await _openNotificationTarget(item);
+                  if (!mounted) return;
+                  await _loadHeaderNotifications();
+                },
+              );
+            },
+          ),
+        );
+      },
+    );
   }
 
   void _syncTrackerCursorHover() {
@@ -195,12 +376,12 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     if (_trackerNavHover && insideHysteresis) {
       final Duration elapsed =
           DateTime.now().difference(_lastTrackerHoverInsideAt);
-      if (elapsed.inMilliseconds < 160) {
+      if (elapsed.inMilliseconds < 220) {
         return;
       }
     }
     _trackerNavDebounce?.cancel();
-    _trackerNavDebounce = Timer(const Duration(milliseconds: 90), () {
+    _trackerNavDebounce = Timer(const Duration(milliseconds: 130), () {
       if (!mounted) return;
       _setTrackerNavHover(false);
     });
@@ -219,7 +400,10 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   }
 
   void _syncNavExpanded() {
-    final bool next = _realNavHover || _trackerNavHover;
+    final tracking = TrackingService.instance;
+    final bool trackerHoverActive =
+        tracking.trackerEnabled && tracking.dartCursorEnabled && _trackerNavHover;
+    final bool next = _realNavHover || trackerHoverActive;
     if (_navExpanded == next) return;
     if (!mounted) return;
     setState(() => _navExpanded = next);
@@ -280,7 +464,21 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     }
   }
 
-  Widget _buildActiveTab(double topInset) {
+  double _topInsetForTab(_ShellTab tab) {
+    switch (tab) {
+      case _ShellTab.home:
+      case _ShellTab.collection:
+        return _feedTopPadding;
+      case _ShellTab.post:
+      case _ShellTab.chat:
+      case _ShellTab.profile:
+      case _ShellTab.settings:
+        return _tabContentTopPadding;
+    }
+  }
+
+  Widget _buildActiveTab() {
+    final topInset = _topInsetForTab(_activeTab);
     switch (_activeTab) {
       case _ShellTab.home:
         return _HomeFeedTab(
@@ -322,6 +520,8 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     final String headerTitle = _activeTab == _ShellTab.home
         ? (swapHomeTitle ? 'Home' : 'DeepX')
         : _title;
+    final int unreadNotifications =
+        _headerNotifications.where((n) => !n.read).length;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -397,7 +597,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
             child: SafeArea(
               child: Stack(
                 children: [
-                  Positioned.fill(child: _buildActiveTab(_tabTopPadding)),
+                  Positioned.fill(child: _buildActiveTab()),
                   Positioned(
                     top: 0,
                     left: 0,
@@ -407,38 +607,56 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                         height: _headerHeight,
                         child: Stack(
                           children: [
-                            Positioned.fill(
-                              child: ShaderMask(
-                                shaderCallback: (Rect rect) {
-                                  return const LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: <Color>[
-                                      Colors.white,
-                                      Colors.transparent,
-                                    ],
-                                  ).createShader(rect);
-                                },
-                                blendMode: BlendMode.dstIn,
-                                child: BackdropFilter(
-                                  filter:
-                                      ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                                  child: Container(
-                                    color: Colors.black.withValues(alpha: 0.6),
-                                  ),
+                            Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              height: _headerHeight * 0.55,
+                              child: BackdropFilter(
+                                filter:
+                                    ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+                                child: ColoredBox(
+                                  color: Colors.black.withValues(alpha: 0.6),
                                 ),
                               ),
                             ),
+                            Positioned(
+                              top: _headerHeight * 0.55,
+                              left: 0,
+                              right: 0,
+                              height: _headerHeight * 0.32,
+                              child: BackdropFilter(
+                                filter:
+                                    ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                                child: ColoredBox(
+                                  color: Colors.black.withValues(alpha: 0.24),
+                                ),
+                              ),
+                            ),
+                            const Positioned(
+                              top: _headerHeight * 0.87,
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              child: ColoredBox(
+                                color: Colors.transparent,
+                              ),
+                            ),
                             Positioned.fill(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: <Color>[
-                                      Colors.black.withValues(alpha: 0.6),
-                                      Colors.transparent,
-                                    ],
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.black.withValues(alpha: 0.6),
+                                        Colors.black.withValues(alpha: 0.26),
+                                        Colors.black.withValues(alpha: 0.06),
+                                        Colors.transparent,
+                                      ],
+                                      stops: const [0, 0.48, 0.82, 1],
+                                    ),
                                   ),
                                 ),
                               ),
@@ -523,6 +741,33 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                     FilledButton.tonal(
                                       onPressed: () => _promptSignIn(),
                                       child: const Text('Sign In'),
+                                    ),
+                                  if (_currentProfile != null)
+                                    Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Notifications',
+                                          onPressed: _openHeaderNotifications,
+                                          icon: Icon(
+                                            Icons.notifications_outlined,
+                                            color: headerTitleColor,
+                                          ),
+                                        ),
+                                        if (unreadNotifications > 0)
+                                          Positioned(
+                                            right: 8,
+                                            top: 8,
+                                            child: Container(
+                                              width: 8,
+                                              height: 8,
+                                              decoration: const BoxDecoration(
+                                                color: Colors.redAccent,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   IconButton(
                                     tooltip: 'Reload',
@@ -1164,63 +1409,62 @@ class _CollectionFeedTile extends StatelessWidget {
             Positioned.fill(
               child: ClipRRect(
                 borderRadius: cardRadius,
-                child: Material(
-                  color: cs.surfaceContainerLow,
-                  child: Stack(
-                    children: [
-                      if (isMine)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: PopupMenuButton<String>(
-                            tooltip: 'Collection actions',
-                            color: cs.surfaceContainerHighest,
-                            onSelected: (value) {
-                              if (value == 'update') onUpdate?.call();
-                              if (value == 'visibility') {
-                                onToggleVisibility?.call();
-                              }
-                              if (value == 'delete') onDelete?.call();
-                            },
-                            itemBuilder: (context) => [
-                              const PopupMenuItem<String>(
-                                value: 'update',
-                                child: Text('Update'),
+                child: Stack(
+                  children: [
+                    if (isMine)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: PopupMenuButton<String>(
+                          tooltip: 'Collection actions',
+                          color: cs.surfaceContainerHighest,
+                          onSelected: (value) {
+                            if (value == 'update') onUpdate?.call();
+                            if (value == 'visibility') {
+                              onToggleVisibility?.call();
+                            }
+                            if (value == 'delete') onDelete?.call();
+                          },
+                          itemBuilder: (context) => [
+                            const PopupMenuItem<String>(
+                              value: 'update',
+                              child: Text('Update'),
+                            ),
+                            PopupMenuItem<String>(
+                              value: 'visibility',
+                              child: Text(
+                                summary.published
+                                    ? 'Make Private'
+                                    : 'Make Public',
                               ),
-                              PopupMenuItem<String>(
-                                value: 'visibility',
-                                child: Text(
-                                  summary.published
-                                      ? 'Make Private'
-                                      : 'Make Public',
-                                ),
-                              ),
-                              const PopupMenuItem<String>(
-                                value: 'delete',
-                                child: Text('Delete'),
-                              ),
-                            ],
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(999),
-                              child: BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                                child: Container(
-                                  padding: const EdgeInsets.all(6),
-                                  color: Colors.black.withValues(alpha: 0.35),
-                                  child: const Icon(
-                                    Icons.more_vert,
-                                    color: Colors.white,
-                                    size: 18,
-                                  ),
+                            ),
+                            const PopupMenuItem<String>(
+                              value: 'delete',
+                              child: Text('Delete'),
+                            ),
+                          ],
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: BackdropFilter(
+                              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                color: Colors.black.withValues(alpha: 0.35),
+                                child: const Icon(
+                                  Icons.more_vert,
+                                  color: Colors.white,
+                                  size: 18,
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
+                      ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: IgnorePointer(
                         child: Container(
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
@@ -1276,8 +1520,8 @@ class _CollectionFeedTile extends StatelessWidget {
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1543,32 +1787,21 @@ class _GridPresetPreview extends StatelessWidget {
           ),
         ),
         if (hasOutside)
-          Positioned.fill(
+          Positioned(
+            left: -50,
+            right: -50,
+            top: -50,
+            bottom: -50,
             child: IgnorePointer(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final double width = constraints.maxWidth * 1.25;
-                  final double height = constraints.maxHeight * 1.25;
-                  return OverflowBox(
-                    alignment: Alignment.center,
-                    minWidth: width,
-                    minHeight: height,
-                    maxWidth: width,
-                    maxHeight: height,
-                    child: SizedBox(
-                      width: width,
-                      height: height,
-                      child: PresetViewer(
-                        mode: adapted.mode,
-                        payload: outsidePayload,
-                        cleanView: true,
-                        embedded: true,
-                        disableAudio: true,
-                        useGlobalTracking: true,
-                      ),
-                    ),
-                  );
-                },
+              child: ClipRect(
+                child: PresetViewer(
+                  mode: adapted.mode,
+                  payload: outsidePayload,
+                  cleanView: true,
+                  embedded: true,
+                  disableAudio: true,
+                  useGlobalTracking: true,
+                ),
               ),
             ),
           ),
@@ -2333,6 +2566,7 @@ class _PostStudioTab extends StatefulWidget {
 }
 
 class _PostStudioTabState extends State<_PostStudioTab> {
+  final AppRepository _repository = AppRepository.instance;
   final TextEditingController _collectionNameController =
       TextEditingController(text: 'My Collection');
 
@@ -2420,8 +2654,9 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   }
 
   Future<void> _publishCollection() async {
+    final messenger = ScaffoldMessenger.of(context);
     if (_draftItems.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(content: Text('Add at least one preset to publish.')),
       );
       return;
@@ -2452,7 +2687,15 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       });
     }
     if (result == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      await _resetEditorDraftState();
+      if (!mounted) return;
+      setState(() {
+        _collectionId = null;
+        _selectedItemIndex = -1;
+        _draftItems.clear();
+        _editorSeed++;
+      });
+      messenger.showSnackBar(
         const SnackBar(content: Text('Collection published successfully.')),
       );
     }
@@ -2462,6 +2705,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     required String name,
     required Map<String, dynamic> payload,
   }) async {
+    final messenger = ScaffoldMessenger.of(context);
     if (_openingComposer) return;
     setState(() {
       _openingComposer = true;
@@ -2484,7 +2728,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       });
     }
     if (result == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      await _resetEditorDraftState();
+      if (!mounted) return;
+      setState(() {
+        _selectedItemIndex = -1;
+        _editorSeed++;
+      });
+      messenger.showSnackBar(
         const SnackBar(content: Text('Post published successfully.')),
       );
     }
@@ -2498,6 +2748,26 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         builder: (_) => _CollectionPreviewPage(items: List.from(_draftItems)),
       ),
     );
+  }
+
+  Future<void> _resetEditorDraftState() async {
+    try {
+      await _repository.upsertModeState(
+        mode: '2d',
+        state: <String, dynamic>{
+          'layers': <String, dynamic>{},
+          'controls': <String, dynamic>{},
+          'selectedAspect': null,
+        },
+      );
+      await _repository.upsertModeState(
+        mode: '3d',
+        state: <String, dynamic>{
+          'scene': <String, dynamic>{},
+          'controls': <String, dynamic>{},
+        },
+      );
+    } catch (_) {}
   }
 
   Widget _buildEditor() {
@@ -2800,24 +3070,23 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
   }
 
   Widget _buildCard(CollectionDraftItem item) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          IgnorePointer(
-            child: PresetViewer(
-              mode: item.mode,
-              payload: item.snapshot,
-              cleanView: true,
-              embedded: true,
-              disableAudio: true,
-            ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        IgnorePointer(
+          child: PresetViewer(
+            mode: item.mode,
+            payload: item.snapshot,
+            cleanView: true,
+            embedded: true,
+            disableAudio: true,
           ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: IgnorePointer(
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -2841,22 +3110,52 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final bool hasItems = widget.items.isNotEmpty;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            Positioned.fill(
+              child: hasItems
+                  ? SwipableStack(
+                      controller: _stackController,
+                      itemCount: widget.items.length,
+                      allowVerticalSwipe: true,
+                      onSwipeCompleted: (index, _) {
+                        setState(() {
+                          final int next = index + 1;
+                          final int max = widget.items.length - 1;
+                          _index = next < 0 ? 0 : (next > max ? max : next);
+                        });
+                      },
+                      builder: (context, props) {
+                        if (props.index >= widget.items.length) {
+                          return const SizedBox.shrink();
+                        }
+                        return _buildCard(widget.items[props.index]);
+                      },
+                    )
+                  : Center(
+                      child: Text(
+                        'No items in collection.',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                    ),
+            ),
+            Positioned(
+              top: 10,
+              left: 12,
+              right: 12,
               child: Row(
                 children: [
                   IconButton.filledTonal(
@@ -2864,52 +3163,26 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
                     icon: const Icon(Icons.arrow_back_ios_new_rounded),
                   ),
                   const SizedBox(width: 10),
-                  Text(
-                    'Collection Preview',
-                    style: TextStyle(
-                      color: cs.onSurface,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 18,
+                  IgnorePointer(
+                    child: Text(
+                      'Collection Preview',
+                      style: TextStyle(
+                        color: cs.onSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 18,
+                      ),
                     ),
                   ),
                   const Spacer(),
-                  if (widget.items.isNotEmpty)
-                    Text(
-                      '${_index + 1}/${widget.items.length}',
-                      style: TextStyle(color: cs.onSurfaceVariant),
+                  if (hasItems)
+                    IgnorePointer(
+                      child: Text(
+                        '${_index + 1}/${widget.items.length}',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
                     ),
                 ],
               ),
-            ),
-            Expanded(
-              child: widget.items.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No items in collection.',
-                        style: TextStyle(color: cs.onSurfaceVariant),
-                      ),
-                    )
-                  : Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
-                      child: SwipableStack(
-                        controller: _stackController,
-                        itemCount: widget.items.length,
-                        allowVerticalSwipe: false,
-                        onSwipeCompleted: (index, _) {
-                          setState(() {
-                            final int next = index + 1;
-                            final int max = widget.items.length - 1;
-                            _index = next < 0 ? 0 : (next > max ? max : next);
-                          });
-                        },
-                        builder: (context, props) {
-                          if (props.index >= widget.items.length) {
-                            return const SizedBox.shrink();
-                          }
-                          return _buildCard(widget.items[props.index]);
-                        },
-                      ),
-                    ),
             ),
           ],
         ),
@@ -3098,24 +3371,23 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   }
 
   Widget _buildCard(CollectionItemSnapshot item) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          IgnorePointer(
-            child: PresetViewer(
-              mode: item.mode,
-              payload: item.snapshot,
-              cleanView: true,
-              embedded: true,
-              disableAudio: true,
-            ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        IgnorePointer(
+          child: PresetViewer(
+            mode: item.mode,
+            payload: item.snapshot,
+            cleanView: true,
+            embedded: true,
+            disableAudio: true,
           ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: IgnorePointer(
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -3139,8 +3411,8 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -3152,10 +3424,59 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            Positioned.fill(
+              child: Builder(
+                builder: (context) {
+                  if (_loading) {
+                    return Center(
+                      child: CircularProgressIndicator(color: cs.primary),
+                    );
+                  }
+                  if (_error != null) {
+                    return Center(
+                      child: Text(
+                        _error!,
+                        style: TextStyle(color: cs.error),
+                        textAlign: TextAlign.center,
+                      ),
+                    );
+                  }
+                  final detail = _detail;
+                  if (detail == null || detail.items.isEmpty) {
+                    return Center(
+                      child: Text(
+                        'Collection is empty.',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                    );
+                  }
+                  return SwipableStack(
+                    controller: _stackController,
+                    itemCount: detail.items.length,
+                    allowVerticalSwipe: true,
+                    onSwipeCompleted: (index, _) {
+                      setState(() {
+                        final int next = index + 1;
+                        final int max = detail.items.length - 1;
+                        _index = next < 0 ? 0 : (next > max ? max : next);
+                      });
+                    },
+                    builder: (context, props) {
+                      if (props.index >= detail.items.length) {
+                        return const SizedBox.shrink();
+                      }
+                      return _buildCard(detail.items[props.index]);
+                    },
+                  );
+                },
+              ),
+            ),
+            Positioned(
+              top: 10,
+              left: 12,
+              right: 12,
               child: Row(
                 children: [
                   IconButton.filledTonal(
@@ -3164,34 +3485,38 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          summary?.name ?? 'Collection',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: cs.onSurface,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 18,
+                    child: IgnorePointer(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            summary?.name ?? 'Collection',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: cs.onSurface,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 18,
+                            ),
                           ),
-                        ),
-                        Text(
-                          summary?.author?.displayName ?? 'Unknown creator',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: cs.onSurfaceVariant),
-                        ),
-                      ],
+                          Text(
+                            summary?.author?.displayName ?? 'Unknown creator',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: cs.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   if (_detail != null && _detail!.items.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
-                      child: Text(
-                        '${_index + 1}/${_detail!.items.length}',
-                        style: TextStyle(color: cs.onSurfaceVariant),
+                      child: IgnorePointer(
+                        child: Text(
+                          '${_index + 1}/${_detail!.items.length}',
+                          style: TextStyle(color: cs.onSurfaceVariant),
+                        ),
                       ),
                     ),
                   if (_mine)
@@ -3225,62 +3550,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                         color: cs.onSurfaceVariant,
                       ),
                     ),
-                  if (_detail != null && _detail!.items.isNotEmpty && !_mine)
-                    Text(
-                      '${_index + 1}/${_detail!.items.length}',
-                      style: TextStyle(color: cs.onSurfaceVariant),
-                    ),
                 ],
-              ),
-            ),
-            Expanded(
-              child: Builder(
-                builder: (context) {
-                  if (_loading) {
-                    return Center(
-                      child: CircularProgressIndicator(color: cs.primary),
-                    );
-                  }
-                  if (_error != null) {
-                    return Center(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: cs.error),
-                        textAlign: TextAlign.center,
-                      ),
-                    );
-                  }
-                  final detail = _detail;
-                  if (detail == null || detail.items.isEmpty) {
-                    return Center(
-                      child: Text(
-                        'Collection is empty.',
-                        style: TextStyle(color: cs.onSurfaceVariant),
-                      ),
-                    );
-                  }
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
-                    child: SwipableStack(
-                      controller: _stackController,
-                      itemCount: detail.items.length,
-                      allowVerticalSwipe: false,
-                      onSwipeCompleted: (index, _) {
-                        setState(() {
-                          final int next = index + 1;
-                          final int max = detail.items.length - 1;
-                          _index = next < 0 ? 0 : (next > max ? max : next);
-                        });
-                      },
-                      builder: (context, props) {
-                        if (props.index >= detail.items.length) {
-                          return const SizedBox.shrink();
-                        }
-                        return _buildCard(detail.items[props.index]);
-                      },
-                    ),
-                  );
-                },
               ),
             ),
           ],
@@ -3317,7 +3587,6 @@ class _ProfileTabState extends State<_ProfileTab> {
   List<RenderPreset> _saved = const <RenderPreset>[];
   List<RenderPreset> _posts = const <RenderPreset>[];
   List<RenderPreset> _history = const <RenderPreset>[];
-  List<NotificationItem> _notifications = const <NotificationItem>[];
 
   @override
   void initState() {
@@ -3335,7 +3604,6 @@ class _ProfileTabState extends State<_ProfileTab> {
     final saved = await _repository.fetchSavedPresetsForCurrentUser();
     final posts = await _repository.fetchUserPosts(user.id);
     final history = await _repository.fetchHistoryPresetsForCurrentUser();
-    final notifications = await _repository.fetchNotifications(limit: 80);
 
     if (!mounted) return;
     setState(() {
@@ -3344,77 +3612,8 @@ class _ProfileTabState extends State<_ProfileTab> {
       _saved = saved;
       _posts = posts;
       _history = history;
-      _notifications = notifications;
       _loading = false;
     });
-  }
-
-  Future<void> _openNotifications() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      showDragHandle: true,
-      builder: (context) {
-        final cs = Theme.of(context).colorScheme;
-        if (_notifications.isEmpty) {
-          return SizedBox(
-            height: 280,
-            child: Center(
-              child: Text(
-                'No notifications yet.',
-                style: TextStyle(color: cs.onSurfaceVariant),
-              ),
-            ),
-          );
-        }
-        return SizedBox(
-          height: 420,
-          child: ListView.separated(
-            itemCount: _notifications.length,
-            separatorBuilder: (_, __) =>
-                Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
-            itemBuilder: (context, index) {
-              final item = _notifications[index];
-              return ListTile(
-                title: Text(
-                  item.title,
-                  style: TextStyle(
-                    fontWeight: item.read ? FontWeight.w500 : FontWeight.w700,
-                  ),
-                ),
-                subtitle: Text(item.body),
-                trailing: item.read
-                    ? null
-                    : const Icon(Icons.fiber_manual_record, size: 10),
-                onTap: () async {
-                  if (!item.read) {
-                    await _repository.markNotificationRead(item.id, read: true);
-                    if (!mounted) return;
-                    setState(() {
-                      _notifications = _notifications
-                          .map((n) => n.id == item.id
-                              ? NotificationItem(
-                                  id: n.id,
-                                  userId: n.userId,
-                                  actorUserId: n.actorUserId,
-                                  kind: n.kind,
-                                  title: n.title,
-                                  body: n.body,
-                                  data: n.data,
-                                  read: true,
-                                  createdAt: n.createdAt,
-                                )
-                              : n)
-                          .toList();
-                    });
-                  }
-                },
-              );
-            },
-          ),
-        );
-      },
-    );
   }
 
   Future<void> _openPost(RenderPreset preset) async {
@@ -3590,29 +3789,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              IconButton.filledTonal(
-                                onPressed: _openNotifications,
-                                icon: const Icon(Icons.notifications_outlined),
-                              ),
-                              if (_notifications.any((n) => !n.read))
-                                Positioned(
-                                  right: 3,
-                                  top: 3,
-                                  child: Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: const BoxDecoration(
-                                      color: Colors.redAccent,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
                           FilledButton.tonal(
                             onPressed: _editProfile,
                             child: const Text('Edit Profile'),
@@ -4874,7 +5050,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
 
   bool _submitting = false;
   bool _isPublic = true;
+  bool _showPublishStep = false;
   int _thumbnailIndex = 0;
+  String? _selected2dLayerKey;
   late String _thumbnailMode;
   late Map<String, dynamic> _thumbnailPayload;
 
@@ -4917,6 +5095,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       }
     }
     _ensure3DWindowLayerDefaults();
+    _ensure2DLayerSelection();
     _mentionController.addListener(_onMentionQueryChanged);
   }
 
@@ -5003,24 +5182,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       _thumbnailMode = item.mode;
       _thumbnailPayload = item.snapshot;
       _ensure3DWindowLayerDefaults();
-    });
-  }
-
-  Future<void> _openThumbnailEditor() async {
-    final Map<String, dynamic>? payload =
-        await Navigator.push<Map<String, dynamic>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => _ThumbnailEditorPage(
-          mode: _thumbnailMode,
-          payload: _thumbnailPayload,
-        ),
-      ),
-    );
-    if (payload == null || !mounted) return;
-    setState(() {
-      _thumbnailPayload = payload;
-      _ensure3DWindowLayerDefaults();
+      _ensure2DLayerSelection();
     });
   }
 
@@ -5076,6 +5238,89 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       ..['scene'] = scene;
   }
 
+  void _ensure2DLayerSelection() {
+    if (_thumbnailMode != '2d') {
+      _selected2dLayerKey = null;
+      return;
+    }
+    final Map<String, dynamic> scene = _thumbnail2DScene();
+    if (scene.isEmpty) {
+      _selected2dLayerKey = null;
+      return;
+    }
+    if (_selected2dLayerKey != null && scene.containsKey(_selected2dLayerKey)) {
+      return;
+    }
+    final List<String> keys = scene.entries
+        .where((e) => e.value is Map<String, dynamic> || e.value is Map)
+        .map((e) => e.key.toString())
+        .where((name) => name != 'turning_point')
+        .toList();
+    _selected2dLayerKey = keys.isEmpty ? null : keys.first;
+  }
+
+  Map<String, dynamic> _thumbnail2DScene() {
+    final dynamic rawScene = _thumbnailPayload['scene'];
+    if (rawScene is Map<String, dynamic>) return Map<String, dynamic>.from(rawScene);
+    if (rawScene is Map) return Map<String, dynamic>.from(rawScene);
+    return <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _thumbnailControls() {
+    final dynamic raw = _thumbnailPayload['controls'];
+    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return <String, dynamic>{};
+  }
+
+  List<String> _thumbnail2DLayerKeys() {
+    final scene = _thumbnail2DScene();
+    final keys = scene.entries
+        .where((e) => e.value is Map<String, dynamic> || e.value is Map)
+        .map((e) => e.key.toString())
+        .where((name) => name != 'turning_point')
+        .toList();
+    keys.sort((a, b) {
+      final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
+      final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
+      return aOrder.compareTo(bOrder);
+    });
+    return keys;
+  }
+
+  Map<String, dynamic>? _selected2DLayerMap() {
+    final key = _selected2dLayerKey;
+    if (key == null) return null;
+    final scene = _thumbnail2DScene();
+    final raw = scene[key];
+    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return null;
+  }
+
+  void _set2DLayerField(String key, String field, dynamic value) {
+    final scene = _thumbnail2DScene();
+    final raw = scene[key];
+    if (raw is! Map) return;
+    final layer = Map<String, dynamic>.from(raw);
+    layer[field] = value;
+    scene[key] = layer;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+      _ensure2DLayerSelection();
+    });
+  }
+
+  void _set2DControlField(String field, dynamic value) {
+    final controls = _thumbnailControls();
+    controls[field] = value;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['controls'] = controls;
+    });
+  }
+
   List<Map<String, dynamic>> _thumbnailModels() {
     final dynamic sceneRaw = _thumbnailPayload['scene'];
     if (sceneRaw is! Map) return const <Map<String, dynamic>>[];
@@ -5126,6 +5371,11 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final String name = (map['name'] ?? map['id'] ?? '').toString().trim();
     if (name.isNotEmpty) return name;
     return '$fallback ${index + 1}';
+  }
+
+  double _toDouble(dynamic value, double fallback) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? fallback;
   }
 
   Widget _build3DWindowLayerPanel(BuildContext context) {
@@ -5261,6 +5511,196 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               );
             }),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _build2DCardEditorPanel(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final List<String> keys = _thumbnail2DLayerKeys();
+    final Map<String, dynamic>? selected = _selected2DLayerMap();
+    final controls = _thumbnailControls();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '2D Card Editor',
+            style: TextStyle(
+              color: cs.onSurface,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Edit layer order, visibility, position, scale, and global scene controls.',
+            style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          if (keys.isEmpty)
+            Text(
+              'No editable layers found in this preset.',
+              style: TextStyle(color: cs.onSurfaceVariant),
+            )
+          else ...[
+            Container(
+              constraints: const BoxConstraints(maxHeight: 220),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.14)),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: keys.length,
+                separatorBuilder: (_, __) =>
+                    Divider(height: 1, color: cs.outline.withValues(alpha: 0.14)),
+                itemBuilder: (context, index) {
+                  final key = keys[index];
+                  final layerMap = _thumbnail2DScene()[key];
+                  final bool visible = !(layerMap is Map && layerMap['isVisible'] == false);
+                  final bool selectedLayer = key == _selected2dLayerKey;
+                  return ListTile(
+                    dense: true,
+                    selected: selectedLayer,
+                    selectedTileColor: cs.primary.withValues(alpha: 0.14),
+                    title: Text(
+                      key,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Switch(
+                      value: visible,
+                      onChanged: (value) => _set2DLayerField(
+                        key,
+                        'isVisible',
+                        value,
+                      ),
+                    ),
+                    onTap: () => setState(() => _selected2dLayerKey = key),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (selected != null) ...[
+              Text(
+                'Layer: ${_selected2dLayerKey ?? ''}',
+                style: TextStyle(
+                  color: cs.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              _composerSlider(
+                label: 'X Position',
+                min: -1500,
+                max: 1500,
+                value: _toDouble(selected['x'], 0),
+                onChanged: (v) => _set2DLayerField(_selected2dLayerKey!, 'x', v),
+              ),
+              _composerSlider(
+                label: 'Y Position',
+                min: -1500,
+                max: 1500,
+                value: _toDouble(selected['y'], 0),
+                onChanged: (v) => _set2DLayerField(_selected2dLayerKey!, 'y', v),
+              ),
+              _composerSlider(
+                label: 'Scale',
+                min: 0.05,
+                max: 6,
+                value: _toDouble(selected['scale'], 1),
+                onChanged: (v) =>
+                    _set2DLayerField(_selected2dLayerKey!, 'scale', v),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              'Scene Controls',
+              style: TextStyle(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            _composerSlider(
+              label: 'Global Scale',
+              min: 0.5,
+              max: 2.5,
+              value: _toDouble(controls['scale'], 1.2),
+              onChanged: (v) => _set2DControlField('scale', v),
+            ),
+            _composerSlider(
+              label: 'Global Depth',
+              min: 0,
+              max: 1,
+              value: _toDouble(controls['depth'], 0.1),
+              onChanged: (v) => _set2DControlField('depth', v),
+            ),
+            _composerSlider(
+              label: 'Global Shift',
+              min: 0,
+              max: 1,
+              value: _toDouble(controls['shift'], 0.025),
+              onChanged: (v) => _set2DControlField('shift', v),
+            ),
+            _composerSlider(
+              label: 'Global Tilt',
+              min: 0,
+              max: 1,
+              value: _toDouble(controls['tilt'], 0),
+              onChanged: (v) => _set2DControlField('tilt', v),
+            ),
+            _composerSlider(
+              label: 'Dead Zone X',
+              min: 0,
+              max: 0.1,
+              value: _toDouble(controls['deadZoneX'], 0),
+              onChanged: (v) => _set2DControlField('deadZoneX', v),
+            ),
+            _composerSlider(
+              label: 'Dead Zone Y',
+              min: 0,
+              max: 0.1,
+              value: _toDouble(controls['deadZoneY'], 0),
+              onChanged: (v) => _set2DControlField('deadZoneY', v),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _composerSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double> onChanged,
+  }) {
+    final double clamped = value.clamp(min, max).toDouble();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$label: ${clamped.toStringAsFixed(3)}'),
+          Slider(
+            value: clamped,
+            min: min,
+            max: max,
+            onChanged: onChanged,
+          ),
         ],
       ),
     );
@@ -5464,10 +5904,26 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                   const SizedBox(height: 8),
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: FilledButton.tonalIcon(
-                      onPressed: _openThumbnailEditor,
-                      icon: const Icon(Icons.tune),
-                      label: const Text('Edit Thumbnail in Full Editor'),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (!_showPublishStep)
+                          FilledButton.icon(
+                            onPressed: () {
+                              setState(() => _showPublishStep = true);
+                            },
+                            icon: const Icon(Icons.arrow_forward_rounded),
+                            label: const Text('Save & Next'),
+                          )
+                        else
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              setState(() => _showPublishStep = false);
+                            },
+                            icon: const Icon(Icons.arrow_back_rounded),
+                            label: const Text('Back to Editing'),
+                          ),
+                      ],
                     ),
                   ),
                 ],
@@ -5486,198 +5942,169 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  TextField(
-                    controller: _titleController,
-                    decoration: const InputDecoration(
-                      labelText: 'Title',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _descriptionController,
-                    maxLines: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'Description',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _tagsController,
-                    decoration: const InputDecoration(
-                      labelText: 'Tags',
-                      hintText: '#parallax #fyp',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _mentionController,
-                    decoration: const InputDecoration(
-                      labelText: 'Mention',
-                      hintText: '@username',
-                    ),
-                  ),
-                  if (_mentionLoading)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8),
-                      child: LinearProgressIndicator(),
-                    ),
-                  if (_mentionResults.isNotEmpty)
-                    Container(
-                      margin: const EdgeInsets.only(top: 8),
-                      decoration: BoxDecoration(
-                        color: cs.surfaceContainerLow,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: cs.outline.withValues(alpha: 0.2),
-                        ),
-                      ),
-                      constraints: const BoxConstraints(maxHeight: 220),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: _mentionResults.length,
-                        itemBuilder: (context, index) {
-                          final user = _mentionResults[index];
-                          return ListTile(
-                            dense: true,
-                            title: Text(user.displayName),
-                            subtitle: Text(user.email),
-                            onTap: () => _addMention(user),
-                          );
-                        },
+                  if (!_showPublishStep) ...[
+                    Text(
+                      'Card Editing',
+                      style: TextStyle(
+                        color: cs.onSurface,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  if (_selectedMentionIds.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: _selectedMentionIds.map((id) {
-                          final profile = _selectedMentionProfiles[id];
-                          final label = profile != null
-                              ? '@${profile.username ?? profile.displayName}'
-                              : '@${id.substring(0, math.min(8, id.length))}';
-                          return InputChip(
-                            label: Text(label),
-                            onDeleted: () => _removeMention(id),
-                          );
-                        }).toList(),
-                      ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Adjust the 16:9 card preview first, then continue to metadata and publish.',
+                      style: TextStyle(color: cs.onSurfaceVariant),
                     ),
-                  if (_thumbnailMode == '3d') _build3DWindowLayerPanel(context),
-                  const SizedBox(height: 14),
-                  SegmentedButton<bool>(
-                    segments: const [
-                      ButtonSegment<bool>(
-                        value: true,
-                        label: Text('Public'),
-                      ),
-                      ButtonSegment<bool>(
-                        value: false,
-                        label: Text('Private'),
-                      ),
-                    ],
-                    selected: <bool>{_isPublic},
-                    onSelectionChanged: (values) {
-                      setState(() => _isPublic = values.first);
-                    },
-                  ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _submitting
-                              ? null
-                              : () => Navigator.pop(context, false),
-                          child: const Text('Cancel'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: _submitting ? null : _submit,
-                          child: Text(
-                            _submitting
-                                ? 'Working...'
-                                : widget.isEdit
-                                    ? 'Update'
-                                    : 'Publish',
+                    const SizedBox(height: 12),
+                    if (_thumbnailMode == '3d')
+                      _build3DWindowLayerPanel(context)
+                    else
+                      _build2DCardEditorPanel(context),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('Cancel'),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () =>
+                                setState(() => _showPublishStep = true),
+                            icon: const Icon(Icons.arrow_forward_rounded),
+                            label: const Text('Save & Next'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else ...[
+                    TextField(
+                      controller: _titleController,
+                      decoration: const InputDecoration(
+                        labelText: 'Title',
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _descriptionController,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText: 'Description',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _tagsController,
+                      decoration: const InputDecoration(
+                        labelText: 'Tags',
+                        hintText: '#parallax #fyp',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _mentionController,
+                      decoration: const InputDecoration(
+                        labelText: 'Mention',
+                        hintText: '@username',
+                      ),
+                    ),
+                    if (_mentionLoading)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: LinearProgressIndicator(),
+                      ),
+                    if (_mentionResults.isNotEmpty)
+                      Container(
+                        margin: const EdgeInsets.only(top: 8),
+                        decoration: BoxDecoration(
+                          color: cs.surfaceContainerLow,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: cs.outline.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        constraints: const BoxConstraints(maxHeight: 220),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: _mentionResults.length,
+                          itemBuilder: (context, index) {
+                            final user = _mentionResults[index];
+                            return ListTile(
+                              dense: true,
+                              title: Text(user.displayName),
+                              subtitle: Text(user.email),
+                              onTap: () => _addMention(user),
+                            );
+                          },
+                        ),
+                      ),
+                    if (_selectedMentionIds.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: _selectedMentionIds.map((id) {
+                            final profile = _selectedMentionProfiles[id];
+                            final label = profile != null
+                                ? '@${profile.username ?? profile.displayName}'
+                                : '@${id.substring(0, math.min(8, id.length))}';
+                            return InputChip(
+                              label: Text(label),
+                              onDeleted: () => _removeMention(id),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    const SizedBox(height: 14),
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment<bool>(
+                          value: true,
+                          label: Text('Public'),
+                        ),
+                        ButtonSegment<bool>(
+                          value: false,
+                          label: Text('Private'),
+                        ),
+                      ],
+                      selected: <bool>{_isPublic},
+                      onSelectionChanged: (values) {
+                        setState(() => _isPublic = values.first);
+                      },
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _submitting
+                                ? null
+                                : () => Navigator.pop(context, false),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: _submitting ? null : _submit,
+                            child: Text(
+                              _submitting
+                                  ? 'Working...'
+                                  : widget.isEdit
+                                      ? 'Update'
+                                      : 'Publish',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ThumbnailEditorPage extends StatelessWidget {
-  const _ThumbnailEditorPage({
-    required this.mode,
-    required this.payload,
-  });
-
-  final String mode;
-  final Map<String, dynamic> payload;
-
-  @override
-  Widget build(BuildContext context) {
-    final Widget editor = mode == '2d'
-        ? LayerMode(
-            embedded: true,
-            embeddedStudio: true,
-            useGlobalTracking: true,
-            persistPresets: false,
-            initialPresetPayload: payload,
-            onPresetSaved: (name, updatedPayload) {
-              Navigator.pop(context, updatedPayload);
-            },
-          )
-        : Engine3DPage(
-            embedded: true,
-            embeddedStudio: true,
-            useGlobalTracking: true,
-            persistPresets: false,
-            disableAudio: true,
-            initialPresetPayload: payload,
-            onPresetSaved: (name, updatedPayload) {
-              Navigator.pop(context, updatedPayload);
-            },
-          );
-
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      appBar: AppBar(
-        title: const Text('Thumbnail Editor'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          Positioned.fill(child: editor),
-          Positioned(
-            left: 16,
-            bottom: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Text(
-                'Use Save Preset inside editor to apply thumbnail changes.',
-                style: TextStyle(color: Colors.white),
               ),
             ),
           ),
@@ -5742,6 +6169,7 @@ class _SettingsTabState extends State<_SettingsTab> {
         _trackerEnabled = prefs['trackerEnabled'] ?? true;
         _trackerUiVisible = prefs['trackerUiVisible'] ?? false;
         _trackerConfig = config;
+        _cursorEnabled = config.dartCursorEnabled;
         _prefsLoading = false;
       });
       TrackingService.instance.setRuntimeConfig(config);
@@ -5763,11 +6191,18 @@ class _SettingsTabState extends State<_SettingsTab> {
 
   void _setCursorEnabled(bool value) {
     setState(() => _cursorEnabled = value);
-    TrackingService.instance.setDartCursorEnabled(value);
+    unawaited(
+      _updateTrackerConfig(
+        _trackerConfig.copyWith(dartCursorEnabled: value),
+      ),
+    );
   }
 
   Future<void> _updateTrackerConfig(TrackerRuntimeConfig next) async {
-    setState(() => _trackerConfig = next);
+    setState(() {
+      _trackerConfig = next;
+      _cursorEnabled = next.dartCursorEnabled;
+    });
     TrackingService.instance.setRuntimeConfig(next);
     await _repository.updateTrackerRuntimeConfigForCurrentUser(next);
   }
@@ -5947,6 +6382,26 @@ class _SettingsTabState extends State<_SettingsTab> {
                       : null,
                 ),
                 const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _trackerConfig.inputSource,
+                  decoration: const InputDecoration(
+                    labelText: 'Input Source',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'local', child: Text('Local')),
+                    DropdownMenuItem(value: 'remote', child: Text('Remote')),
+                  ],
+                  onChanged: _trackerEnabled
+                      ? (value) {
+                          if (value == null) return;
+                          _updateTrackerConfig(
+                            _trackerConfig.copyWith(inputSource: value),
+                          );
+                        }
+                      : null,
+                ),
+                const SizedBox(height: 10),
                 SwitchListTile(
                   value: _trackerConfig.showCursor,
                   title: const Text('Tracker Internal Cursor'),
@@ -5956,6 +6411,18 @@ class _SettingsTabState extends State<_SettingsTab> {
                   onChanged: _trackerEnabled
                       ? (value) => _updateTrackerConfig(
                             _trackerConfig.copyWith(showCursor: value),
+                          )
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.mouseTracking,
+                  title: const Text('Mouse Tracking'),
+                  subtitle: const Text(
+                    'Enable cursor steering from real mouse deltas for diagnostics.',
+                  ),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(mouseTracking: value),
                           )
                       : null,
                 ),
@@ -6275,6 +6742,79 @@ class _SettingsTabState extends State<_SettingsTab> {
                             _trackerConfig.copyWith(
                               handTrackingConfidence: v,
                             ),
+                          )
+                      : null,
+                ),
+                _settingsSectionTitle('Remote Stream Flags'),
+                SwitchListTile(
+                  value: _trackerConfig.sendIris,
+                  title: const Text('Send Iris'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sendIris: value),
+                          )
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.sendNose,
+                  title: const Text('Send Nose'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sendNose: value),
+                          )
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.sendYawPitch,
+                  title: const Text('Send Yaw/Pitch'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sendYawPitch: value),
+                          )
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.sendFingertips,
+                  title: const Text('Send Fingertips'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sendFingertips: value),
+                          )
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.sendFullFace,
+                  title: const Text('Send Full Face'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sendFullFace: value),
+                          )
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.sendFullHand,
+                  title: const Text('Send Full Hand'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sendFullHand: value),
+                          )
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.sendAll,
+                  title: const Text('Send All'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sendAll: value),
+                          )
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.sendNone,
+                  title: const Text('Send None'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(sendNone: value),
                           )
                       : null,
                 ),

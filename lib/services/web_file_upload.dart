@@ -32,6 +32,7 @@ Future<PickedDeviceFile?> pickDeviceFile({
 
   final Completer<PickedDeviceFile?> completer = Completer<PickedDeviceFile?>();
   StreamSubscription<html.Event>? changeSub;
+  StreamSubscription<html.Event>? inputSub;
   StreamSubscription<html.Event>? focusSub;
   bool didReceiveChange = false;
   Timer? focusCancelTimer;
@@ -63,7 +64,15 @@ Future<PickedDeviceFile?> pickDeviceFile({
     await loadEndSub.cancel();
     await errorSub.cancel();
 
-    if (result is! ByteBuffer) {
+    Uint8List? bytes;
+    if (result is ByteBuffer) {
+      bytes = Uint8List.view(result);
+    } else if (result is Uint8List) {
+      bytes = result;
+    } else if (result is List<int>) {
+      bytes = Uint8List.fromList(result);
+    }
+    if (bytes == null || bytes.isEmpty) {
       await completeOnce(null);
       return;
     }
@@ -72,13 +81,12 @@ Future<PickedDeviceFile?> pickDeviceFile({
       PickedDeviceFile(
         name: file.name,
         contentType: file.type.isEmpty ? 'application/octet-stream' : file.type,
-        bytes: Uint8List.view(result),
+        bytes: bytes,
       ),
     );
   }
 
-  changeSub = input.onChange.listen((_) async {
-    didReceiveChange = true;
+  Future<void> tryReadSelection() async {
     final html.File? file = (input.files != null && input.files!.isNotEmpty)
         ? input.files!.first
         : null;
@@ -87,19 +95,49 @@ Future<PickedDeviceFile?> pickDeviceFile({
       return;
     }
     await readFile(file);
+  }
+
+  changeSub = input.onChange.listen((_) async {
+    didReceiveChange = true;
+    focusCancelTimer?.cancel();
+    await tryReadSelection();
+  });
+
+  inputSub = input.onInput.listen((_) async {
+    if (didReceiveChange) return;
+    if (completer.isCompleted) return;
+    if (input.files == null || input.files!.isEmpty) return;
+    didReceiveChange = true;
+    focusCancelTimer?.cancel();
+    await tryReadSelection();
   });
 
   focusSub = html.window.onFocus.listen((_) {
     focusCancelTimer?.cancel();
-    focusCancelTimer = Timer(const Duration(milliseconds: 900), () async {
+    focusCancelTimer = Timer(const Duration(milliseconds: 2800), () async {
       if (completer.isCompleted) return;
       final hasSelection = input.files != null && input.files!.isNotEmpty;
-      if (!didReceiveChange && !hasSelection) {
+      if (hasSelection) {
+        didReceiveChange = true;
+        await tryReadSelection();
+        return;
+      }
+      if (!didReceiveChange) {
+        // Browsers can lag file selection propagation after focus returns.
+        await Future<void>.delayed(const Duration(milliseconds: 450));
+        if (completer.isCompleted) return;
+        final retryHasSelection = input.files != null && input.files!.isNotEmpty;
+        if (retryHasSelection) {
+          didReceiveChange = true;
+          await tryReadSelection();
+          return;
+        }
         await completeOnce(null);
       }
     });
   });
 
+  input.value = '';
   input.click();
 
   PickedDeviceFile? result;
@@ -109,6 +147,7 @@ Future<PickedDeviceFile?> pickDeviceFile({
   } finally {
     focusCancelTimer?.cancel();
     await changeSub.cancel();
+    await inputSub.cancel();
     await focusSub.cancel();
     input.remove();
   }

@@ -18,6 +18,7 @@ class WindowEffect2DPreview extends StatelessWidget {
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
+  static const double _outsideOverflowMax = 50;
 
   @override
   Widget build(BuildContext context) {
@@ -44,15 +45,16 @@ class WindowEffect2DPreview extends StatelessWidget {
             final List<Widget> outside = <Widget>[];
             for (final layer in layers) {
               if (!layer.visible || layer.name == 'turning_point') continue;
+              final bool isOutside =
+                  !layer.isRect && layer.order > turningOrder;
               final Widget item = _buildLayer(
                 layer: layer,
                 frame: frame,
                 controls: controls,
                 turningOrder: turningOrder,
                 canvasSize: size,
+                isOutsideLayer: isOutside,
               );
-              final bool isOutside =
-                  !layer.isRect && layer.order > turningOrder;
               if (isOutside) {
                 outside.add(item);
               } else {
@@ -75,12 +77,18 @@ class WindowEffect2DPreview extends StatelessWidget {
                   ),
                 ),
                 if (outside.isNotEmpty)
-                  Positioned.fill(
+                  Positioned(
+                    left: -_outsideOverflowMax,
+                    right: -_outsideOverflowMax,
+                    top: -_outsideOverflowMax,
+                    bottom: -_outsideOverflowMax,
                     child: IgnorePointer(
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        fit: StackFit.expand,
-                        children: outside,
+                      child: ClipRect(
+                        child: Stack(
+                          clipBehavior: Clip.hardEdge,
+                          fit: StackFit.expand,
+                          children: outside,
+                        ),
                       ),
                     ),
                   ),
@@ -98,6 +106,7 @@ class WindowEffect2DPreview extends StatelessWidget {
     required _PreviewControls controls,
     required double turningOrder,
     required Size canvasSize,
+    required bool isOutsideLayer,
   }) {
     if (layer.isRect) {
       final double barHeight = _calcBarHeight(
@@ -145,6 +154,22 @@ class WindowEffect2DPreview extends StatelessWidget {
                 layer.y)
             .clamp(layer.minY, layer.maxY)
         : layer.y;
+    final double shiftScale = _responsiveShiftScale(
+      canvasSize: canvasSize,
+      selectedAspect: controls.selectedAspect,
+    );
+    final double adjustedShiftX =
+        (shiftX * shiftScale).clamp(-3000.0, 3000.0).toDouble();
+    final double adjustedShiftY =
+        (shiftY * shiftScale).clamp(-3000.0, 3000.0).toDouble();
+    final double boundedShiftX = isOutsideLayer
+        ? adjustedShiftX.clamp(-_outsideOverflowMax, _outsideOverflowMax)
+            .toDouble()
+        : adjustedShiftX;
+    final double boundedShiftY = isOutsideLayer
+        ? adjustedShiftY.clamp(-_outsideOverflowMax, _outsideOverflowMax)
+            .toDouble()
+        : adjustedShiftY;
 
     final double deltaZ = (frame.headZ - controls.zBase) / controls.zBase;
     final double zoomFactor = deltaZ *
@@ -191,14 +216,17 @@ class WindowEffect2DPreview extends StatelessWidget {
             scale: scale,
             alignment: Alignment.center,
             child: Transform.translate(
-              offset: Offset(shiftX, shiftY),
-              child: OverflowBox(
-                maxWidth: double.infinity,
-                maxHeight: double.infinity,
-                alignment: Alignment.center,
-                child: layer.isText
-                    ? _buildTextLayer(layer)
-                    : _buildImageLayer(layer),
+              offset: Offset(boundedShiftX, boundedShiftY),
+              child: SizedBox.expand(
+                child: Center(
+                  child: layer.isText
+                      ? _buildTextLayer(layer)
+                      : _buildImageLayer(
+                          layer,
+                          canvasSize: canvasSize,
+                          isOutsideLayer: isOutsideLayer,
+                        ),
+                ),
               ),
             ),
           ),
@@ -261,13 +289,24 @@ class WindowEffect2DPreview extends StatelessWidget {
     );
   }
 
-  Widget _buildImageLayer(_LayerNode layer) {
+  Widget _buildImageLayer(
+    _LayerNode layer, {
+    required Size canvasSize,
+    required bool isOutsideLayer,
+  }) {
     if (layer.url == null || layer.url!.isEmpty) {
       return const SizedBox.shrink();
     }
+    final double extra = isOutsideLayer ? _outsideOverflowMax * 2 : 0;
+    final double width = (canvasSize.width + extra).clamp(1, 100000).toDouble();
+    final double height =
+        (canvasSize.height + extra).clamp(1, 100000).toDouble();
     return Image.network(
       layer.url!,
-      fit: BoxFit.none,
+      width: width,
+      height: height,
+      fit: BoxFit.contain,
+      alignment: Alignment.center,
       filterQuality: FilterQuality.low,
       gaplessPlayback: true,
       errorBuilder: (_, __, ___) => const SizedBox.shrink(),
@@ -323,6 +362,29 @@ class WindowEffect2DPreview extends StatelessWidget {
     final double contentHeight = canvasSize.width / aspect;
     if (contentHeight >= canvasSize.height) return 0;
     return (canvasSize.height - contentHeight) / 2;
+  }
+
+  static double _responsiveShiftScale({
+    required Size canvasSize,
+    required String? selectedAspect,
+  }) {
+    double targetAspect = 16 / 9;
+    if (selectedAspect != null && selectedAspect.isNotEmpty) {
+      final String ratioLabel = selectedAspect.split(' ').first;
+      final List<String> parts = ratioLabel.split(':');
+      if (parts.length == 2) {
+        final double? a = double.tryParse(parts[0]);
+        final double? b = double.tryParse(parts[1]);
+        if (a != null && b != null && b != 0) {
+          targetAspect = a / b;
+        }
+      }
+    }
+    final double baseWidth = targetAspect >= 1 ? 1280 : 720;
+    final double baseHeight = baseWidth / targetAspect;
+    final double scaleX = canvasSize.width / baseWidth;
+    final double scaleY = canvasSize.height / baseHeight;
+    return math.min(scaleX, scaleY).clamp(0.1, 1.0);
   }
 }
 

@@ -1,6 +1,7 @@
 class TrackerRuntimeConfig {
   const TrackerRuntimeConfig({
     required this.cursorMode,
+    required this.inputSource,
     required this.perfMode,
     required this.sensitivityX,
     required this.sensitivityY,
@@ -30,10 +31,21 @@ class TrackerRuntimeConfig {
     required this.handTransY,
     required this.handDetectionConfidence,
     required this.handTrackingConfidence,
+    required this.mouseTracking,
+    required this.sendIris,
+    required this.sendNose,
+    required this.sendYawPitch,
+    required this.sendFingertips,
+    required this.sendFullFace,
+    required this.sendFullHand,
+    required this.sendAll,
+    required this.sendNone,
     required this.showCursor,
+    required this.dartCursorEnabled,
   });
 
   final String cursorMode;
+  final String inputSource;
   final String perfMode;
   final double sensitivityX;
   final double sensitivityY;
@@ -63,10 +75,21 @@ class TrackerRuntimeConfig {
   final double handTransY;
   final double handDetectionConfidence;
   final double handTrackingConfidence;
+  final bool mouseTracking;
+  final bool sendIris;
+  final bool sendNose;
+  final bool sendYawPitch;
+  final bool sendFingertips;
+  final bool sendFullFace;
+  final bool sendFullHand;
+  final bool sendAll;
+  final bool sendNone;
   final bool showCursor;
+  final bool dartCursorEnabled;
 
   static const TrackerRuntimeConfig defaults = TrackerRuntimeConfig(
     cursorMode: 'head',
+    inputSource: 'local',
     perfMode: 'medium',
     sensitivityX: 100.0,
     sensitivityY: 100.0,
@@ -96,13 +119,24 @@ class TrackerRuntimeConfig {
     handTransY: 0.001,
     handDetectionConfidence: 0.75,
     handTrackingConfidence: 0.75,
+    mouseTracking: false,
+    sendIris: true,
+    sendNose: true,
+    sendYawPitch: true,
+    sendFingertips: true,
+    sendFullFace: false,
+    sendFullHand: false,
+    sendAll: true,
+    sendNone: false,
     showCursor: true,
+    dartCursorEnabled: true,
   );
 
   factory TrackerRuntimeConfig.fromMap(Map<String, dynamic>? map) {
     if (map == null || map.isEmpty) return defaults;
     return TrackerRuntimeConfig(
       cursorMode: _mode(map['cursorMode']),
+      inputSource: _inputSource(map['inputSource']),
       perfMode: _perfMode(map['perfMode']),
       sensitivityX: _toDouble(map['sensitivityX'], defaults.sensitivityX),
       sensitivityY: _toDouble(map['sensitivityY'], defaults.sensitivityY),
@@ -143,13 +177,24 @@ class TrackerRuntimeConfig {
         map['handTrackingConfidence'],
         defaults.handTrackingConfidence,
       ),
+      mouseTracking: map['mouseTracking'] == true,
+      sendIris: map['sendIris'] != false,
+      sendNose: map['sendNose'] != false,
+      sendYawPitch: map['sendYawPitch'] != false,
+      sendFingertips: map['sendFingertips'] != false,
+      sendFullFace: map['sendFullFace'] == true,
+      sendFullHand: map['sendFullHand'] == true,
+      sendAll: map['sendAll'] != false,
+      sendNone: map['sendNone'] == true,
       showCursor: map['showCursor'] != false,
+      dartCursorEnabled: map['dartCursorEnabled'] != false,
     );
   }
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
       'cursorMode': cursorMode,
+      'inputSource': inputSource,
       'perfMode': perfMode,
       'sensitivityX': sensitivityX,
       'sensitivityY': sensitivityY,
@@ -179,12 +224,23 @@ class TrackerRuntimeConfig {
       'handTransY': handTransY,
       'handDetectionConfidence': handDetectionConfidence,
       'handTrackingConfidence': handTrackingConfidence,
+      'mouseTracking': mouseTracking,
+      'sendIris': sendIris,
+      'sendNose': sendNose,
+      'sendYawPitch': sendYawPitch,
+      'sendFingertips': sendFingertips,
+      'sendFullFace': sendFullFace,
+      'sendFullHand': sendFullHand,
+      'sendAll': sendAll,
+      'sendNone': sendNone,
       'showCursor': showCursor,
+      'dartCursorEnabled': dartCursorEnabled,
     };
   }
 
   TrackerRuntimeConfig copyWith({
     String? cursorMode,
+    String? inputSource,
     String? perfMode,
     double? sensitivityX,
     double? sensitivityY,
@@ -214,10 +270,21 @@ class TrackerRuntimeConfig {
     double? handTransY,
     double? handDetectionConfidence,
     double? handTrackingConfidence,
+    bool? mouseTracking,
+    bool? sendIris,
+    bool? sendNose,
+    bool? sendYawPitch,
+    bool? sendFingertips,
+    bool? sendFullFace,
+    bool? sendFullHand,
+    bool? sendAll,
+    bool? sendNone,
     bool? showCursor,
+    bool? dartCursorEnabled,
   }) {
     return TrackerRuntimeConfig(
       cursorMode: cursorMode ?? this.cursorMode,
+      inputSource: inputSource ?? this.inputSource,
       perfMode: perfMode ?? this.perfMode,
       sensitivityX: sensitivityX ?? this.sensitivityX,
       sensitivityY: sensitivityY ?? this.sensitivityY,
@@ -249,7 +316,17 @@ class TrackerRuntimeConfig {
           handDetectionConfidence ?? this.handDetectionConfidence,
       handTrackingConfidence:
           handTrackingConfidence ?? this.handTrackingConfidence,
+      mouseTracking: mouseTracking ?? this.mouseTracking,
+      sendIris: sendIris ?? this.sendIris,
+      sendNose: sendNose ?? this.sendNose,
+      sendYawPitch: sendYawPitch ?? this.sendYawPitch,
+      sendFingertips: sendFingertips ?? this.sendFingertips,
+      sendFullFace: sendFullFace ?? this.sendFullFace,
+      sendFullHand: sendFullHand ?? this.sendFullHand,
+      sendAll: sendAll ?? this.sendAll,
+      sendNone: sendNone ?? this.sendNone,
       showCursor: showCursor ?? this.showCursor,
+      dartCursorEnabled: dartCursorEnabled ?? this.dartCursorEnabled,
     );
   }
 
@@ -267,6 +344,14 @@ class TrackerRuntimeConfig {
       return value!;
     }
     return defaults.perfMode;
+  }
+
+  static String _inputSource(dynamic raw) {
+    final value = raw?.toString().toLowerCase();
+    if (value == 'local' || value == 'remote') {
+      return value!;
+    }
+    return defaults.inputSource;
   }
 
   static double _toDouble(dynamic raw, double fallback) {

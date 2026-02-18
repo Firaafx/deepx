@@ -615,6 +615,12 @@ class AppRepository {
     return map;
   }
 
+  Future<Map<String, AppUserProfile>> fetchProfilesByIds(
+    Iterable<String> ids,
+  ) async {
+    return _fetchProfilesByIds(ids.where((id) => id.trim().isNotEmpty).toSet());
+  }
+
   Future<Map<String, Map<String, dynamic>>> _fetchPresetStatsByIds(
     Set<String> ids,
   ) async {
@@ -1128,6 +1134,45 @@ class AppRepository {
     await _client.from('chats').update(<String, dynamic>{
       'updated_at': DateTime.now().toUtc().toIso8601String()
     }).eq('id', chatId);
+
+    try {
+      final List<dynamic> memberRows = await _client
+          .from('chat_members')
+          .select('user_id')
+          .eq('chat_id', chatId);
+      final Set<String> targets = memberRows
+          .map((dynamic row) => (row as Map)['user_id']?.toString() ?? '')
+          .where((String id) => id.isNotEmpty && id != user.id)
+          .toSet();
+      if (targets.isNotEmpty) {
+        final senderProfile = await ensureCurrentProfile();
+        final String senderName =
+            senderProfile?.displayName ?? user.email ?? 'User';
+        final String preview =
+            trimmed.isNotEmpty ? trimmed : 'Shared a preset with you';
+        final rows = targets
+            .map(
+              (target) => <String, dynamic>{
+                'user_id': target,
+                'actor_user_id': user.id,
+                'kind': 'system',
+                'title': 'New message from $senderName',
+                'body': preview,
+                'data': <String, dynamic>{
+                  'type': 'chat_message',
+                  'chat_id': chatId,
+                  'sender_id': user.id,
+                  'preview': preview,
+                  if (sharedPresetId != null) 'shared_preset_id': sharedPresetId,
+                },
+              },
+            )
+            .toList();
+        await _client.from('notifications').insert(rows);
+      }
+    } catch (_) {
+      // Never block chat delivery because notification fanout failed.
+    }
   }
 
   Future<String> createOrGetDirectChat(String otherUserId) async {
