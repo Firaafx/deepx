@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:collection/collection.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -24,7 +27,6 @@ import 'services/app_repository.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
 import 'widgets/preset_viewer.dart';
-import 'widgets/window_effect_2d_preview.dart';
 
 enum _ShellTab {
   home,
@@ -57,10 +59,12 @@ class ShowFeedPage extends StatefulWidget {
     super.key,
     this.themeMode = 'dark',
     this.onThemeModeChanged,
+    this.initialTab = 'home',
   });
 
   final String themeMode;
   final ValueChanged<String>? onThemeModeChanged;
+  final String initialTab;
 
   @override
   State<ShowFeedPage> createState() => _ShowFeedPageState();
@@ -111,9 +115,51 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
 
   bool get _isGuest => _repository.currentUser == null;
 
+  _ShellTab _tabFromSegment(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'home':
+        return _ShellTab.home;
+      case 'collection':
+        return _ShellTab.collection;
+      case 'post':
+        return _ShellTab.post;
+      case 'chat':
+        return _ShellTab.chat;
+      case 'profile':
+        return _ShellTab.profile;
+      case 'settings':
+        return _ShellTab.settings;
+      default:
+        return _ShellTab.home;
+    }
+  }
+
+  String _segmentForTab(_ShellTab tab) {
+    switch (tab) {
+      case _ShellTab.home:
+        return 'home';
+      case _ShellTab.collection:
+        return 'collection';
+      case _ShellTab.post:
+        return 'post';
+      case _ShellTab.chat:
+        return 'chat';
+      case _ShellTab.profile:
+        return 'profile';
+      case _ShellTab.settings:
+        return 'settings';
+    }
+  }
+
+  String _pathForTab(_ShellTab tab) => '/feed/${_segmentForTab(tab)}';
+
   @override
   void initState() {
     super.initState();
+    _activeTab = _tabFromSegment(widget.initialTab);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      TrackingService.instance.remapHeadBaselineToCurrentFrame();
+    });
     _loadProfile();
     _loadHeaderNotifications();
     _trackerNavListener = _syncTrackerCursorHover;
@@ -122,6 +168,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
 
   @override
   void dispose() {
+    debugPrint('Disposing ShowFeedPage(tab=${_activeTab.name})');
     _trackerNavDebounce?.cancel();
     final listener = _trackerNavListener;
     if (listener != null) {
@@ -225,12 +272,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     final String type = (item.data['type']?.toString() ?? '').toLowerCase();
     if (type == 'chat_message') {
       await _switchTab(_ShellTab.chat);
-      final String chatId = item.data['chat_id']?.toString() ?? '';
-      if (chatId.isNotEmpty) {
-        await _chatKey.currentState?._bootstrap(preferredChatId: chatId);
-      } else {
-        await _chatKey.currentState?._bootstrap();
-      }
       return;
     }
 
@@ -346,6 +387,11 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
       _setTrackerNavHover(false);
       return;
     }
+    if (!tracking.hasFreshFrame) {
+      _trackerNavDebounce?.cancel();
+      _setTrackerNavHover(false);
+      return;
+    }
     final RenderBox? box =
         _navRegionKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) {
@@ -401,8 +447,9 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
 
   void _syncNavExpanded() {
     final tracking = TrackingService.instance;
-    final bool trackerHoverActive =
-        tracking.trackerEnabled && tracking.dartCursorEnabled && _trackerNavHover;
+    final bool trackerHoverActive = tracking.trackerEnabled &&
+        tracking.dartCursorEnabled &&
+        _trackerNavHover;
     final bool next = _realNavHover || trackerHoverActive;
     if (_navExpanded == next) return;
     if (!mounted) return;
@@ -429,18 +476,16 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
       await _promptSignIn();
       return;
     }
-    setState(() => _activeTab = tab);
-    if (tab == _ShellTab.home) {
-      unawaited(_homeKey.currentState?._loadFeed());
-    } else if (tab == _ShellTab.collection) {
-      unawaited(_collectionKey.currentState?._loadCollections());
-    } else if (tab == _ShellTab.chat) {
-      unawaited(_chatKey.currentState?._bootstrap());
-    } else if (tab == _ShellTab.profile) {
-      unawaited(_profileKey.currentState?._load());
-    } else if (tab == _ShellTab.settings) {
-      unawaited(_loadProfile());
+    if (!mounted) return;
+    final String targetPath = _pathForTab(tab);
+    final String? currentPath = ModalRoute.of(context)?.settings.name;
+    if (currentPath == targetPath) {
+      if (_activeTab != tab) {
+        setState(() => _activeTab = tab);
+      }
+      return;
     }
+    Navigator.pushReplacementNamed(context, targetPath);
   }
 
   void _onScrollableDirection(bool showHeader) {
@@ -597,7 +642,12 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
             child: SafeArea(
               child: Stack(
                 children: [
-                  Positioned.fill(child: _buildActiveTab()),
+                  Positioned.fill(
+                    child: KeyedSubtree(
+                      key: ValueKey<String>('active-tab-${_activeTab.name}'),
+                      child: _buildActiveTab(),
+                    ),
+                  ),
                   Positioned(
                     top: 0,
                     left: 0,
@@ -607,39 +657,9 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                         height: _headerHeight,
                         child: Stack(
                           children: [
-                            Positioned(
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              height: _headerHeight * 0.55,
-                              child: BackdropFilter(
-                                filter:
-                                    ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-                                child: ColoredBox(
-                                  color: Colors.black.withValues(alpha: 0.6),
-                                ),
-                              ),
-                            ),
-                            Positioned(
-                              top: _headerHeight * 0.55,
-                              left: 0,
-                              right: 0,
-                              height: _headerHeight * 0.32,
-                              child: BackdropFilter(
-                                filter:
-                                    ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                                child: ColoredBox(
-                                  color: Colors.black.withValues(alpha: 0.24),
-                                ),
-                              ),
-                            ),
-                            const Positioned(
-                              top: _headerHeight * 0.87,
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
+                            Positioned.fill(
                               child: ColoredBox(
-                                color: Colors.transparent,
+                                color: Colors.black.withValues(alpha: 0.22),
                               ),
                             ),
                             Positioned.fill(
@@ -769,6 +789,15 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                           ),
                                       ],
                                     ),
+                                  IconButton(
+                                    tooltip: 'Recenter Parallax',
+                                    onPressed: () {
+                                      TrackingService.instance
+                                          .remapHeadBaselineToCurrentFrame();
+                                    },
+                                    icon: Icon(Icons.gps_fixed,
+                                        color: headerTitleColor),
+                                  ),
                                   IconButton(
                                     tooltip: 'Reload',
                                     onPressed: _reloadActiveTab,
@@ -1712,11 +1741,13 @@ class _GridPresetPreview extends StatelessWidget {
     required this.mode,
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
+    this.pointerPassthrough = true,
   });
 
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
+  final bool pointerPassthrough;
 
   @override
   Widget build(BuildContext context) {
@@ -1742,10 +1773,17 @@ class _GridPresetPreview extends StatelessWidget {
     }
 
     if (adapted.mode == '2d') {
-      return WindowEffect2DPreview(
-        mode: adapted.mode,
-        payload: adapted.toMap(),
+      return _ScaledCardPresetViewport(
         borderRadius: borderRadius,
+        child: PresetViewer(
+          mode: adapted.mode,
+          payload: adapted.toMap(),
+          cleanView: true,
+          embedded: true,
+          disableAudio: true,
+          useGlobalTracking: true,
+          pointerPassthrough: pointerPassthrough,
+        ),
       );
     }
 
@@ -1762,6 +1800,7 @@ class _GridPresetPreview extends StatelessWidget {
         embedded: true,
         disableAudio: true,
         useGlobalTracking: true,
+        pointerPassthrough: pointerPassthrough,
       );
     }
 
@@ -1784,6 +1823,7 @@ class _GridPresetPreview extends StatelessWidget {
             embedded: true,
             disableAudio: true,
             useGlobalTracking: true,
+            pointerPassthrough: pointerPassthrough,
           ),
         ),
         if (hasOutside)
@@ -1801,6 +1841,7 @@ class _GridPresetPreview extends StatelessWidget {
                   embedded: true,
                   disableAudio: true,
                   useGlobalTracking: true,
+                  pointerPassthrough: pointerPassthrough,
                 ),
               ),
             ),
@@ -1822,6 +1863,14 @@ class _GridPresetPreview extends StatelessWidget {
     if (lights is List) {
       for (final light in lights) {
         if (light is Map && light['windowLayer'] != null) {
+          return true;
+        }
+      }
+    }
+    final audios = scene['audios'];
+    if (audios is List) {
+      for (final audio in audios) {
+        if (audio is Map && audio['windowLayer'] != null) {
           return true;
         }
       }
@@ -1862,8 +1911,35 @@ class _GridPresetPreview extends StatelessWidget {
       }
     }
 
+    final List<Map<String, dynamic>> audios = <Map<String, dynamic>>[];
+    final dynamic audiosRaw = scene['audios'];
+    if (audiosRaw is List) {
+      for (final item in audiosRaw) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final String windowLayer =
+            (map['windowLayer']?.toString().toLowerCase() ?? 'inside');
+        if (windowLayer == layer) {
+          audios.add(map);
+        }
+      }
+    }
+
     next['models'] = models;
     next['lights'] = lights;
+    next['audios'] = audios;
+    final dynamic orderRaw = scene['renderOrder'];
+    if (orderRaw is List) {
+      final available = <String>{
+        ...models.map((e) => 'model:${e['id']}'),
+        ...lights.map((e) => 'light:${e['id']}'),
+        ...audios.map((e) => 'audio:${e['id']}'),
+      };
+      next['renderOrder'] = orderRaw
+          .map((e) => e.toString())
+          .where((token) => available.contains(token))
+          .toList();
+    }
     return next;
   }
 
@@ -1874,7 +1950,60 @@ class _GridPresetPreview extends StatelessWidget {
     if (models is List && models.isNotEmpty) return true;
     final lights = scene['lights'];
     if (lights is List && lights.isNotEmpty) return true;
+    final audios = scene['audios'];
+    if (audios is List && audios.isNotEmpty) return true;
     return false;
+  }
+}
+
+class _ScaledCardPresetViewport extends StatelessWidget {
+  const _ScaledCardPresetViewport({
+    required this.child,
+    required this.borderRadius,
+  });
+
+  final Widget child;
+  final BorderRadius borderRadius;
+  static const Size _virtualCanvas = Size(1920, 1080);
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: ColoredBox(
+        color: Colors.black,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final double width = constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : _virtualCanvas.width;
+            final double height = constraints.maxHeight.isFinite
+                ? constraints.maxHeight
+                : _virtualCanvas.height;
+            final double scale = math.max(
+              width / _virtualCanvas.width,
+              height / _virtualCanvas.height,
+            );
+            final double scaledWidth = _virtualCanvas.width * scale;
+            final double scaledHeight = _virtualCanvas.height * scale;
+            return ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.center,
+                minWidth: scaledWidth,
+                maxWidth: scaledWidth,
+                minHeight: scaledHeight,
+                maxHeight: scaledHeight,
+                child: SizedBox(
+                  width: _virtualCanvas.width,
+                  height: _virtualCanvas.height,
+                  child: child,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }
 
@@ -1920,6 +2049,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   @override
   void initState() {
     super.initState();
+    TrackingService.instance.remapHeadBaselineToCurrentFrame();
     _post = widget.initialPost;
     _loadComments();
   }
@@ -2578,7 +2708,12 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   bool _publishing = false;
   bool _openingComposer = false;
   bool _studioChromeVisible = true;
+  bool _editorFullscreen = false;
+  int _studioReanchorToken = 0;
   Timer? _studioChromeTimer;
+  Map<String, dynamic>? _studioLivePayload;
+  String? _studioSelected2dLayerKey;
+  String? _studioSelected3dToken;
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
 
   @override
@@ -2589,6 +2724,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
 
   @override
   void dispose() {
+    debugPrint('Disposing PostStudioTab');
     _collectionNameController.dispose();
     _studioChromeTimer?.cancel();
     super.dispose();
@@ -2603,6 +2739,75 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       if (!mounted) return;
       setState(() => _studioChromeVisible = false);
     });
+  }
+
+  void _onStudioLivePayloadChanged(Map<String, dynamic> payload) {
+    if (!mounted) return;
+    final Map<String, dynamic> next = _cloneMap(payload);
+    setState(() {
+      _studioLivePayload = next;
+      if (_postTypeIndex == 1 &&
+          _selectedItemIndex >= 0 &&
+          _selectedItemIndex < _draftItems.length) {
+        final item = _draftItems[_selectedItemIndex];
+        _draftItems[_selectedItemIndex] = CollectionDraftItem(
+          mode: _modeIndex == 0 ? '2d' : '3d',
+          name: item.name,
+          snapshot: _cloneMap(next),
+        );
+      }
+    });
+  }
+
+  void _saveCurrentStudioItemToCollection() {
+    final messenger = ScaffoldMessenger.of(context);
+    final payload = _studioLivePayload;
+    if (payload == null || payload.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('No editor state to save yet.')),
+      );
+      return;
+    }
+    final mode = _modeIndex == 0 ? '2d' : '3d';
+    setState(() {
+      if (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length) {
+        final current = _draftItems[_selectedItemIndex];
+        _draftItems[_selectedItemIndex] = CollectionDraftItem(
+          mode: mode,
+          name: current.name,
+          snapshot: payload,
+        );
+      } else {
+        final itemName = '${mode.toUpperCase()} Item ${_draftItems.length + 1}';
+        _draftItems.add(CollectionDraftItem(
+          mode: mode,
+          name: itemName,
+          snapshot: payload,
+        ));
+        _selectedItemIndex = _draftItems.length - 1;
+      }
+    });
+    messenger.showSnackBar(
+      const SnackBar(
+          content: Text('Editor snapshot saved to collection item.')),
+    );
+  }
+
+  Future<void> _openStudioSingleComposer() async {
+    final payload = _studioLivePayload;
+    if (payload == null || payload.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No editor state to compose yet.')),
+      );
+      return;
+    }
+    final now = DateTime.now();
+    final generatedName =
+        'Preset ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    await _openSingleComposer(
+      name: generatedName,
+      payload: payload,
+    );
   }
 
   void _onPresetSaved(String name, Map<String, dynamic> payload) {
@@ -2632,6 +2837,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     setState(() {
       _selectedItemIndex = index;
       _modeIndex = item.mode == '2d' ? 0 : 1;
+      _studioLivePayload = item.snapshot;
       _editorSeed++;
     });
   }
@@ -2642,6 +2848,29 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       if (_selectedItemIndex >= _draftItems.length) {
         _selectedItemIndex = _draftItems.length - 1;
       }
+      if (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length) {
+        _studioLivePayload = _draftItems[_selectedItemIndex].snapshot;
+      } else {
+        _studioLivePayload = null;
+      }
+      _editorSeed++;
+    });
+  }
+
+  void _duplicateCollectionItem(int index) {
+    if (index < 0 || index >= _draftItems.length) return;
+    final source = _draftItems[index];
+    setState(() {
+      _draftItems.insert(
+        index + 1,
+        CollectionDraftItem(
+          mode: source.mode,
+          name: '${source.name} Copy',
+          snapshot: Map<String, dynamic>.from(source.snapshot),
+        ),
+      );
+      _selectedItemIndex = index + 1;
+      _studioLivePayload = _draftItems[_selectedItemIndex].snapshot;
       _editorSeed++;
     });
   }
@@ -2649,6 +2878,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   void _createNewCollectionItem() {
     setState(() {
       _selectedItemIndex = -1;
+      _studioLivePayload = null;
       _editorSeed++;
     });
   }
@@ -2693,6 +2923,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         _collectionId = null;
         _selectedItemIndex = -1;
         _draftItems.clear();
+        _studioLivePayload = null;
         _editorSeed++;
       });
       messenger.showSnackBar(
@@ -2732,6 +2963,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       if (!mounted) return;
       setState(() {
         _selectedItemIndex = -1;
+        _studioLivePayload = null;
         _editorSeed++;
       });
       messenger.showSnackBar(
@@ -2776,6 +3008,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length)
             ? _draftItems[_selectedItemIndex]
             : null;
+    final livePayload = _studioLivePayload;
 
     if (_modeIndex == 0) {
       return LayerMode(
@@ -2784,9 +3017,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         embeddedStudio: true,
         useGlobalTracking: true,
         persistPresets: persistPresets,
-        initialPresetPayload:
-            activeItem?.mode == '2d' ? activeItem!.snapshot : null,
+        initialPresetPayload: _payloadMatchesMode(livePayload, '2d')
+            ? livePayload
+            : (activeItem?.mode == '2d' ? activeItem!.snapshot : null),
         onPresetSaved: _onPresetSaved,
+        onLivePayloadChanged: _onStudioLivePayloadChanged,
+        reanchorToken: _studioReanchorToken,
+        studioSurface: true,
       );
     }
     return Engine3DPage(
@@ -2795,9 +3032,645 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       embeddedStudio: true,
       useGlobalTracking: true,
       persistPresets: persistPresets,
-      initialPresetPayload:
-          activeItem?.mode == '3d' ? activeItem!.snapshot : null,
+      initialPresetPayload: _payloadMatchesMode(livePayload, '3d')
+          ? livePayload
+          : (activeItem?.mode == '3d' ? activeItem!.snapshot : null),
       onPresetSaved: _onPresetSaved,
+      onLivePayloadChanged: _onStudioLivePayloadChanged,
+      reanchorToken: _studioReanchorToken,
+      studioSurface: true,
+    );
+  }
+
+  Map<String, dynamic> _cloneMap(Map<String, dynamic> source) {
+    return jsonDecode(jsonEncode(source)) as Map<String, dynamic>;
+  }
+
+  double _toDouble(dynamic value, double fallback) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  bool _payloadMatchesMode(Map<String, dynamic>? payload, String mode) {
+    if (payload == null) return false;
+    final raw = payload['mode']?.toString().toLowerCase();
+    if (raw == null || raw.isEmpty) return true;
+    return raw == mode;
+  }
+
+  void _applyStudioPayload(Map<String, dynamic> payload,
+      {bool remount = true}) {
+    final mode = _modeIndex == 0 ? '2d' : '3d';
+    setState(() {
+      _studioLivePayload = _cloneMap(payload);
+      if (_postTypeIndex == 1 &&
+          _selectedItemIndex >= 0 &&
+          _selectedItemIndex < _draftItems.length) {
+        final item = _draftItems[_selectedItemIndex];
+        _draftItems[_selectedItemIndex] = CollectionDraftItem(
+          mode: mode,
+          name: item.name,
+          snapshot: _cloneMap(payload),
+        );
+      }
+      if (remount) _editorSeed++;
+    });
+  }
+
+  Map<String, dynamic> _studio2DScene() {
+    final dynamic payload = _studioLivePayload;
+    if (payload is! Map) return <String, dynamic>{};
+    final dynamic raw = payload['scene'];
+    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return <String, dynamic>{};
+  }
+
+  List<String> _studio2DLayerKeys() {
+    final scene = _studio2DScene();
+    final keys = scene.entries
+        .where((e) => e.key != 'turning_point' && e.value is Map)
+        .map((e) => e.key)
+        .toList();
+    keys.sort((a, b) {
+      final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
+      final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
+      return aOrder.compareTo(bOrder);
+    });
+    return keys;
+  }
+
+  void _ensureStudio2DSelection() {
+    final keys = _studio2DLayerKeys();
+    if (keys.isEmpty) {
+      _studioSelected2dLayerKey = null;
+      return;
+    }
+    if (_studioSelected2dLayerKey != null &&
+        keys.contains(_studioSelected2dLayerKey)) {
+      return;
+    }
+    _studioSelected2dLayerKey = keys.first;
+  }
+
+  String _nextStudio2DLayerKey(String prefix, Map<String, dynamic> scene) {
+    int index = 1;
+    while (scene.containsKey('$prefix$index')) {
+      index++;
+    }
+    return '$prefix$index';
+  }
+
+  void _normalizeStudio2DOrder(Map<String, dynamic> scene) {
+    final keys = scene.entries
+        .where((e) => e.key != 'turning_point' && e.value is Map)
+        .map((e) => e.key)
+        .toList();
+    keys.sort((a, b) {
+      final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
+      final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
+      return aOrder.compareTo(bOrder);
+    });
+    for (int i = 0; i < keys.length; i++) {
+      final raw = scene[keys[i]];
+      if (raw is! Map) continue;
+      scene[keys[i]] = Map<String, dynamic>.from(raw)..['order'] = i;
+    }
+  }
+
+  void _studioReorder2DLayer(int oldIndex, int newIndex) {
+    final scene = _studio2DScene();
+    final keys = _studio2DLayerKeys();
+    if (oldIndex < 0 || oldIndex >= keys.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex >= keys.length) return;
+    final moved = keys.removeAt(oldIndex);
+    keys.insert(newIndex, moved);
+    for (int i = 0; i < keys.length; i++) {
+      final raw = scene[keys[i]];
+      if (raw is! Map) continue;
+      scene[keys[i]] = Map<String, dynamic>.from(raw)..['order'] = i;
+    }
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    payload['scene'] = scene;
+    _studioSelected2dLayerKey = moved;
+    _applyStudioPayload(payload);
+  }
+
+  void _studioAdd2DLayer(bool textLayer) {
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio2DScene();
+    _normalizeStudio2DOrder(scene);
+    final key = _nextStudio2DLayerKey(textLayer ? 'text_' : 'layer_', scene);
+    scene[key] = <String, dynamic>{
+      'x': 0.0,
+      'y': 0.0,
+      'scale': 1.0,
+      'order': _studio2DLayerKeys().length,
+      'isVisible': true,
+      'isLocked': false,
+      'isText': textLayer,
+      'canShift': true,
+      'canZoom': true,
+      'canTilt': true,
+      'minScale': 0.1,
+      'maxScale': 5.0,
+      if (textLayer) ...{
+        'textValue': 'New Text',
+        'fontSize': 40.0,
+        'fontFamily': 'Poppins',
+      } else ...{
+        'url': '',
+      },
+    };
+    payload['scene'] = scene;
+    _studioSelected2dLayerKey = key;
+    _applyStudioPayload(payload);
+  }
+
+  void _studioDuplicate2DLayer() {
+    final key = _studioSelected2dLayerKey;
+    if (key == null || key == 'turning_point') return;
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio2DScene();
+    final raw = scene[key];
+    if (raw is! Map) return;
+    _normalizeStudio2DOrder(scene);
+    final copyKey = _nextStudio2DLayerKey('${key}_copy_', scene);
+    final copy = _cloneMap(Map<String, dynamic>.from(raw));
+    copy['order'] = _studio2DLayerKeys().length;
+    scene[copyKey] = copy;
+    payload['scene'] = scene;
+    _studioSelected2dLayerKey = copyKey;
+    _applyStudioPayload(payload);
+  }
+
+  void _studioDelete2DLayer() {
+    final key = _studioSelected2dLayerKey;
+    if (key == null || key == 'turning_point') return;
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio2DScene();
+    scene.remove(key);
+    _normalizeStudio2DOrder(scene);
+    payload['scene'] = scene;
+    final remaining = scene.entries
+        .where((e) => e.key != 'turning_point' && e.value is Map)
+        .map((e) => e.key)
+        .toList()
+      ..sort((a, b) {
+        final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
+        final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
+        return aOrder.compareTo(bOrder);
+      });
+    _studioSelected2dLayerKey = remaining.isEmpty ? null : remaining.first;
+    _applyStudioPayload(payload);
+  }
+
+  void _studioSet2DLayerField(String key, String field, dynamic value) {
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio2DScene();
+    final raw = scene[key];
+    if (raw is! Map) return;
+    scene[key] = Map<String, dynamic>.from(raw)..[field] = value;
+    payload['scene'] = scene;
+    _applyStudioPayload(payload);
+  }
+
+  Map<String, dynamic> _studio3DScene() {
+    final dynamic payload = _studioLivePayload;
+    if (payload is! Map) return <String, dynamic>{};
+    final dynamic raw = payload['scene'];
+    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return <String, dynamic>{};
+  }
+
+  List<String> _studioSceneTokens(Map<String, dynamic> scene) {
+    final List<String> tokens = <String>[];
+    final models = scene['models'];
+    if (models is List) {
+      for (final item in models.whereType<Map>()) {
+        final id = (item['id'] ?? '').toString();
+        if (id.isNotEmpty) tokens.add('model:$id');
+      }
+    }
+    final lights = scene['lights'];
+    if (lights is List) {
+      for (final item in lights.whereType<Map>()) {
+        final id = (item['id'] ?? '').toString();
+        if (id.isNotEmpty) tokens.add('light:$id');
+      }
+    }
+    final audios = scene['audios'];
+    if (audios is List) {
+      for (final item in audios.whereType<Map>()) {
+        final id = (item['id'] ?? '').toString();
+        if (id.isNotEmpty) tokens.add('audio:$id');
+      }
+    }
+    return tokens;
+  }
+
+  List<String> _studioOrdered3DTokens() {
+    final scene = _studio3DScene();
+    final available = _studioSceneTokens(scene);
+    final rawOrder = scene['renderOrder'];
+    final ordered = rawOrder is List
+        ? rawOrder.map((e) => e.toString()).where(available.contains).toList()
+        : <String>[];
+    for (final token in available) {
+      if (!ordered.contains(token)) ordered.add(token);
+    }
+    return ordered;
+  }
+
+  void _studioReorder3DEntity(int oldIndex, int newIndex) {
+    final order = _studioOrdered3DTokens();
+    if (oldIndex < 0 || oldIndex >= order.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex >= order.length) return;
+    final moved = order.removeAt(oldIndex);
+    order.insert(newIndex, moved);
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio3DScene()..['renderOrder'] = order;
+    payload['scene'] = scene;
+    _studioSelected3dToken = moved;
+    _applyStudioPayload(payload);
+  }
+
+  List<Map<String, dynamic>> _studioEntityListForType(
+    Map<String, dynamic> scene,
+    String type,
+  ) {
+    final key = type == 'model'
+        ? 'models'
+        : type == 'light'
+            ? 'lights'
+            : 'audios';
+    final raw = scene[key];
+    if (raw is! List) return <Map<String, dynamic>>[];
+    return raw
+        .map((e) =>
+            e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+        .toList();
+  }
+
+  void _studioSetEntityListForType(
+    Map<String, dynamic> scene,
+    String type,
+    List<Map<String, dynamic>> list,
+  ) {
+    final key = type == 'model'
+        ? 'models'
+        : type == 'light'
+            ? 'lights'
+            : 'audios';
+    scene[key] = list;
+  }
+
+  String _studioNextEntityId(Map<String, dynamic> scene, String type) {
+    final list = _studioEntityListForType(scene, type);
+    int index = 1;
+    while (list.any((e) => (e['id'] ?? '').toString() == '${type}_$index')) {
+      index++;
+    }
+    return '${type}_$index';
+  }
+
+  void _studioAdd3DEntity(String type) {
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio3DScene();
+    final list = _studioEntityListForType(scene, type);
+    final id = _studioNextEntityId(scene, type);
+    if (type == 'model') {
+      list.add(<String, dynamic>{
+        'id': id,
+        'name': 'Model $id',
+        'url': '',
+        'position': <double>[0, 0, 0],
+        'rotation': <double>[0, 0, 0],
+        'scale': <double>[1, 1, 1],
+        'visible': true,
+        'windowLayer': 'inside',
+      });
+    } else if (type == 'light') {
+      list.add(<String, dynamic>{
+        'id': id,
+        'color': 'ffffff',
+        'intensity': 10,
+        'position': <double>[0, 5, 0],
+        'scale': 1,
+        'ghost': false,
+        'windowLayer': 'inside',
+      });
+    } else {
+      list.add(<String, dynamic>{
+        'id': id,
+        'url': '',
+        'volume': 1,
+        'position': <double>[0, 0, 0],
+        'ghost': false,
+        'windowLayer': 'inside',
+      });
+    }
+    _studioSetEntityListForType(scene, type, list);
+    final order = _studioOrdered3DTokens()..add('$type:$id');
+    scene['renderOrder'] = order.toSet().toList();
+    payload['scene'] = scene;
+    _studioSelected3dToken = '$type:$id';
+    _applyStudioPayload(payload);
+  }
+
+  void _studioDuplicate3DEntity(String token) {
+    final parts = token.split(':');
+    if (parts.length != 2) return;
+    final type = parts.first;
+    final id = parts.last;
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio3DScene();
+    final list = _studioEntityListForType(scene, type);
+    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
+    if (index < 0) return;
+    final copy = _cloneMap(list[index]);
+    final newId = _studioNextEntityId(scene, type);
+    copy['id'] = newId;
+    list.insert(index + 1, copy);
+    _studioSetEntityListForType(scene, type, list);
+    final order = _studioOrdered3DTokens();
+    final orderIndex = order.indexOf(token);
+    if (orderIndex >= 0) {
+      order.insert(orderIndex + 1, '$type:$newId');
+    } else {
+      order.add('$type:$newId');
+    }
+    scene['renderOrder'] = order;
+    payload['scene'] = scene;
+    _studioSelected3dToken = '$type:$newId';
+    _applyStudioPayload(payload);
+  }
+
+  void _studioDelete3DEntity(String token) {
+    final parts = token.split(':');
+    if (parts.length != 2) return;
+    final type = parts.first;
+    final id = parts.last;
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio3DScene();
+    final list = _studioEntityListForType(scene, type)
+      ..removeWhere((e) => (e['id'] ?? '').toString() == id);
+    _studioSetEntityListForType(scene, type, list);
+    final order = _studioOrdered3DTokens()..remove(token);
+    scene['renderOrder'] = order;
+    payload['scene'] = scene;
+    if (_studioSelected3dToken == token) {
+      _studioSelected3dToken = order.isEmpty ? null : order.first;
+    }
+    _applyStudioPayload(payload);
+  }
+
+  void _studioSet3DWindowLayer(String token, String layer) {
+    final parts = token.split(':');
+    if (parts.length != 2) return;
+    final type = parts.first;
+    final id = parts.last;
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio3DScene();
+    final list = _studioEntityListForType(scene, type);
+    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
+    if (index < 0) return;
+    list[index] = Map<String, dynamic>.from(list[index])
+      ..['windowLayer'] = layer;
+    _studioSetEntityListForType(scene, type, list);
+    payload['scene'] = scene;
+    _applyStudioPayload(payload);
+  }
+
+  Widget _buildStudioControlsPanel(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    if (_modeIndex == 0) {
+      final keys = _studio2DLayerKeys();
+      _ensureStudio2DSelection();
+      return Container(
+        width: 320,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.58),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+        ),
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('2D Layers',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _studioAdd2DLayer(false),
+                  icon:
+                      const Icon(Icons.add_photo_alternate_outlined, size: 16),
+                  label: const Text('Image'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _studioAdd2DLayer(true),
+                  icon: const Icon(Icons.text_fields, size: 16),
+                  label: const Text('Text'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _studioSelected2dLayerKey == null
+                      ? null
+                      : _studioDuplicate2DLayer,
+                  icon: const Icon(Icons.copy_outlined, size: 16),
+                  label: const Text('Duplicate'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _studioSelected2dLayerKey == null
+                      ? null
+                      : _studioDelete2DLayer,
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Delete'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (keys.isEmpty)
+              const Expanded(child: Center(child: Text('No layers')))
+            else
+              Expanded(
+                child: ReorderableListView.builder(
+                  itemCount: keys.length,
+                  onReorder: _studioReorder2DLayer,
+                  itemBuilder: (context, index) {
+                    final key = keys[index];
+                    final scene = _studio2DScene();
+                    final layer = scene[key];
+                    final visible =
+                        !(layer is Map && layer['isVisible'] == false);
+                    final locked = layer is Map && layer['isLocked'] == true;
+                    return ListTile(
+                      key: ValueKey<String>('studio-2d-$key'),
+                      selected: _studioSelected2dLayerKey == key,
+                      selectedTileColor: cs.primary.withValues(alpha: 0.16),
+                      title: Text(key,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(locked ? 'Locked' : 'Unlocked'),
+                      trailing: SizedBox(
+                        width: 96,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            IconButton(
+                              onPressed: () => _studioSet2DLayerField(
+                                key,
+                                'isVisible',
+                                !visible,
+                              ),
+                              icon: Icon(
+                                visible
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                                size: 18,
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => _studioSet2DLayerField(
+                                key,
+                                'isLocked',
+                                !locked,
+                              ),
+                              icon: Icon(
+                                locked ? Icons.lock_outline : Icons.lock_open,
+                                size: 18,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      onTap: () =>
+                          setState(() => _studioSelected2dLayerKey = key),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final scene = _studio3DScene();
+    final tokens = _studioOrdered3DTokens();
+    if (_studioSelected3dToken == null && tokens.isNotEmpty) {
+      _studioSelected3dToken = tokens.first;
+    }
+    return Container(
+      width: 320,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+      ),
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('3D Entities',
+              style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _studioAdd3DEntity('model'),
+                icon: const Icon(Icons.add_circle_outline, size: 16),
+                label: const Text('Model'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _studioAdd3DEntity('light'),
+                icon: const Icon(Icons.wb_incandescent_outlined, size: 16),
+                label: const Text('Light'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _studioAdd3DEntity('audio'),
+                icon: const Icon(Icons.graphic_eq_outlined, size: 16),
+                label: const Text('Audio'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (tokens.isEmpty)
+            const Expanded(child: Center(child: Text('No entities')))
+          else
+            Expanded(
+              child: ReorderableListView.builder(
+                itemCount: tokens.length,
+                onReorder: _studioReorder3DEntity,
+                itemBuilder: (context, index) {
+                  final token = tokens[index];
+                  final parts = token.split(':');
+                  final type = parts.first;
+                  final id = parts.length > 1 ? parts.last : token;
+                  final list = _studioEntityListForType(scene, type);
+                  final entity = list.firstWhereOrNull(
+                    (e) => (e['id'] ?? '').toString() == id,
+                  );
+                  final layer = (entity?['windowLayer'] ?? 'inside').toString();
+                  final label =
+                      (entity?['name'] ?? entity?['id'] ?? token).toString();
+                  return ListTile(
+                    key: ValueKey<String>('studio-3d-$token'),
+                    selected: _studioSelected3dToken == token,
+                    selectedTileColor: cs.primary.withValues(alpha: 0.16),
+                    title: Text(label,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(type.toUpperCase()),
+                    trailing: SizedBox(
+                      width: 116,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          IconButton(
+                            onPressed: () => _studioDuplicate3DEntity(token),
+                            icon: const Icon(Icons.copy_outlined, size: 18),
+                          ),
+                          IconButton(
+                            onPressed: () => _studioDelete3DEntity(token),
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                          ),
+                          PopupMenuButton<String>(
+                            tooltip: 'Window Layer',
+                            onSelected: (value) =>
+                                _studioSet3DWindowLayer(token, value),
+                            itemBuilder: (context) => const [
+                              PopupMenuItem<String>(
+                                value: 'inside',
+                                child: Text('Inside'),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'outside',
+                                child: Text('Outside'),
+                              ),
+                            ],
+                            icon: Icon(
+                              layer == 'outside'
+                                  ? Icons.open_in_full
+                                  : Icons.filter_center_focus,
+                              size: 18,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    onTap: () => setState(() => _studioSelected3dToken = token),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -2832,7 +3705,19 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                     ],
                     selected: <int>{_modeIndex},
                     onSelectionChanged: (values) {
-                      setState(() => _modeIndex = values.first);
+                      final next = values.first;
+                      setState(() {
+                        _modeIndex = next;
+                        if (_postTypeIndex == 1 &&
+                            _selectedItemIndex >= 0 &&
+                            _selectedItemIndex < _draftItems.length) {
+                          final current = _draftItems[_selectedItemIndex];
+                          _studioLivePayload =
+                              current.mode == (next == 0 ? '2d' : '3d')
+                                  ? current.snapshot
+                                  : null;
+                        }
+                      });
                     },
                   ),
                   const SizedBox(width: 10),
@@ -2860,7 +3745,43 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                         : null,
                   ),
                   const Spacer(),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() => _studioReanchorToken++);
+                      TrackingService.instance
+                          .remapHeadBaselineToCurrentFrame();
+                    },
+                    icon: const Icon(Icons.gps_fixed),
+                    label: const Text('Recenter'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() => _editorFullscreen = !_editorFullscreen);
+                    },
+                    icon: Icon(_editorFullscreen
+                        ? Icons.fullscreen_exit
+                        : Icons.fullscreen),
+                    label: Text(_editorFullscreen ? 'Exit Full' : 'Full'),
+                  ),
+                  const SizedBox(width: 8),
+                  if (!collectionMode)
+                    FilledButton.icon(
+                      onPressed:
+                          (_openingComposer || _studioLivePayload == null)
+                              ? null
+                              : _openStudioSingleComposer,
+                      icon: const Icon(Icons.send_rounded),
+                      label: Text(_openingComposer ? 'Opening...' : 'Compose'),
+                    ),
+                  if (!collectionMode) const SizedBox(width: 8),
                   if (collectionMode) ...[
+                    OutlinedButton.icon(
+                      onPressed: _saveCurrentStudioItemToCollection,
+                      icon: const Icon(Icons.save_outlined),
+                      label: const Text('Save Item'),
+                    ),
+                    const SizedBox(width: 8),
                     OutlinedButton.icon(
                       onPressed: _previewCollection,
                       icon: const Icon(Icons.preview_outlined),
@@ -2922,7 +3843,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           Expanded(
             child: _draftItems.isEmpty
                 ? const Center(
-                    child: Text('Save presets to add them here.'),
+                    child: Text('Use "Save Item" to add current editor state.'),
                   )
                 : ReorderableListView.builder(
                     itemCount: _draftItems.length,
@@ -2952,9 +3873,25 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                               ? Icons.layers_outlined
                               : Icons.view_in_ar_outlined,
                         ),
-                        trailing: IconButton(
-                          onPressed: () => _removeCollectionItem(index),
-                          icon: const Icon(Icons.delete_outline),
+                        trailing: SizedBox(
+                          width: 84,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              IconButton(
+                                tooltip: 'Duplicate',
+                                onPressed: () =>
+                                    _duplicateCollectionItem(index),
+                                icon: const Icon(Icons.copy_outlined, size: 18),
+                              ),
+                              IconButton(
+                                tooltip: 'Delete',
+                                onPressed: () => _removeCollectionItem(index),
+                                icon:
+                                    const Icon(Icons.delete_outline, size: 18),
+                              ),
+                            ],
+                          ),
                         ),
                         onTap: () => _selectCollectionItem(index),
                       );
@@ -2976,17 +3913,38 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           child: Stack(
             children: [
               Positioned.fill(
-                child: Container(
-                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(16),
-                    border:
-                        Border.all(color: cs.outline.withValues(alpha: 0.16)),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: _buildEditor(),
-                ),
+                child: _editorFullscreen
+                    ? Container(
+                        margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(0),
+                          border: Border.all(
+                              color: cs.outline.withValues(alpha: 0.16)),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: _buildEditor(),
+                      )
+                    : Center(
+                        child: Container(
+                          margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                          constraints: const BoxConstraints(maxWidth: 1680),
+                          child: AspectRatio(
+                            aspectRatio: 16 / 9,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: cs.outline.withValues(alpha: 0.16),
+                                ),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: _buildEditor(),
+                            ),
+                          ),
+                        ),
+                      ),
               ),
               Positioned(
                 top: 8,
@@ -3001,7 +3959,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   ),
                 ),
               ),
-              if (collectionMode)
+              if (collectionMode && !_editorFullscreen)
                 Positioned(
                   left: 12,
                   top: 132,
@@ -3019,6 +3977,28 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                         opacity: _studioChromeVisible ? 1 : 0,
                         duration: const Duration(milliseconds: 200),
                         child: collectionManagerPanel,
+                      ),
+                    ),
+                  ),
+                ),
+              if (!_editorFullscreen)
+                Positioned(
+                  right: 12,
+                  top: 132,
+                  bottom: 12,
+                  width: 320,
+                  child: IgnorePointer(
+                    ignoring: !_studioChromeVisible,
+                    child: AnimatedSlide(
+                      offset: _studioChromeVisible
+                          ? Offset.zero
+                          : const Offset(0.08, 0),
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      child: AnimatedOpacity(
+                        opacity: _studioChromeVisible ? 1 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: _buildStudioControlsPanel(context),
                       ),
                     ),
                   ),
@@ -3047,6 +4027,7 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
   @override
   void initState() {
     super.initState();
+    TrackingService.instance.remapHeadBaselineToCurrentFrame();
     _stackController.addListener(_onStackChanged);
   }
 
@@ -3080,6 +4061,7 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
             cleanView: true,
             embedded: true,
             disableAudio: true,
+            pointerPassthrough: true,
           ),
         ),
         Positioned(
@@ -3224,6 +4206,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   @override
   void initState() {
     super.initState();
+    TrackingService.instance.remapHeadBaselineToCurrentFrame();
     _stackController.addListener(_onStackChanged);
     _load();
   }
@@ -3381,6 +4364,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             cleanView: true,
             embedded: true,
             disableAudio: true,
+            pointerPassthrough: true,
           ),
         ),
         Positioned(
@@ -3645,6 +4629,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                     cleanView: true,
                     embedded: true,
                     disableAudio: true,
+                    pointerPassthrough: true,
                   ),
                 ),
                 Positioned(
@@ -4138,6 +5123,7 @@ class _ChatTabState extends State<_ChatTab> {
 
   @override
   void dispose() {
+    debugPrint('Disposing ChatTab');
     _messageController.dispose();
     super.dispose();
   }
@@ -5233,9 +6219,80 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       scene['lights'] = normalized;
     }
 
+    final dynamic audiosRaw = scene['audios'];
+    if (audiosRaw is List) {
+      final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
+      for (int i = 0; i < audiosRaw.length; i++) {
+        final item = audiosRaw[i];
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        if ((map['id']?.toString().trim().isEmpty ?? true)) {
+          map['id'] = 'audio_$i';
+          changed = true;
+        }
+        if ((map['windowLayer']?.toString().isEmpty ?? true)) {
+          map['windowLayer'] = 'inside';
+          changed = true;
+        }
+        normalized.add(map);
+      }
+      scene['audios'] = normalized;
+    }
+
+    final List<String> availableTokens = <String>[
+      ..._sceneEntityTokens(scene),
+    ];
+    final dynamic renderOrderRaw = scene['renderOrder'];
+    final List<String> renderOrder = renderOrderRaw is List
+        ? renderOrderRaw.map((e) => e.toString()).toList()
+        : <String>[];
+    final List<String> sanitized =
+        renderOrder.where((token) => availableTokens.contains(token)).toList();
+    for (final token in availableTokens) {
+      if (!sanitized.contains(token)) {
+        sanitized.add(token);
+      }
+    }
+    if (!const ListEquality<String>().equals(renderOrder, sanitized)) {
+      scene['renderOrder'] = sanitized;
+      changed = true;
+    }
+
     if (!changed) return;
     _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
       ..['scene'] = scene;
+  }
+
+  List<String> _sceneEntityTokens(Map<String, dynamic> scene) {
+    final List<String> tokens = <String>[];
+    final dynamic models = scene['models'];
+    if (models is List) {
+      for (final item in models) {
+        if (item is! Map) continue;
+        final id = (item['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        tokens.add('model:$id');
+      }
+    }
+    final dynamic lights = scene['lights'];
+    if (lights is List) {
+      for (final item in lights) {
+        if (item is! Map) continue;
+        final id = (item['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        tokens.add('light:$id');
+      }
+    }
+    final dynamic audios = scene['audios'];
+    if (audios is List) {
+      for (final item in audios) {
+        if (item is! Map) continue;
+        final id = (item['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        tokens.add('audio:$id');
+      }
+    }
+    return tokens;
   }
 
   void _ensure2DLayerSelection() {
@@ -5261,7 +6318,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
 
   Map<String, dynamic> _thumbnail2DScene() {
     final dynamic rawScene = _thumbnailPayload['scene'];
-    if (rawScene is Map<String, dynamic>) return Map<String, dynamic>.from(rawScene);
+    if (rawScene is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(rawScene);
+    }
     if (rawScene is Map) return Map<String, dynamic>.from(rawScene);
     return <String, dynamic>{};
   }
@@ -5321,56 +6380,393 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     });
   }
 
-  List<Map<String, dynamic>> _thumbnailModels() {
-    final dynamic sceneRaw = _thumbnailPayload['scene'];
-    if (sceneRaw is! Map) return const <Map<String, dynamic>>[];
-    final dynamic modelsRaw = sceneRaw['models'];
-    if (modelsRaw is! List) return const <Map<String, dynamic>>[];
-    return modelsRaw
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-  }
-
-  List<Map<String, dynamic>> _thumbnailLights() {
-    final dynamic sceneRaw = _thumbnailPayload['scene'];
-    if (sceneRaw is! Map) return const <Map<String, dynamic>>[];
-    final dynamic lightsRaw = sceneRaw['lights'];
-    if (lightsRaw is! List) return const <Map<String, dynamic>>[];
-    return lightsRaw
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-  }
-
-  void _set3dWindowLayer({
-    required bool light,
-    required int index,
-    required String layer,
-  }) {
-    if (_thumbnailMode != '3d') return;
-    final dynamic sceneRaw = _thumbnailPayload['scene'];
-    if (sceneRaw is! Map) return;
-    final Map<String, dynamic> scene = Map<String, dynamic>.from(sceneRaw);
-    final String key = light ? 'lights' : 'models';
-    final dynamic listRaw = scene[key];
-    if (listRaw is! List || index < 0 || index >= listRaw.length) return;
-    final List<Map<String, dynamic>> normalized = listRaw
-        .map((e) =>
-            e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
-        .toList();
-    normalized[index]['windowLayer'] = layer;
-    scene[key] = normalized;
+  void _handle2DPreviewPanUpdate(DragUpdateDetails details) {
+    if (_thumbnailMode != '2d') return;
+    final key = _selected2dLayerKey;
+    if (key == null || key == 'turning_point') return;
+    final scene = _thumbnail2DScene();
+    final raw = scene[key];
+    if (raw is! Map) return;
+    final layer = Map<String, dynamic>.from(raw);
+    if (layer['isLocked'] == true) return;
+    final double x = _toDouble(layer['x'], 0) + details.delta.dx;
+    final double y = _toDouble(layer['y'], 0) + details.delta.dy;
+    layer['x'] = x;
+    layer['y'] = y;
+    scene[key] = layer;
     setState(() {
       _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
         ..['scene'] = scene;
     });
   }
 
-  String _labelForNode(Map<String, dynamic> map, int index, String fallback) {
-    final String name = (map['name'] ?? map['id'] ?? '').toString().trim();
-    if (name.isNotEmpty) return name;
-    return '$fallback ${index + 1}';
+  void _handle2DPreviewPointerSignal(PointerSignalEvent event) {
+    if (_thumbnailMode != '2d' || event is! PointerScrollEvent) return;
+    final key = _selected2dLayerKey;
+    if (key == null || key == 'turning_point') return;
+    final scene = _thumbnail2DScene();
+    final raw = scene[key];
+    if (raw is! Map) return;
+    final layer = Map<String, dynamic>.from(raw);
+    if (layer['isLocked'] == true) return;
+    final double current = _toDouble(layer['scale'], 1);
+    layer['scale'] = (current - event.scrollDelta.dy / 700).clamp(0.05, 10.0);
+    scene[key] = layer;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+    });
+  }
+
+  String _next2DLayerKey(String prefix) {
+    final scene = _thumbnail2DScene();
+    int index = 1;
+    while (scene.containsKey('$prefix$index')) {
+      index++;
+    }
+    return '$prefix$index';
+  }
+
+  void _normalize2DOrders(Map<String, dynamic> scene) {
+    final keys = scene.entries
+        .where((e) => e.key != 'turning_point' && e.value is Map)
+        .map((e) => e.key)
+        .toList();
+    keys.sort((a, b) {
+      final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
+      final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
+      return aOrder.compareTo(bOrder);
+    });
+    for (int i = 0; i < keys.length; i++) {
+      final raw = scene[keys[i]];
+      if (raw is! Map) continue;
+      final layer = Map<String, dynamic>.from(raw);
+      layer['order'] = i;
+      scene[keys[i]] = layer;
+    }
+  }
+
+  void _reorder2DLayer(int oldIndex, int newIndex) {
+    final scene = _thumbnail2DScene();
+    final keys = _thumbnail2DLayerKeys();
+    if (oldIndex < 0 || oldIndex >= keys.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex >= keys.length) return;
+    final moved = keys.removeAt(oldIndex);
+    keys.insert(newIndex, moved);
+    for (int i = 0; i < keys.length; i++) {
+      final raw = scene[keys[i]];
+      if (raw is! Map) continue;
+      final layer = Map<String, dynamic>.from(raw);
+      layer['order'] = i;
+      scene[keys[i]] = layer;
+    }
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+      _selected2dLayerKey = moved;
+    });
+  }
+
+  void _add2DLayer({required bool textLayer}) {
+    final scene = _thumbnail2DScene();
+    final key = _next2DLayerKey(textLayer ? 'text_' : 'layer_');
+    _normalize2DOrders(scene);
+    final int order = _thumbnail2DLayerKeys().length;
+    final Map<String, dynamic> layer = <String, dynamic>{
+      'x': 0.0,
+      'y': 0.0,
+      'scale': 1.0,
+      'order': order,
+      'isVisible': true,
+      'isLocked': false,
+      'isText': textLayer,
+      'canShift': true,
+      'canZoom': true,
+      'canTilt': true,
+      'minScale': 0.1,
+      'maxScale': 5.0,
+      'minX': -3000.0,
+      'maxX': 3000.0,
+      'minY': -3000.0,
+      'maxY': 3000.0,
+      'shiftSensMult': 1.0,
+      'zoomSensMult': 1.0,
+      if (textLayer) ...{
+        'textValue': 'New Text',
+        'fontSize': 40.0,
+        'fontWeightIndex': 4,
+        'isItalic': false,
+        'shadowBlur': 0.0,
+        'shadowColorHex': '#000000',
+        'strokeWidth': 0.0,
+        'strokeColorHex': '#000000',
+        'textColorHex': '#FFFFFF',
+        'fontFamily': 'Poppins',
+      } else ...{
+        'url': '',
+      },
+    };
+    scene[key] = layer;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+      _selected2dLayerKey = key;
+    });
+  }
+
+  void _duplicateSelected2DLayer() {
+    final key = _selected2dLayerKey;
+    if (key == null || key == 'turning_point') return;
+    final scene = _thumbnail2DScene();
+    final raw = scene[key];
+    if (raw is! Map) return;
+    _normalize2DOrders(scene);
+    final copyKey = _next2DLayerKey('${key}_copy_');
+    final Map<String, dynamic> copy =
+        jsonDecode(jsonEncode(raw)) as Map<String, dynamic>;
+    copy['order'] = _thumbnail2DLayerKeys().length;
+    scene[copyKey] = copy;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+      _selected2dLayerKey = copyKey;
+    });
+  }
+
+  void _deleteSelected2DLayer() {
+    final key = _selected2dLayerKey;
+    if (key == null || key == 'turning_point') return;
+    final scene = _thumbnail2DScene();
+    scene.remove(key);
+    _normalize2DOrders(scene);
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+      _ensure2DLayerSelection();
+    });
+  }
+
+  Map<String, dynamic> _thumbnail3DScene() {
+    final dynamic sceneRaw = _thumbnailPayload['scene'];
+    if (sceneRaw is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(sceneRaw);
+    }
+    if (sceneRaw is Map) return Map<String, dynamic>.from(sceneRaw);
+    return <String, dynamic>{};
+  }
+
+  String _sceneKeyForType(String type) {
+    switch (type) {
+      case 'model':
+        return 'models';
+      case 'light':
+        return 'lights';
+      case 'audio':
+        return 'audios';
+      default:
+        return 'models';
+    }
+  }
+
+  List<Map<String, dynamic>> _listForEntityType(
+      Map<String, dynamic> scene, String type) {
+    final dynamic raw = scene[_sceneKeyForType(type)];
+    if (raw is! List) return <Map<String, dynamic>>[];
+    return raw
+        .map((e) =>
+            e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+        .toList();
+  }
+
+  void _setListForEntityType(
+    Map<String, dynamic> scene,
+    String type,
+    List<Map<String, dynamic>> list,
+  ) {
+    scene[_sceneKeyForType(type)] = list;
+  }
+
+  List<String> _ordered3dEntityTokens([Map<String, dynamic>? inputScene]) {
+    final scene = inputScene ?? _thumbnail3DScene();
+    final available = _sceneEntityTokens(scene);
+    final dynamic rawOrder = scene['renderOrder'];
+    final List<String> stored = rawOrder is List
+        ? rawOrder.map((e) => e.toString()).toList()
+        : <String>[];
+    final List<String> ordered =
+        stored.where((token) => available.contains(token)).toList();
+    for (final token in available) {
+      if (!ordered.contains(token)) {
+        ordered.add(token);
+      }
+    }
+    return ordered;
+  }
+
+  String _next3dEntityId(Map<String, dynamic> scene, String type) {
+    final list = _listForEntityType(scene, type);
+    int idx = 1;
+    while (list.any((e) => (e['id'] ?? '').toString() == '${type}_$idx')) {
+      idx++;
+    }
+    return '${type}_$idx';
+  }
+
+  Map<String, dynamic>? _entityByToken(
+    Map<String, dynamic> scene,
+    String token, {
+    bool clone = true,
+  }) {
+    final parts = token.split(':');
+    if (parts.length != 2) return null;
+    final type = parts.first;
+    final id = parts.last;
+    final list = _listForEntityType(scene, type);
+    for (final item in list) {
+      if ((item['id'] ?? '').toString() == id) {
+        return clone ? Map<String, dynamic>.from(item) : item;
+      }
+    }
+    return null;
+  }
+
+  String _labelForEntityToken(String token, Map<String, dynamic> scene) {
+    final parts = token.split(':');
+    if (parts.length != 2) return token;
+    final type = parts.first;
+    final id = parts.last;
+    final entity = _entityByToken(scene, token);
+    final fallbackPrefix = type == 'model'
+        ? 'Model'
+        : type == 'light'
+            ? 'Light'
+            : 'Audio';
+    final named = (entity?['name'] ?? entity?['id'] ?? '').toString().trim();
+    if (named.isNotEmpty) return named;
+    return '$fallbackPrefix $id';
+  }
+
+  void _set3dWindowLayerByToken({
+    required String token,
+    required String layer,
+  }) {
+    if (_thumbnailMode != '3d') return;
+    final scene = _thumbnail3DScene();
+    final parts = token.split(':');
+    if (parts.length != 2) return;
+    final type = parts.first;
+    final id = parts.last;
+    final list = _listForEntityType(scene, type);
+    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
+    if (index < 0) return;
+    list[index] = Map<String, dynamic>.from(list[index])
+      ..['windowLayer'] = layer;
+    _setListForEntityType(scene, type, list);
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+    });
+  }
+
+  void _reorder3dEntity(int oldIndex, int newIndex) {
+    final scene = _thumbnail3DScene();
+    final order = _ordered3dEntityTokens(scene);
+    if (oldIndex < 0 || oldIndex >= order.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex >= order.length) return;
+    final token = order.removeAt(oldIndex);
+    order.insert(newIndex, token);
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = (scene..['renderOrder'] = order);
+    });
+  }
+
+  void _add3dEntity(String type) {
+    final scene = _thumbnail3DScene();
+    final list = _listForEntityType(scene, type);
+    final id = _next3dEntityId(scene, type);
+    if (type == 'model') {
+      list.add(<String, dynamic>{
+        'id': id,
+        'name': 'Model $id',
+        'url': '',
+        'position': <double>[0, 0, 0],
+        'rotation': <double>[0, 0, 0],
+        'scale': <double>[1, 1, 1],
+        'visible': true,
+        'windowLayer': 'inside',
+      });
+    } else if (type == 'light') {
+      list.add(<String, dynamic>{
+        'id': id,
+        'color': 'ffffff',
+        'intensity': 10,
+        'position': <double>[0, 5, 0],
+        'scale': 1,
+        'ghost': false,
+        'windowLayer': 'inside',
+      });
+    } else {
+      list.add(<String, dynamic>{
+        'id': id,
+        'url': '',
+        'volume': 1,
+        'position': <double>[0, 0, 0],
+        'ghost': false,
+        'windowLayer': 'inside',
+      });
+    }
+    _setListForEntityType(scene, type, list);
+    final order = _ordered3dEntityTokens(scene)..add('$type:$id');
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = (scene..['renderOrder'] = order.toSet().toList());
+    });
+  }
+
+  void _duplicate3dEntity(String token) {
+    final scene = _thumbnail3DScene();
+    final parts = token.split(':');
+    if (parts.length != 2) return;
+    final type = parts.first;
+    final id = parts.last;
+    final list = _listForEntityType(scene, type);
+    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
+    if (index < 0) return;
+    final copy = Map<String, dynamic>.from(list[index]);
+    final newId = _next3dEntityId(scene, type);
+    copy['id'] = newId;
+    list.insert(index + 1, copy);
+    _setListForEntityType(scene, type, list);
+    final order = _ordered3dEntityTokens(scene);
+    final orderIndex = order.indexOf(token);
+    if (orderIndex >= 0) {
+      order.insert(orderIndex + 1, '$type:$newId');
+    } else {
+      order.add('$type:$newId');
+    }
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = (scene..['renderOrder'] = order);
+    });
+  }
+
+  void _delete3dEntity(String token) {
+    final scene = _thumbnail3DScene();
+    final parts = token.split(':');
+    if (parts.length != 2) return;
+    final type = parts.first;
+    final id = parts.last;
+    final list = _listForEntityType(scene, type);
+    list.removeWhere((e) => (e['id'] ?? '').toString() == id);
+    _setListForEntityType(scene, type, list);
+    final order = _ordered3dEntityTokens(scene)..remove(token);
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = (scene..['renderOrder'] = order);
+    });
   }
 
   double _toDouble(dynamic value, double fallback) {
@@ -5380,8 +6776,8 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
 
   Widget _build3DWindowLayerPanel(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final List<Map<String, dynamic>> models = _thumbnailModels();
-    final List<Map<String, dynamic>> lights = _thumbnailLights();
+    final scene = _thumbnail3DScene();
+    final List<String> tokens = _ordered3dEntityTokens(scene);
 
     return Container(
       margin: const EdgeInsets.only(top: 12),
@@ -5397,7 +6793,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '3D Window Effect Layers',
+            '3D Card Editor',
             style: TextStyle(
               color: cs.onSurface,
               fontWeight: FontWeight.w700,
@@ -5405,112 +6801,127 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           ),
           const SizedBox(height: 6),
           Text(
-            'Assign models and lights to Inside or Outside.',
+            'Reorder/add/delete/duplicate models, lights, and audios.',
             style: TextStyle(
               color: cs.onSurfaceVariant,
               fontSize: 12,
             ),
           ),
-          if (models.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              'Models',
-              style: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w600,
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _add3dEntity('model'),
+                icon: const Icon(Icons.add_circle_outline, size: 16),
+                label: const Text('Add Model'),
               ),
-            ),
-            const SizedBox(height: 6),
-            ...List<Widget>.generate(models.length, (i) {
-              final node = models[i];
-              final String layer = (node['windowLayer'] ?? 'inside').toString();
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _labelForNode(node, i, 'Model'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+              OutlinedButton.icon(
+                onPressed: () => _add3dEntity('light'),
+                icon: const Icon(Icons.wb_incandescent_outlined, size: 16),
+                label: const Text('Add Light'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _add3dEntity('audio'),
+                icon: const Icon(Icons.graphic_eq_outlined, size: 16),
+                label: const Text('Add Audio'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (tokens.isEmpty)
+            Text(
+              'No 3D entities found.',
+              style: TextStyle(color: cs.onSurfaceVariant),
+            )
+          else
+            Container(
+              constraints: const BoxConstraints(maxHeight: 320),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.14)),
+              ),
+              child: ReorderableListView.builder(
+                shrinkWrap: true,
+                itemCount: tokens.length,
+                onReorder: _reorder3dEntity,
+                itemBuilder: (context, index) {
+                  final token = tokens[index];
+                  final parts = token.split(':');
+                  final type = parts.first;
+                  final entity = _entityByToken(scene, token);
+                  final String layer =
+                      (entity?['windowLayer'] ?? 'inside').toString();
+                  return Container(
+                    key: ValueKey<String>('entity-$token'),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: cs.outline.withValues(alpha: 0.12),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment<String>(
-                          value: 'inside',
-                          label: Text('Inside'),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _labelForEntityToken(token, scene),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Text(
+                              type.toUpperCase(),
+                              style: TextStyle(
+                                color: cs.onSurfaceVariant,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Duplicate',
+                              onPressed: () => _duplicate3dEntity(token),
+                              icon: const Icon(Icons.copy_outlined, size: 16),
+                            ),
+                            IconButton(
+                              tooltip: 'Delete',
+                              onPressed: () => _delete3dEntity(token),
+                              icon: const Icon(Icons.delete_outline, size: 16),
+                            ),
+                          ],
                         ),
-                        ButtonSegment<String>(
-                          value: 'outside',
-                          label: Text('Outside'),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment<String>(
+                              value: 'inside',
+                              label: Text('Inside'),
+                            ),
+                            ButtonSegment<String>(
+                              value: 'outside',
+                              label: Text('Outside'),
+                            ),
+                          ],
+                          selected: <String>{layer},
+                          onSelectionChanged: (values) {
+                            _set3dWindowLayerByToken(
+                              token: token,
+                              layer: values.first,
+                            );
+                          },
                         ),
                       ],
-                      selected: <String>{layer},
-                      onSelectionChanged: (values) {
-                        _set3dWindowLayer(
-                          light: false,
-                          index: i,
-                          layer: values.first,
-                        );
-                      },
                     ),
-                  ],
-                ),
-              );
-            }),
-          ],
-          if (lights.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              'Lights',
-              style: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w600,
+                  );
+                },
               ),
             ),
-            const SizedBox(height: 6),
-            ...List<Widget>.generate(lights.length, (i) {
-              final node = lights[i];
-              final String layer = (node['windowLayer'] ?? 'inside').toString();
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _labelForNode(node, i, 'Light'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment<String>(
-                          value: 'inside',
-                          label: Text('Inside'),
-                        ),
-                        ButtonSegment<String>(
-                          value: 'outside',
-                          label: Text('Outside'),
-                        ),
-                      ],
-                      selected: <String>{layer},
-                      onSelectionChanged: (values) {
-                        _set3dWindowLayer(
-                          light: true,
-                          index: i,
-                          layer: values.first,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
         ],
       ),
     );
@@ -5521,6 +6932,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final List<String> keys = _thumbnail2DLayerKeys();
     final Map<String, dynamic>? selected = _selected2DLayerMap();
     final controls = _thumbnailControls();
+    final String? selectedKey = _selected2dLayerKey;
+    final bool selectedEditable =
+        selectedKey != null && selectedKey != 'turning_point';
 
     return Container(
       margin: const EdgeInsets.only(top: 12),
@@ -5542,8 +6956,35 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           ),
           const SizedBox(height: 6),
           Text(
-            'Edit layer order, visibility, position, scale, and global scene controls.',
+            'Reorder/add/delete/duplicate layers. Drag on preview to move selected layer and use mouse wheel to scale.',
             style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _add2DLayer(textLayer: false),
+                icon: const Icon(Icons.add_photo_alternate_outlined, size: 16),
+                label: const Text('Add Image'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _add2DLayer(textLayer: true),
+                icon: const Icon(Icons.text_fields, size: 16),
+                label: const Text('Add Text'),
+              ),
+              OutlinedButton.icon(
+                onPressed: selectedEditable ? _duplicateSelected2DLayer : null,
+                icon: const Icon(Icons.copy_outlined, size: 16),
+                label: const Text('Duplicate'),
+              ),
+              OutlinedButton.icon(
+                onPressed: selectedEditable ? _deleteSelected2DLayer : null,
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: const Text('Delete'),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
           if (keys.isEmpty)
@@ -5559,34 +7000,72 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: cs.outline.withValues(alpha: 0.14)),
               ),
-              child: ListView.separated(
+              child: ReorderableListView.builder(
                 shrinkWrap: true,
+                buildDefaultDragHandles: false,
                 itemCount: keys.length,
-                separatorBuilder: (_, __) =>
-                    Divider(height: 1, color: cs.outline.withValues(alpha: 0.14)),
+                onReorder: _reorder2DLayer,
                 itemBuilder: (context, index) {
                   final key = keys[index];
                   final layerMap = _thumbnail2DScene()[key];
-                  final bool visible = !(layerMap is Map && layerMap['isVisible'] == false);
+                  final bool visible =
+                      !(layerMap is Map && layerMap['isVisible'] == false);
+                  final bool locked =
+                      layerMap is Map && layerMap['isLocked'] == true;
                   final bool selectedLayer = key == _selected2dLayerKey;
-                  return ListTile(
-                    dense: true,
-                    selected: selectedLayer,
-                    selectedTileColor: cs.primary.withValues(alpha: 0.14),
-                    title: Text(
-                      key,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Switch(
-                      value: visible,
-                      onChanged: (value) => _set2DLayerField(
-                        key,
-                        'isVisible',
-                        value,
+                  return Container(
+                    key: ValueKey<String>('2d-layer-$key'),
+                    decoration: BoxDecoration(
+                      color: selectedLayer
+                          ? cs.primary.withValues(alpha: 0.14)
+                          : Colors.transparent,
+                      border: Border(
+                        bottom: BorderSide(
+                          color: cs.outline.withValues(alpha: 0.14),
+                        ),
                       ),
                     ),
-                    onTap: () => setState(() => _selected2dLayerKey = key),
+                    child: ListTile(
+                      dense: true,
+                      title: Text(
+                        key,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: SizedBox(
+                        width: 124,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            IconButton(
+                              tooltip: visible ? 'Hide layer' : 'Show layer',
+                              onPressed: () =>
+                                  _set2DLayerField(key, 'isVisible', !visible),
+                              icon: Icon(
+                                visible
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                                size: 18,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: locked ? 'Unlock layer' : 'Lock layer',
+                              onPressed: () =>
+                                  _set2DLayerField(key, 'isLocked', !locked),
+                              icon: Icon(
+                                locked ? Icons.lock_outline : Icons.lock_open,
+                                size: 18,
+                              ),
+                            ),
+                            ReorderableDragStartListener(
+                              index: index,
+                              child: const Icon(Icons.drag_handle, size: 18),
+                            ),
+                          ],
+                        ),
+                      ),
+                      onTap: () => setState(() => _selected2dLayerKey = key),
+                    ),
                   );
                 },
               ),
@@ -5594,35 +7073,104 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             const SizedBox(height: 10),
             if (selected != null) ...[
               Text(
-                'Layer: ${_selected2dLayerKey ?? ''}',
+                'Layer: ${selectedKey ?? ''}',
                 style: TextStyle(
                   color: cs.onSurface,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 6),
+              if (selected['isText'] == true)
+                TextFormField(
+                  initialValue: (selected['textValue'] ?? '').toString(),
+                  onChanged: (value) =>
+                      _set2DLayerField(selectedKey!, 'textValue', value),
+                  decoration: const InputDecoration(
+                    labelText: 'Text',
+                  ),
+                )
+              else
+                TextFormField(
+                  initialValue: (selected['url'] ?? '').toString(),
+                  onChanged: (value) =>
+                      _set2DLayerField(selectedKey!, 'url', value.trim()),
+                  decoration: const InputDecoration(
+                    labelText: 'Image URL',
+                  ),
+                ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _set2DLayerField(
+                        selectedKey!,
+                        'isVisible',
+                        !(selected['isVisible'] == false),
+                      ),
+                      icon: Icon(
+                        selected['isVisible'] == false
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: 16,
+                      ),
+                      label: Text(
+                        selected['isVisible'] == false ? 'Show' : 'Hide',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _set2DLayerField(
+                        selectedKey!,
+                        'isLocked',
+                        !(selected['isLocked'] == true),
+                      ),
+                      icon: Icon(
+                        selected['isLocked'] == true
+                            ? Icons.lock_outline
+                            : Icons.lock_open,
+                        size: 16,
+                      ),
+                      label: Text(
+                        selected['isLocked'] == true ? 'Unlock' : 'Lock',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               _composerSlider(
                 label: 'X Position',
                 min: -1500,
                 max: 1500,
                 value: _toDouble(selected['x'], 0),
-                onChanged: (v) => _set2DLayerField(_selected2dLayerKey!, 'x', v),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'x', v),
               ),
               _composerSlider(
                 label: 'Y Position',
                 min: -1500,
                 max: 1500,
                 value: _toDouble(selected['y'], 0),
-                onChanged: (v) => _set2DLayerField(_selected2dLayerKey!, 'y', v),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'y', v),
               ),
               _composerSlider(
                 label: 'Scale',
                 min: 0.05,
                 max: 6,
                 value: _toDouble(selected['scale'], 1),
-                onChanged: (v) =>
-                    _set2DLayerField(_selected2dLayerKey!, 'scale', v),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'scale', v),
               ),
+              if (selected['isText'] == true)
+                _composerSlider(
+                  label: 'Font Size',
+                  min: 8,
+                  max: 300,
+                  value: _toDouble(selected['fontSize'], 40),
+                  onChanged: (v) =>
+                      _set2DLayerField(selectedKey!, 'fontSize', v),
+                ),
             ],
             const SizedBox(height: 8),
             Text(
@@ -5676,6 +7224,11 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               onChanged: (v) => _set2DControlField('deadZoneY', v),
             ),
           ],
+          if (!selectedEditable)
+            Text(
+              'Select a layer to edit and drag directly in the card preview.',
+              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
+            ),
         ],
       ),
     );
@@ -5801,13 +7354,27 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final cs = theme.colorScheme;
 
     final BorderRadius previewRadius = BorderRadius.circular(18);
+    final bool enable3dMousePreview =
+        !_showPublishStep && _thumbnailMode == '3d';
+    Widget previewSurface = _GridPresetPreview(
+      mode: _thumbnailMode,
+      payload: _thumbnailPayload,
+      borderRadius: previewRadius,
+      pointerPassthrough: !enable3dMousePreview,
+    );
+    if (!_showPublishStep && _thumbnailMode == '2d') {
+      previewSurface = Listener(
+        onPointerSignal: _handle2DPreviewPointerSignal,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanUpdate: _handle2DPreviewPanUpdate,
+          child: previewSurface,
+        ),
+      );
+    }
     final preview = AspectRatio(
       aspectRatio: 16 / 9,
-      child: _GridPresetPreview(
-        mode: _thumbnailMode,
-        payload: _thumbnailPayload,
-        borderRadius: previewRadius,
-      ),
+      child: previewSurface,
     );
 
     return Scaffold(

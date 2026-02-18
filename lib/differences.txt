@@ -1,0 +1,70 @@
+
+Version A in the one currently working and Version B is the one in the reference code
+
+Here is a detailed comparison of the **two project versions** you provided. I'll refer to them as:
+
+- **Version A** — the first one (uses `flutter_bootstrap.js`, loads tracker via `<script src="flutter_bootstrap.js" defer>` in `index.html`, and has `tracker.html` in `web/assets/`)
+- **Version B** — the second one (uses dedicated `tracker.html` loaded via **HtmlElementView** / iframe in Flutter's `tracker.dart`, standard Flutter `index.html` with `$FLUTTER_BASE_HREF`)
+
+### Key Differences
+
+| #  | Aspect                              | Version A (assets/tracker.html)                                      | Version B (HtmlElementView + tracker.html)                          | Comment / Winner |
+|----|-------------------------------------|-----------------------------------------------------------------------|---------------------------------------------------------------------|------------------|
+| Loading method                      | Flutter loads entire app + tracker script | Tracker is embedded directly in main `index.html` body               | Tracker runs in separate iframe via `HtmlElementView`               | B is cleaner separation |
+| `index.html` content                | Contains ModelViewer + MediaPipe scripts + `<base href="/deepx/">` | Has Google Model-Viewer + extra meta tags                            | Standard minimal Flutter `index.html` (`$FLUTTER_BASE_HREF`)        | B is cleaner & more standard |
+| How tracker.html is included        | Directly in `<body>` of main page     | Scripts and HTML of tracker are in main document                     | Loaded in isolated iframe (`src="tracker.html"`)                    | **B** — better isolation |
+| JavaScript execution context        | Same document as Flutter canvas       | Tracker JS runs in same global scope as Flutter                      | Tracker JS runs in separate iframe (own `window`, `document`)       | **B** — stronger isolation |
+| postMessage communication           | Uses `window.parent.postMessage`      | Sends tracking data to Flutter parent                                | Also uses `window.parent.postMessage` (iframe → Flutter)            | Same mechanism |
+| CSS isolation                       | Global CSS (affects whole app)        | Tracker CSS can leak to Flutter UI                                   | CSS is isolated inside iframe                                       | **B** — much safer |
+| Resource loading                    | All scripts in main document          | MediaPipe, PeerJS loaded once in main doc                            | MediaPipe + PeerJS loaded **only** in iframe                        | **B** — lower main thread load |
+| Performance impact on Flutter UI    | Tracker JS blocks / competes with Flutter | Heavy MediaPipe + animation loop runs on main thread                 | Heavy work runs in iframe → less competition with Flutter rendering | **B** clearly wins |
+| Fullscreen behavior                 | May conflict with Flutter fullscreen  | Fullscreen requests affect whole page                                | Fullscreen usually only affects iframe (depends on browser policy)  | **B** usually safer |
+| Remote / PeerJS reconnection logic  | Same code                             | Identical                                                             | Identical                                                           | No difference |
+| Calibration & cursor logic          | Identical logic                       | Same JavaScript code                                                 | Same JavaScript code                                                | No functional difference |
+| Memory usage                        | Higher on main context                | One big document context                                             | Two separate contexts (but iframe usually lighter long-term)        | Slight edge to **B** |
+| Debugging difficulty                | Easier to inspect (one DOM)           | Everything in one devtools tab                                       | Need to inspect iframe separately                                   | **A** easier to debug |
+| Bundle size / initial load          | Slightly larger main HTML             | Extra scripts & base href in main index                              | Cleaner main index, but iframe adds small overhead                  | Almost equal |
+| Security / clickjacking risk        | Higher                                | Tracker UI is part of main document                                  | Iframe provides natural isolation                                   | **B** safer |
+
+### Which version has better **performance**?
+
+**Version B (HtmlElementView + separate tracker.html iframe) has better overall performance** in most real-world scenarios.
+
+#### Why Version B performs better
+
+1. **Thread / Task separation**  
+   MediaPipe face/hand tracking + animation frame loop (`requestAnimationFrame`) + PeerJS signaling are **very CPU heavy**.  
+   Running them in a separate iframe reduces contention with Flutter's Skia rendering thread.
+
+2. **Lower main thread jank**  
+   Flutter Web already struggles with jank on complex UIs.  
+   Version A adds hundreds of DOM nodes + constant canvas redraws + ML inference to the **same main thread** → more dropped frames in Flutter UI.
+
+3. **CSS & DOM isolation**  
+   Version A pollutes global namespace and CSS → potential unintended styling conflicts or slower style recalculation.  
+   Version B keeps tracker DOM/CSS/JS completely separate.
+
+4. **Garbage collection & memory pressure**  
+   Iframe context can be discarded/recreated more easily by browser → potentially better long-term memory behavior.
+
+#### When Version A might feel faster
+
+- Very short sessions (<10 seconds) → less iframe overhead
+- Extremely powerful desktop hardware → difference becomes negligible
+- Debugging / development (easier to see everything in one place)
+
+#### Summary – Recommendation
+
+**Version B is superior in almost all practical aspects**, especially:
+
+- performance & smoothness of the Flutter UI
+- maintainability & isolation
+- future-proofing (easier to update tracker independently)
+
+The only real downsides of Version B are slightly more complicated debugging (need to select iframe in devtools) and potentially 50–150 ms slower initial tracker startup due to iframe creation.
+
+**Verdict**:  
+→ Choose **Version B** (the second one) for production.  
+→ Use **Version A** only if you are in very early prototyping and want fastest possible "everything in one tab" debugging.
+
+

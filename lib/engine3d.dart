@@ -22,7 +22,11 @@ class Engine3DPage extends StatefulWidget {
     this.disableAudio = false,
     this.externalHeadPose,
     this.onPresetSaved,
+    this.onLivePayloadChanged,
     this.useGlobalTracking = true,
+    this.pointerPassthrough = false,
+    this.reanchorToken = 0,
+    this.studioSurface = false,
   });
 
   final Map<String, dynamic>? initialPresetPayload;
@@ -33,7 +37,11 @@ class Engine3DPage extends StatefulWidget {
   final bool disableAudio;
   final Map<String, double>? externalHeadPose;
   final void Function(String name, Map<String, dynamic> payload)? onPresetSaved;
+  final ValueChanged<Map<String, dynamic>>? onLivePayloadChanged;
   final bool useGlobalTracking;
+  final bool pointerPassthrough;
+  final int reanchorToken;
+  final bool studioSurface;
 
   @override
   State<Engine3DPage> createState() => _Engine3DPageState();
@@ -437,6 +445,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
         import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
         import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
         const CLEAN_VIEW = __CLEAN_VIEW__;
+        const HIDE_PANEL = __HIDE_PANEL__;
+        const STUDIO_SURFACE = __STUDIO_SURFACE__;
         const AUDIO_ENABLED = __AUDIO_ENABLED__;
         const BRIDGE_CHANNEL = '__BRIDGE_CHANNEL__';
         // --- GLOBAL VARIABLES ---
@@ -475,6 +485,12 @@ class _Engine3DPageState extends State<Engine3DPage> {
         let presets = {};
         let currentPreset = null;
         let disposed = false;
+        let mouseDragActive = false;
+        let mouseLastX = 0;
+        let mouseLastY = 0;
+        let mouseYawOffset = 0;
+        let mousePitchOffset = 0;
+        let mouseZoomOffset = 0;
         function emitToParent(payload) {
             window.parent.postMessage(JSON.stringify({ ...payload, channel: BRIDGE_CHANNEL }), '*');
         }
@@ -518,6 +534,55 @@ class _Engine3DPageState extends State<Engine3DPage> {
             } catch (_) {}
             emitToParent({ type: 'engine_disposed' });
         }
+        function setupMouseCameraControls(canvas) {
+            if (!canvas) return;
+            const canControl = () => !!(STUDIO_SURFACE || HIDE_PANEL || CLEAN_VIEW);
+            const stopDrag = (event) => {
+                if (!mouseDragActive) return;
+                mouseDragActive = false;
+                try {
+                    if (event && event.pointerId != null && canvas.releasePointerCapture) {
+                        canvas.releasePointerCapture(event.pointerId);
+                    }
+                } catch (_) {}
+            };
+            canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+            canvas.addEventListener('pointerdown', (event) => {
+                if (!canControl()) return;
+                if (event.button !== 0 && event.button !== 1) return;
+                mouseDragActive = true;
+                mouseLastX = event.clientX;
+                mouseLastY = event.clientY;
+                try {
+                    if (canvas.setPointerCapture) {
+                        canvas.setPointerCapture(event.pointerId);
+                    }
+                } catch (_) {}
+            });
+            canvas.addEventListener('pointermove', (event) => {
+                if (!mouseDragActive) return;
+                const dx = event.clientX - mouseLastX;
+                const dy = event.clientY - mouseLastY;
+                mouseLastX = event.clientX;
+                mouseLastY = event.clientY;
+                mouseYawOffset += dx * 0.16;
+                mousePitchOffset += dy * 0.12;
+                mousePitchOffset = Math.max(-85, Math.min(85, mousePitchOffset));
+            });
+            canvas.addEventListener('pointerup', stopDrag);
+            canvas.addEventListener('pointercancel', stopDrag);
+            canvas.addEventListener('pointerleave', stopDrag);
+            canvas.addEventListener(
+                'wheel',
+                (event) => {
+                    if (!canControl()) return;
+                    event.preventDefault();
+                    mouseZoomOffset += event.deltaY * 0.0025;
+                    mouseZoomOffset = Math.max(-0.75, Math.min(0.75, mouseZoomOffset));
+                },
+                { passive: false },
+            );
+        }
         // Target for orbit mode
         const orbitTarget = new THREE.Vector3(0, 0, 0);
         let initPos = new THREE.Vector3(0, 2, 10);
@@ -543,7 +608,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
             }
             renderer.setAnimationLoop(animate);
             document.getElementById('canvas-container').appendChild(renderer.domElement);
-            if (CLEAN_VIEW) {
+            setupMouseCameraControls(renderer.domElement);
+            if (CLEAN_VIEW || HIDE_PANEL) {
                 document.getElementById('control-panel-3d').style.display = 'none';
                 document.getElementById('toggle-btns').style.display = 'none';
                 document.getElementById('playback-controls').style.display = 'none';
@@ -644,6 +710,17 @@ class _Engine3DPageState extends State<Engine3DPage> {
                         if (data.url) {
                             loadEnv(data.url, tex => { envTex = tex; scene.environment = tex; pushStateSnapshot(); });
                         }
+                        return;
+                    }
+                    if (data.type === 'external_reanchor') {
+                        anchorHeadX = headX;
+                        anchorHeadY = headY;
+                        anchorZ = zValue;
+                        anchorYaw = yaw;
+                        anchorPitch = pitch;
+                        mouseYawOffset = 0;
+                        mousePitchOffset = 0;
+                        mouseZoomOffset = 0;
                         return;
                     }
                     if (data.head && typeof data.head === 'object') {
@@ -932,11 +1009,16 @@ class _Engine3DPageState extends State<Engine3DPage> {
             };
         }
         // --- SPATIAL AUDIO SYSTEM ---
-        function addSpatialAudio(explicitUrl) {
+        function addSpatialAudio(explicitUrl, initialState = null) {
             if (!AUDIO_ENABLED) return;
-            const url = explicitUrl || prompt('Enter audio URL:');
+            const url =
+                explicitUrl ||
+                (initialState && initialState.url) ||
+                prompt('Enter audio URL:');
             if (!url) return;
-            const id = Date.now();
+            const id =
+                (initialState && initialState.id) ||
+                `audio_${Date.now()}_${spatialAudios.length}`;
             const audio = new Audio(url);
             audio.preload = 'auto';
             audio.load();
@@ -973,7 +1055,20 @@ class _Engine3DPageState extends State<Engine3DPage> {
             const label = createTextSprite(audioName);
             helper.add(label);
             label.position.set(0, 0.5, 0);
-            const audioData = { id, audio, source, lowpass, panner, dryGain, wetGain, helper, label, modelIndex: currentModels.length > 0 ? 0 : -1, volume: 1 };
+            const audioData = {
+                id,
+                audio,
+                source,
+                lowpass,
+                panner,
+                dryGain,
+                wetGain,
+                helper,
+                label,
+                modelIndex: currentModels.length > 0 ? 0 : -1,
+                volume: 1,
+                windowLayer: (initialState && initialState.windowLayer) || 'inside',
+            };
             spatialAudios.push(audioData);
             audio.addEventListener('ended', () => {
                 activeCount--;
@@ -1042,6 +1137,21 @@ class _Engine3DPageState extends State<Engine3DPage> {
             setupSlider(document.getElementById(`ax-${id}`));
             setupSlider(document.getElementById(`ay-${id}`));
             setupSlider(document.getElementById(`az-${id}`));
+            if (initialState) {
+                if (Number.isFinite(initialState.volume)) {
+                    document.getElementById(`av-${id}`).value = initialState.volume;
+                }
+                if (Array.isArray(initialState.position)) {
+                    const px = Number(initialState.position[0]);
+                    const py = Number(initialState.position[1]);
+                    const pz = Number(initialState.position[2]);
+                    if (Number.isFinite(px)) document.getElementById(`ax-${id}`).value = px * 1000;
+                    if (Number.isFinite(py)) document.getElementById(`ay-${id}`).value = py * 1000;
+                    if (Number.isFinite(pz)) document.getElementById(`az-${id}`).value = pz * 1000;
+                }
+                document.getElementById(`ag-${id}`).checked = !!initialState.ghost;
+                up();
+            }
             document.getElementById(`ad-${id}`).onclick = () => {
                 const parent = audioData.modelIndex === 0 ? currentModels[0] : scene;
                 if (parent) parent.remove(helper);
@@ -1353,11 +1463,18 @@ class _Engine3DPageState extends State<Engine3DPage> {
                     ghost: !l.helper.visible
                 })),
                 audios: spatialAudios.map(a => ({
+                    id: a.id,
+                    windowLayer: a.windowLayer || 'inside',
                     url: a.audio.src,
                     volume: a.volume,
                     position: a.helper.position.toArray(),
                     ghost: !a.helper.visible
                 })),
+                renderOrder: [
+                    ...currentModels.map((m, i) => 'model:' + (m.userData.id || ('model_' + i))),
+                    ...dynamicLights.map((l) => `light:${l.id}`),
+                    ...spatialAudios.map((a) => `audio:${a.id}`),
+                ],
                 sunIntensity: sun.intensity,
                 ambLight: ambientLight.intensity,
                 bloomIntensity: bloomPass.strength,
@@ -1414,10 +1531,11 @@ class _Engine3DPageState extends State<Engine3DPage> {
             });
             // Load audios
             if (AUDIO_ENABLED) {
-                audios.forEach(a => addSpatialAudio(a.url));
+                audios.forEach(a => addSpatialAudio(a.url, a));
                 audios.forEach((a, i) => {
                     const audioData = spatialAudios[i];
                     if (!audioData) return;
+                    audioData.windowLayer = a.windowLayer || 'inside';
                     audioData.volume = a.volume;
                     if (Array.isArray(a.position)) {
                         audioData.helper.position.fromArray(a.position);
@@ -1467,8 +1585,9 @@ class _Engine3DPageState extends State<Engine3DPage> {
             let effectiveRelX = relX;
             let effectiveRelY = relY;
             let effectiveRelZ = relZ;
-            let effectiveRelYaw = relYaw;
-            let effectiveRelPitch = relPitch;
+            let effectiveRelYaw = relYaw + mouseYawOffset;
+            let effectiveRelPitch = relPitch + mousePitchOffset;
+            effectiveRelZ += mouseZoomOffset;
             const relEuler = new THREE.Euler(effectiveRelPitch * Math.PI / 180, -effectiveRelYaw * Math.PI / 180, 0, 'YXZ');
             switch (cameraMode) {
                 case 'orbit':
@@ -1642,6 +1761,9 @@ class _Engine3DPageState extends State<Engine3DPage> {
 ''';
     content = content
         .replaceAll('__CLEAN_VIEW__', widget.cleanView ? 'true' : 'false')
+        .replaceAll('__HIDE_PANEL__', widget.embeddedStudio ? 'true' : 'false')
+        .replaceAll(
+            '__STUDIO_SURFACE__', widget.studioSurface ? 'true' : 'false')
         .replaceAll('__AUDIO_ENABLED__', widget.disableAudio ? 'false' : 'true')
         .replaceAll('__BODY_BG__', widget.cleanView ? 'transparent' : '#000')
         .replaceAll('__BRIDGE_CHANNEL__', _bridgeChannel);
@@ -1654,6 +1776,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
       iframe.srcdoc = content;
       iframe.style.setProperty('border', 'none');
       iframe.style.setProperty('background', 'transparent');
+      iframe.style.setProperty(
+          'pointer-events', widget.pointerPassthrough ? 'none' : 'auto');
       iframe.allow = 'camera *; microphone *';
       _engineIframe = iframe;
       return iframe;
@@ -1807,6 +1931,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
 
   @override
   void dispose() {
+    debugPrint(
+        'Disposing Engine3DPage(cleanView=${widget.cleanView}, embedded=${widget.embedded}, embeddedStudio=${widget.embeddedStudio})');
     _saveDebounce?.cancel();
     _postToEngine(<String, dynamic>{
       'type': 'dispose_engine',
@@ -1880,6 +2006,13 @@ class _Engine3DPageState extends State<Engine3DPage> {
         'type': 'global_tracking_config',
         'useGlobal': widget.useGlobalTracking,
       });
+    }
+    if (widget.pointerPassthrough != oldWidget.pointerPassthrough) {
+      _engineIframe?.style.setProperty(
+          'pointer-events', widget.pointerPassthrough ? 'none' : 'auto');
+    }
+    if (widget.reanchorToken != oldWidget.reanchorToken) {
+      _postToEngine(<String, dynamic>{'type': 'external_reanchor'});
     }
   }
 
@@ -1980,15 +2113,33 @@ class _Engine3DPageState extends State<Engine3DPage> {
     _queueSaveModeState();
   }
 
+  Map<String, dynamic> _buildLivePayloadFromScene(Map<String, dynamic> scene) {
+    final settings =
+        ((_modeState['settings'] as Map?)?.cast<String, dynamic>()) ??
+            ((_modeState['presetControls'] as Map?)?.cast<String, dynamic>()) ??
+            <String, dynamic>{};
+    return PresetPayloadV2(
+      mode: '3d',
+      scene: Map<String, dynamic>.from(scene),
+      controls: Map<String, dynamic>.from(settings),
+      meta: const <String, dynamic>{
+        'editor': 'engine3d',
+      },
+    ).toMap();
+  }
+
   void _onEngineSnapshot(Map<String, dynamic> messageData) {
     final dynamic state = messageData['state'];
     if (state is Map<String, dynamic>) {
       _modeState['sceneState'] = state;
+      widget.onLivePayloadChanged?.call(_buildLivePayloadFromScene(state));
       _queueSaveModeState();
       return;
     }
     if (state is Map) {
-      _modeState['sceneState'] = Map<String, dynamic>.from(state);
+      final mapped = Map<String, dynamic>.from(state);
+      _modeState['sceneState'] = mapped;
+      widget.onLivePayloadChanged?.call(_buildLivePayloadFromScene(mapped));
       _queueSaveModeState();
     }
   }
@@ -2127,6 +2278,9 @@ class _Engine3DPageState extends State<Engine3DPage> {
       'presets': presets,
       'sceneState': sceneState,
     });
+    if (sceneState != null) {
+      widget.onLivePayloadChanged?.call(_buildLivePayloadFromScene(sceneState));
+    }
     _postToEngine(<String, dynamic>{
       'type': 'global_tracking_config',
       'useGlobal': widget.useGlobalTracking,
@@ -2262,7 +2416,10 @@ class _Engine3DPageState extends State<Engine3DPage> {
         SizedBox(
           width: double.infinity,
           height: double.infinity,
-          child: HtmlElementView(viewType: viewID),
+          child: IgnorePointer(
+            ignoring: widget.pointerPassthrough,
+            child: HtmlElementView(viewType: viewID),
+          ),
         ),
         if (!widget.cleanView &&
             widget.externalHeadPose == null &&

@@ -87,6 +87,20 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
+    Route<dynamic> buildFeedRoute({
+      required String name,
+      required String initialTab,
+    }) {
+      return MaterialPageRoute<void>(
+        settings: RouteSettings(name: name),
+        builder: (_) => ShowFeedPage(
+          themeMode: _themeMode,
+          onThemeModeChanged: _onThemeModeChanged,
+          initialTab: initialTab,
+        ),
+      );
+    }
+
     return MaterialApp(
       title: 'DeepX',
       themeMode: _resolvedTheme,
@@ -124,25 +138,57 @@ class _MyAppState extends State<MyApp> {
           ),
         ),
       ),
-      initialRoute: SupabaseConfig.isConfigured ? '/feed' : '/config',
+      initialRoute: SupabaseConfig.isConfigured ? '/feed/home' : '/config',
       builder: (context, child) {
         final safeChild = child ?? const SizedBox.shrink();
         if (!_trackerReady) return safeChild;
         return TrackingService.instance.buildGlobalOverlay(child: safeChild);
       },
-      routes: {
-        '/auth': (context) => const AuthPage(),
-        '/feed': (context) => ShowFeedPage(
-              themeMode: _themeMode,
-              onThemeModeChanged: _onThemeModeChanged,
-            ),
-        '/app': (context) => ShowFeedPage(
-              themeMode: _themeMode,
-              onThemeModeChanged: _onThemeModeChanged,
-            ),
-        '/2d': (context) => const LayerMode(),
-        '/3d': (context) => const Engine3DPage(),
-        '/config': (context) => const _SupabaseConfigMissingPage(),
+      onGenerateRoute: (settings) {
+        final String name = settings.name ?? '/';
+        final Uri uri = Uri.parse(name);
+        final List<String> segments = uri.pathSegments;
+
+        if (name == '/auth') {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => const AuthPage(),
+          );
+        }
+        if (name == '/2d') {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => const LayerMode(),
+          );
+        }
+        if (name == '/3d') {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => const Engine3DPage(),
+          );
+        }
+        if (name == '/config') {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => const _SupabaseConfigMissingPage(),
+          );
+        }
+
+        if (name == '/feed' || name == '/app') {
+          return buildFeedRoute(name: '/feed/home', initialTab: 'home');
+        }
+        if (segments.isNotEmpty && segments.first == 'feed') {
+          final String tab = segments.length > 1 ? segments[1] : 'home';
+          return buildFeedRoute(name: '/feed/$tab', initialTab: tab);
+        }
+
+        if (!SupabaseConfig.isConfigured) {
+          return MaterialPageRoute<void>(
+            settings: const RouteSettings(name: '/config'),
+            builder: (_) => const _SupabaseConfigMissingPage(),
+          );
+        }
+        return buildFeedRoute(name: '/feed/home', initialTab: 'home');
       },
     );
   }

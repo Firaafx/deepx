@@ -15,6 +15,9 @@ class PresetViewer extends StatelessWidget {
     this.embeddedStudio = false,
     this.useGlobalTracking = true,
     this.headPose,
+    this.pointerPassthrough = false,
+    this.reanchorToken = 0,
+    this.studioSurface = false,
   });
 
   final String mode;
@@ -25,6 +28,9 @@ class PresetViewer extends StatelessWidget {
   final bool embeddedStudio;
   final bool useGlobalTracking;
   final Map<String, double>? headPose;
+  final bool pointerPassthrough;
+  final int reanchorToken;
+  final bool studioSurface;
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +46,9 @@ class PresetViewer extends StatelessWidget {
         initialPresetPayload: adapted.toMap(),
         externalHeadPose: headPose,
         useGlobalTracking: useGlobalTracking,
+        pointerPassthrough: pointerPassthrough,
+        reanchorToken: reanchorToken,
+        studioSurface: studioSurface,
       );
     }
     return Engine3DPage(
@@ -50,6 +59,9 @@ class PresetViewer extends StatelessWidget {
       initialPresetPayload: adapted.toMap(),
       externalHeadPose: headPose,
       useGlobalTracking: useGlobalTracking,
+      pointerPassthrough: pointerPassthrough,
+      reanchorToken: reanchorToken,
+      studioSurface: studioSurface,
     );
   }
 }

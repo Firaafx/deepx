@@ -47,12 +47,28 @@ class TrackingService {
   final ValueNotifier<int> _overlayTick = ValueNotifier<int>(0);
   DateTime _lastFrameAt =
       DateTime.fromMillisecondsSinceEpoch(0, isUtc: true).toLocal();
+  TrackingFrame _lastRawFrame = TrackingFrame.zero;
+  bool _hasHeadBaseline = false;
+  bool _pendingInitialHeadBaseline = true;
+  double _baselineHeadX = 0;
+  double _baselineHeadY = 0;
+  double _baselineHeadZ = 0.2;
+  double _baselineYaw = 0;
+  double _baselinePitch = 0;
 
   bool _pointerDown = false;
   DateTime? _pointerDownAt;
   html.Element? _pointerTarget;
   int? _lastDispatchX;
   int? _lastDispatchY;
+
+  int get frameAgeMs => DateTime.now().difference(_lastFrameAt).inMilliseconds;
+  bool get hasFreshFrame => frameAgeMs <= 450;
+
+  void remapHeadBaselineToCurrentFrame() {
+    _setHeadBaseline(_lastRawFrame);
+    frameNotifier.value = _applyHeadBaseline(_lastRawFrame);
+  }
 
   Future<void> initialize() async {
     if (_initialized || !kIsWeb) return;
@@ -106,9 +122,15 @@ class TrackingService {
         viewportWidth: (html.window.innerWidth ?? 1).toDouble(),
         viewportHeight: (html.window.innerHeight ?? 1).toDouble(),
       );
+      _lastRawFrame = frame;
+      if (_pendingInitialHeadBaseline) {
+        _setHeadBaseline(frame);
+        _pendingInitialHeadBaseline = false;
+      }
       _lastFrameAt = DateTime.now();
-      frameNotifier.value = frame;
-      _bridgePointerInteractions(frame);
+      final mappedFrame = _applyHeadBaseline(frame);
+      frameNotifier.value = mappedFrame;
+      _bridgePointerInteractions(mappedFrame);
     });
 
     await refreshPreferences();
@@ -142,7 +164,11 @@ class TrackingService {
   }
 
   Future<void> setTrackerEnabled(bool enabled) async {
+    final bool wasEnabled = _trackerEnabled;
     _trackerEnabled = enabled;
+    if (enabled && !wasEnabled) {
+      _pendingInitialHeadBaseline = true;
+    }
     await AppRepository.instance
         .updateTrackerPreferencesForCurrentUser(trackerEnabled: enabled);
     _syncHostVisibilityStyle();
@@ -209,37 +235,89 @@ class TrackingService {
     }
   }
 
+  void _setHeadBaseline(TrackingFrame frame) {
+    _baselineHeadX = frame.headX;
+    _baselineHeadY = frame.headY;
+    _baselineHeadZ = frame.headZ;
+    _baselineYaw = frame.yaw;
+    _baselinePitch = frame.pitch;
+    _hasHeadBaseline = true;
+  }
+
+  TrackingFrame _applyHeadBaseline(TrackingFrame frame) {
+    if (!_hasHeadBaseline) return frame;
+    return TrackingFrame(
+      headX: frame.headX - _baselineHeadX,
+      headY: frame.headY - _baselineHeadY,
+      headZ: 0.2 + (frame.headZ - _baselineHeadZ),
+      yaw: frame.yaw - _baselineYaw,
+      pitch: frame.pitch - _baselinePitch,
+      cursorX: frame.cursorX,
+      cursorY: frame.cursorY,
+      wink: frame.wink,
+      pinch: frame.pinch,
+      hasHand: frame.hasHand,
+    );
+  }
+
   void _bridgePointerInteractions(TrackingFrame frame) {
     if (!_trackerEnabled || !_dartCursorEnabled) {
-      _releasePointerAtCurrentPosition();
+      _releasePointerAtCurrentPosition(cancel: true);
       _clearHoverState();
       return;
     }
 
     final x = frame.cursorX.round();
     final y = frame.cursorY.round();
-    final dispatchTarget = _resolveDispatchSurface();
-    if (dispatchTarget == null) {
-      _releasePointerAtCurrentPosition();
-      _clearHoverState();
-      return;
-    }
+    final dispatchSurface = _resolveDispatchSurface();
     final html.Element? targetAtCursor = html.document.elementFromPoint(x, y);
     if (targetAtCursor == null) {
-      _releasePointerAtCurrentPosition();
+      _releasePointerAtCurrentPosition(cancel: true);
       _clearHoverState();
       return;
     }
     if (_isTrackerHostElement(targetAtCursor)) {
+      _releasePointerAtCurrentPosition(cancel: true);
+      _clearHoverState();
       return;
     }
-    final bool moved = _lastDispatchX != x || _lastDispatchY != y;
-    if (moved || _pointerDown) {
+    final html.Element dispatchTarget = targetAtCursor;
+
+    void dispatchPointerToTargets({
+      required String type,
+      required int buttons,
+      html.Element? primaryTarget,
+      bool includeSurfaceFallback = true,
+    }) {
+      final html.Element target = primaryTarget ?? dispatchTarget;
       _dispatchPointer(
-        target: dispatchTarget,
-        type: 'pointermove',
+        target: target,
+        type: type,
         x: x,
         y: y,
+        buttons: buttons,
+      );
+      final surface = dispatchSurface;
+      final bool shouldFallbackToSurface = includeSurfaceFallback &&
+          surface != null &&
+          !identical(surface, target) &&
+          (identical(target, html.document.body) ||
+              identical(target, html.document.documentElement));
+      if (shouldFallbackToSurface) {
+        _dispatchPointer(
+          target: surface,
+          type: type,
+          x: x,
+          y: y,
+          buttons: buttons,
+        );
+      }
+    }
+
+    final bool moved = _lastDispatchX != x || _lastDispatchY != y;
+    if (moved || _pointerDown) {
+      dispatchPointerToTargets(
+        type: 'pointermove',
         buttons: _pointerDown ? 1 : 0,
       );
       _lastDispatchX = x;
@@ -252,11 +330,9 @@ class TrackingService {
       _pointerDown = true;
       _pointerDownAt = DateTime.now();
       _pointerTarget = dispatchTarget;
-      _dispatchPointer(
-        target: _pointerTarget!,
+      dispatchPointerToTargets(
+        primaryTarget: _pointerTarget!,
         type: 'pointerdown',
-        x: x,
-        y: y,
         buttons: 1,
       );
       return;
@@ -264,11 +340,9 @@ class TrackingService {
 
     if (_pointerDown) {
       final moveTarget = _pointerTarget ?? dispatchTarget;
-      _dispatchPointer(
-        target: moveTarget,
+      dispatchPointerToTargets(
+        primaryTarget: moveTarget,
         type: 'pointermove',
-        x: x,
-        y: y,
         buttons: 1,
       );
     }
@@ -279,21 +353,18 @@ class TrackingService {
           ? 1000
           : DateTime.now().difference(downAt).inMilliseconds;
       final upTarget = _pointerTarget ?? dispatchTarget;
-      _dispatchPointer(
-        target: upTarget,
+      dispatchPointerToTargets(
+        primaryTarget: upTarget,
         type: 'pointerup',
-        x: x,
-        y: y,
         buttons: 0,
       );
 
       if (holdMs < 300) {
-        _dispatchPointer(
-          target: upTarget,
+        dispatchPointerToTargets(
+          primaryTarget: upTarget,
           type: 'click',
-          x: x,
-          y: y,
           buttons: 0,
+          includeSurfaceFallback: false,
         );
         _dispatchMouseClick(
           target: upTarget,
@@ -321,6 +392,10 @@ class TrackingService {
             final bool stale =
                 DateTime.now().difference(_lastFrameAt).inMilliseconds > 1200;
             if (!_trackerEnabled || !_dartCursorEnabled || stale) {
+              if (stale) {
+                _releasePointerAtCurrentPosition(cancel: true);
+                _clearHoverState();
+              }
               return const SizedBox.shrink();
             }
             final Color color = frame.wink || frame.pinch
@@ -450,7 +525,7 @@ class TrackingService {
     } catch (_) {}
   }
 
-  void _releasePointerAtCurrentPosition() {
+  void _releasePointerAtCurrentPosition({bool cancel = false}) {
     if (!_pointerDown) return;
     final target = _pointerTarget;
     _pointerDown = false;
@@ -461,7 +536,7 @@ class TrackingService {
     if (target == null) return;
     _dispatchPointer(
       target: target,
-      type: 'pointerup',
+      type: cancel ? 'pointercancel' : 'pointerup',
       x: frameNotifier.value.cursorX.round(),
       y: frameNotifier.value.cursorY.round(),
       buttons: 0,

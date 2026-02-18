@@ -198,7 +198,11 @@ class LayerMode extends StatefulWidget {
     this.embeddedStudio = false,
     this.persistPresets = true,
     this.onPresetSaved,
+    this.onLivePayloadChanged,
     this.useGlobalTracking = true,
+    this.pointerPassthrough = false,
+    this.reanchorToken = 0,
+    this.studioSurface = false,
   });
   final double? width, height;
   final Map<String, dynamic>? initialPresetPayload;
@@ -208,7 +212,11 @@ class LayerMode extends StatefulWidget {
   final bool embeddedStudio;
   final bool persistPresets;
   final void Function(String name, Map<String, dynamic> payload)? onPresetSaved;
+  final ValueChanged<Map<String, dynamic>>? onLivePayloadChanged;
   final bool useGlobalTracking;
+  final bool pointerPassthrough;
+  final int reanchorToken;
+  final bool studioSurface;
   @override
   State<LayerMode> createState() => _LayerModeState();
 }
@@ -268,6 +276,7 @@ class _LayerModeState extends State<LayerMode> {
   TextEditingController urlController = TextEditingController();
   TextEditingController presetNameController = TextEditingController();
   Timer? _debounceTimer;
+  String? _lastLivePayloadDigest;
   late String viewID;
   late String _trackerFrameElementId;
   late String _trackerBridgeChannel;
@@ -279,9 +288,24 @@ class _LayerModeState extends State<LayerMode> {
   StreamSubscription<Map<String, dynamic>>? _trackingDataSubscription;
   VoidCallback? _globalTrackingListener;
   bool _uploadingImage = false;
+
+  void _reanchorRuntimeToCurrentHead() {
+    setState(() {
+      anchorHeadX = headX;
+      anchorHeadY = headY;
+      zBase = zValue;
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    if (widget.embeddedStudio) {
+      isEditMode = true;
+      showLayerPanel = false;
+      showPropPanel = false;
+      isClearMode = false;
+    }
     _bootstrap();
 
     if (widget.externalHeadPose != null) {
@@ -308,6 +332,9 @@ class _LayerModeState extends State<LayerMode> {
   @override
   void didUpdateWidget(covariant LayerMode oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.reanchorToken != oldWidget.reanchorToken) {
+      _reanchorRuntimeToCurrentHead();
+    }
     if (widget.externalHeadPose != null) {
       _applyExternalHeadPose(widget.externalHeadPose!);
       return;
@@ -518,6 +545,8 @@ class _LayerModeState extends State<LayerMode> {
 
   @override
   void dispose() {
+    debugPrint(
+        'Disposing LayerMode(cleanView=${widget.cleanView}, embedded=${widget.embedded}, embeddedStudio=${widget.embeddedStudio})');
     _debounceTimer?.cancel();
     urlController.dispose();
     presetNameController.dispose();
@@ -622,6 +651,30 @@ class _LayerModeState extends State<LayerMode> {
         'editor': 'layer_mode',
       },
     ).toMap();
+  }
+
+  Map<String, dynamic> _buildLivePresetPayload() {
+    return PresetPayloadV2(
+      mode: '2d',
+      scene: _buildSceneLayersMap(),
+      controls: <String, dynamic>{
+        ..._controlSettingsMap(),
+        'selectedAspect': selectedAspect,
+      },
+      meta: const <String, dynamic>{
+        'editor': 'layer_mode',
+      },
+    ).toMap();
+  }
+
+  void _emitLivePayloadIfChanged() {
+    final callback = widget.onLivePayloadChanged;
+    if (callback == null) return;
+    final payload = _buildLivePresetPayload();
+    final digest = jsonEncode(payload);
+    if (_lastLivePayloadDigest == digest) return;
+    _lastLivePayloadDigest = digest;
+    callback(payload);
   }
 
   void _applyPresetControls(Map<String, dynamic>? controls) {
@@ -962,6 +1015,7 @@ class _LayerModeState extends State<LayerMode> {
     if (!widget.cleanView && controlPanelPos == Offset.zero) {
       controlPanelPos = Offset(MediaQuery.of(context).size.width - 320, 100);
     }
+    final bool showInternalUi = !widget.cleanView && !widget.embeddedStudio;
     final stack = Stack(
       clipBehavior: Clip.none,
       children: [
@@ -980,27 +1034,27 @@ class _LayerModeState extends State<LayerMode> {
               ),
             ),
           ),
-        if (!widget.cleanView && !isClearMode)
+        if (showInternalUi && !isClearMode)
           const Positioned(left: 20, bottom: 20, child: SizedBox()),
-        if (!widget.cleanView && !isClearMode)
+        if (showInternalUi && !isClearMode)
           Positioned(
               bottom: 20,
               left: 0,
               right: 0,
               child: Center(child: _buildBottomCenterToggle())),
-        if (!widget.cleanView && isEditMode && !isClearMode)
+        if (showInternalUi && isEditMode && !isClearMode)
           Positioned(right: 20, bottom: 20, child: _buildBottomRightControls()),
-        if (!widget.cleanView && isEditMode && !isClearMode) ...[
+        if (showInternalUi && isEditMode && !isClearMode) ...[
           if (showLayerPanel) _buildDraggableLayerManager(),
           _buildEditHeader(),
           if (showPropPanel && layerConfigs.isNotEmpty)
             _buildDraggablePropertiesPanel(),
           _buildPanelToggles(),
           Positioned(top: 60, left: 20, child: _aspectDropdown()),
-        ] else if (!widget.cleanView && !isClearMode) ...[
+        ] else if (showInternalUi && !isClearMode) ...[
           _buildDraggableControlPanel(),
         ],
-        if (!widget.cleanView)
+        if (showInternalUi)
           Positioned(right: 20, bottom: 20, child: _buildClearToggle()),
         if (!widget.cleanView && !widget.embedded)
           Positioned(
@@ -1036,10 +1090,18 @@ class _LayerModeState extends State<LayerMode> {
           ),
       ],
     );
-    if (widget.cleanView || widget.embedded) {
-      return ColoredBox(color: Colors.black, child: stack);
+    final Widget wrapped = IgnorePointer(
+      ignoring: widget.pointerPassthrough,
+      child: stack,
+    );
+    if (widget.onLivePayloadChanged != null &&
+        (widget.studioSurface || widget.embeddedStudio)) {
+      scheduleMicrotask(_emitLivePayloadIfChanged);
     }
-    return Scaffold(backgroundColor: Colors.black, body: stack);
+    if (widget.cleanView || widget.embedded) {
+      return ColoredBox(color: Colors.black, child: wrapped);
+    }
+    return Scaffold(backgroundColor: Colors.black, body: wrapped);
   }
 
   Widget _aspectDropdown() {
