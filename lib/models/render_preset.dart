@@ -1,6 +1,7 @@
 class RenderPreset {
   RenderPreset({
     required this.id,
+    required this.shareId,
     required this.userId,
     required this.mode,
     required this.name,
@@ -17,6 +18,7 @@ class RenderPreset {
   });
 
   final String id;
+  final String shareId;
   final String userId;
   final String mode;
   final String name;
@@ -54,6 +56,7 @@ class RenderPreset {
             : 'public';
     return RenderPreset(
       id: map['id']?.toString() ?? '',
+      shareId: map['share_id']?.toString() ?? '',
       userId: map['user_id']?.toString() ?? '',
       mode: map['mode']?.toString() ?? '2d',
       name: map['name']?.toString() ?? 'Untitled',

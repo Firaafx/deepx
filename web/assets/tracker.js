@@ -888,18 +888,18 @@ async function updatePerformanceSettings() {
 
     const viewportW = Math.max(window.innerWidth || 1, 1);
     const viewportH = Math.max(window.innerHeight || 1, 1);
-    const aspect = viewportW / viewportH;
+    const sensorAspect = 4 / 3;
     let captureWidth;
     let captureHeight;
-    if (aspect >= 1) {
-        captureHeight = baseShort;
-        captureWidth = Math.round(baseShort * aspect);
+    if (viewportW >= viewportH) {
+        captureHeight = Math.round(baseShort * 1.25);
+        captureWidth = Math.round(captureHeight * sensorAspect);
     } else {
         captureWidth = baseShort;
-        captureHeight = Math.round(baseShort / aspect);
+        captureHeight = Math.round(captureWidth / sensorAspect);
     }
-    captureWidth = Math.max(160, Math.min(1280, captureWidth));
-    captureHeight = Math.max(120, Math.min(1280, captureHeight));
+    captureWidth = Math.max(200, Math.min(1280, captureWidth));
+    captureHeight = Math.max(160, Math.min(1280, captureHeight));
     const videoBox = document.getElementById('ui-video-box');
     if (videoBox) {
         videoBox.style.setProperty('--camera-aspect', `${captureWidth} / ${captureHeight}`);
@@ -926,7 +926,16 @@ async function updatePerformanceSettings() {
             }
             startTime = performance.now();
             const selectedMode = document.getElementById('cursor-mode').value;
-            if (selectedMode === 'hand') {
+            const shouldProbeHand =
+                selectedMode === 'hand' ||
+                hasHand ||
+                (frameCounter % 2 === 0);
+            try {
+                await faceMesh.send({image: video});
+            } catch (err) {
+                console.warn('Face pipeline dropped one frame.', err);
+            }
+            if (shouldProbeHand) {
                 try {
                     await hands.send({image: video});
                 } catch (err) {
@@ -936,12 +945,6 @@ async function updatePerformanceSettings() {
                     isPinching = false;
                     handStableFrames = 0;
                     handMissingFrames = 0;
-                }
-            } else {
-                try {
-                    await faceMesh.send({image: video});
-                } catch (err) {
-                    console.warn('Face pipeline dropped one frame.', err);
                 }
             }
             frameCounter++;
@@ -1371,7 +1374,7 @@ function frameUpdate() {
                     accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
                 }
                 let cursorDeltaX = deltaYaw * baseSensH * accelX * 1;
-                let cursorDeltaY = deltaPitch * baseSensV * accelY;
+                let cursorDeltaY = deltaPitch * baseSensV * accelY * 2.2;
                 targetX += cursorDeltaX;
                 targetY += cursorDeltaY;
                 targetX = Math.max(0, Math.min(window.innerWidth, targetX));
@@ -1404,7 +1407,7 @@ function frameUpdate() {
                 accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
             }
             let cursorDeltaX = deltaYaw * baseSensH * accelX * 2.5;
-            let cursorDeltaY = deltaPitch * baseSensV * accelY * 2.5;
+            let cursorDeltaY = deltaPitch * baseSensV * accelY * 4.2;
             targetX += cursorDeltaX;
             targetY += cursorDeltaY;
             targetX = Math.max(0, Math.min(window.innerWidth, targetX));

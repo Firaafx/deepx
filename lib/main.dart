@@ -87,6 +87,24 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
+    List<String> normalizedPathSegments(Uri uri) {
+      final List<String> raw =
+          uri.pathSegments.where((segment) => segment.isNotEmpty).toList();
+      final List<String> basePath = Uri.base.pathSegments
+          .where((segment) => segment.isNotEmpty)
+          .toList();
+      final bool hostedOnGithubPages =
+          Uri.base.host.toLowerCase().endsWith('github.io');
+      final String? repoPrefix =
+          hostedOnGithubPages && basePath.isNotEmpty ? basePath.first : null;
+      if (repoPrefix != null &&
+          raw.isNotEmpty &&
+          raw.first.toLowerCase() == repoPrefix.toLowerCase()) {
+        return raw.sublist(1);
+      }
+      return raw;
+    }
+
     Route<dynamic> buildFeedRoute({
       required String name,
       required String initialTab,
@@ -147,7 +165,7 @@ class _MyAppState extends State<MyApp> {
       onGenerateRoute: (settings) {
         final String name = settings.name ?? '/';
         final Uri uri = Uri.parse(name);
-        final List<String> segments = uri.pathSegments;
+        final List<String> segments = normalizedPathSegments(uri);
 
         if (name == '/auth') {
           return MaterialPageRoute<void>(
@@ -177,6 +195,30 @@ class _MyAppState extends State<MyApp> {
         if (name == '/feed' || name == '/app') {
           return buildFeedRoute(name: '/feed/home', initialTab: 'home');
         }
+
+        if (segments.isNotEmpty && segments.first == 'post') {
+          final String idOrShareId = segments.length > 1
+              ? Uri.decodeComponent(segments[1])
+              : '';
+          return MaterialPageRoute<void>(
+            settings: RouteSettings(name: '/post/$idOrShareId'),
+            builder: (_) => StandalonePostRoutePage(
+              idOrShareId: idOrShareId,
+            ),
+          );
+        }
+        if (segments.isNotEmpty && segments.first == 'collection') {
+          final String idOrShareId = segments.length > 1
+              ? Uri.decodeComponent(segments[1])
+              : '';
+          return MaterialPageRoute<void>(
+            settings: RouteSettings(name: '/collection/$idOrShareId'),
+            builder: (_) => StandaloneCollectionRoutePage(
+              idOrShareId: idOrShareId,
+            ),
+          );
+        }
+
         if (segments.isNotEmpty && segments.first == 'feed') {
           final String tab = segments.length > 1 ? segments[1] : 'home';
           return buildFeedRoute(name: '/feed/$tab', initialTab: tab);

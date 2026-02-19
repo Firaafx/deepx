@@ -31,6 +31,7 @@ class CollectionItemSnapshot {
 class CollectionSummary {
   CollectionSummary({
     required this.id,
+    required this.shareId,
     required this.userId,
     required this.name,
     required this.description,
@@ -47,6 +48,7 @@ class CollectionSummary {
   });
 
   final String id;
+  final String shareId;
   final String userId;
   final String name;
   final String description;

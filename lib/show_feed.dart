@@ -10,6 +10,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:swipable_stack/swipable_stack.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'engine3d.dart';
 import 'layer_mode.dart';
@@ -27,6 +28,7 @@ import 'services/app_repository.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
 import 'widgets/preset_viewer.dart';
+import 'widgets/window_effect_2d_preview.dart';
 
 enum _ShellTab {
   home,
@@ -40,6 +42,279 @@ enum _ShellTab {
 enum _ComposerKind {
   single,
   collection,
+}
+
+String _routeIdFromShareOrUuid({
+  required String shareId,
+  required String uuid,
+}) {
+  final String trimmedShareId = shareId.trim();
+  if (trimmedShareId.isNotEmpty) return trimmedShareId;
+  return uuid.trim();
+}
+
+String buildPostRoutePathForPreset(RenderPreset preset) {
+  final String routeId = _routeIdFromShareOrUuid(
+    shareId: preset.shareId,
+    uuid: preset.id,
+  );
+  return '/post/${Uri.encodeComponent(routeId)}';
+}
+
+String buildCollectionRoutePathForSummary(CollectionSummary summary) {
+  final String routeId = _routeIdFromShareOrUuid(
+    shareId: summary.shareId,
+    uuid: summary.id,
+  );
+  return '/collection/${Uri.encodeComponent(routeId)}';
+}
+
+String _githubPagesBasePrefix() {
+  final Uri base = Uri.base;
+  if (!base.host.toLowerCase().endsWith('github.io')) return '';
+  final List<String> segments =
+      base.pathSegments.where((segment) => segment.isNotEmpty).toList();
+  if (segments.isEmpty) return '';
+  return '/${segments.first}';
+}
+
+String _publicShareUrl(String routePath) {
+  final String prefix = _githubPagesBasePrefix();
+  return '${Uri.base.origin}$prefix$routePath';
+}
+
+String buildPostShareUrl(RenderPreset preset) {
+  return _publicShareUrl(buildPostRoutePathForPreset(preset));
+}
+
+String buildCollectionShareUrl(CollectionSummary summary) {
+  return _publicShareUrl(buildCollectionRoutePathForSummary(summary));
+}
+
+class _TopEdgeLoadingPane extends StatelessWidget {
+  const _TopEdgeLoadingPane({
+    this.label,
+    this.backgroundColor,
+    this.minHeight = 3,
+  });
+
+  final String? label;
+  final Color? backgroundColor;
+  final double minHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    return ColoredBox(
+      color: backgroundColor ?? Theme.of(context).scaffoldBackgroundColor,
+      child: Stack(
+        children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: LinearProgressIndicator(
+              minHeight: minHeight,
+              backgroundColor: Colors.transparent,
+              color: cs.primary,
+            ),
+          ),
+          if (label != null && label!.trim().isNotEmpty)
+            Center(
+              child: Text(
+                label!,
+                style: TextStyle(color: cs.onSurfaceVariant),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class StandalonePostRoutePage extends StatefulWidget {
+  const StandalonePostRoutePage({
+    super.key,
+    required this.idOrShareId,
+  });
+
+  final String idOrShareId;
+
+  @override
+  State<StandalonePostRoutePage> createState() => _StandalonePostRoutePageState();
+}
+
+class _StandalonePostRoutePageState extends State<StandalonePostRoutePage> {
+  final AppRepository _repository = AppRepository.instance;
+  bool _loading = true;
+  String? _error;
+  FeedPost? _post;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final String routeId = widget.idOrShareId.trim();
+    if (routeId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Post link is invalid.';
+      });
+      return;
+    }
+    try {
+      final post = await _repository.fetchFeedPostByRouteId(routeId);
+      if (!mounted) return;
+      if (post == null) {
+        setState(() {
+          _loading = false;
+          _error = 'Post not found.';
+        });
+        return;
+      }
+      setState(() {
+        _post = post;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Failed to load post: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: _TopEdgeLoadingPane(label: 'Loading post...'),
+      );
+    }
+    if (_error != null) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: Stack(
+          children: [
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(minHeight: 3, value: 1),
+            ),
+            Center(
+              child: Text(
+                _error!,
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return _PresetDetailPage(initialPost: _post!);
+  }
+}
+
+class StandaloneCollectionRoutePage extends StatefulWidget {
+  const StandaloneCollectionRoutePage({
+    super.key,
+    required this.idOrShareId,
+  });
+
+  final String idOrShareId;
+
+  @override
+  State<StandaloneCollectionRoutePage> createState() =>
+      _StandaloneCollectionRoutePageState();
+}
+
+class _StandaloneCollectionRoutePageState
+    extends State<StandaloneCollectionRoutePage> {
+  final AppRepository _repository = AppRepository.instance;
+  bool _loading = true;
+  String? _error;
+  CollectionDetail? _detail;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final String routeId = widget.idOrShareId.trim();
+    if (routeId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Collection link is invalid.';
+      });
+      return;
+    }
+    try {
+      final detail = await _repository.fetchCollectionByRouteId(routeId);
+      if (!mounted) return;
+      if (detail == null) {
+        setState(() {
+          _loading = false;
+          _error = 'Collection not found.';
+        });
+        return;
+      }
+      setState(() {
+        _detail = detail;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Failed to load collection: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: _TopEdgeLoadingPane(label: 'Loading collection...'),
+      );
+    }
+    if (_error != null) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: Stack(
+          children: [
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(minHeight: 3, value: 1),
+            ),
+            Center(
+              child: Text(
+                _error!,
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return _CollectionDetailPage(
+      collectionId: _detail!.summary.id,
+      initialSummary: _detail!.summary,
+    );
+  }
 }
 
 class _NavItem {
@@ -277,27 +552,20 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
 
     final String targetId = item.data['preset_id']?.toString() ?? '';
     if (targetId.isEmpty) return;
-    final post = await _repository.fetchFeedPostById(targetId);
+    final post = await _repository.fetchFeedPostByRouteId(targetId);
     if (!mounted) return;
     if (post != null) {
-      await Navigator.push(
+      await Navigator.pushNamed(
         context,
-        MaterialPageRoute(
-          builder: (_) => _PresetDetailPage(initialPost: post),
-        ),
+        buildPostRoutePathForPreset(post.preset),
       );
       return;
     }
-    final collection = await _repository.fetchCollectionById(targetId);
+    final collection = await _repository.fetchCollectionByRouteId(targetId);
     if (!mounted || collection == null) return;
-    await Navigator.push(
+    await Navigator.pushNamed(
       context,
-      MaterialPageRoute(
-        builder: (_) => _CollectionDetailPage(
-          collectionId: collection.summary.id,
-          initialSummary: collection.summary,
-        ),
-      ),
+      buildCollectionRoutePathForSummary(collection.summary),
     );
   }
 
@@ -409,28 +677,14 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
         local.dy >= 0 &&
         local.dx <= box.size.width &&
         local.dy <= box.size.height;
-    final bool insideHysteresis = local.dx >= -12 &&
-        local.dy >= -12 &&
-        local.dx <= box.size.width + 12 &&
-        local.dy <= box.size.height + 12;
     if (insideStrict) {
       _lastTrackerHoverInsideAt = DateTime.now();
       _trackerNavDebounce?.cancel();
       _setTrackerNavHover(true);
       return;
     }
-    if (_trackerNavHover && insideHysteresis) {
-      final Duration elapsed =
-          DateTime.now().difference(_lastTrackerHoverInsideAt);
-      if (elapsed.inMilliseconds < 220) {
-        return;
-      }
-    }
     _trackerNavDebounce?.cancel();
-    _trackerNavDebounce = Timer(const Duration(milliseconds: 130), () {
-      if (!mounted) return;
-      _setTrackerNavHover(false);
-    });
+    _setTrackerNavHover(false);
   }
 
   void _setTrackerNavHover(bool value) {
@@ -485,7 +739,18 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
       }
       return;
     }
-    Navigator.pushReplacementNamed(context, targetPath);
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder<void>(
+        settings: RouteSettings(name: targetPath),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder: (_, __, ___) => ShowFeedPage(
+          themeMode: widget.themeMode,
+          onThemeModeChanged: widget.onThemeModeChanged,
+          initialTab: _segmentForTab(tab),
+        ),
+      ),
+    );
   }
 
   void _onScrollableDirection(bool showHeader) {
@@ -658,11 +923,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                         child: Stack(
                           children: [
                             Positioned.fill(
-                              child: ColoredBox(
-                                color: Colors.black.withValues(alpha: 0.22),
-                              ),
-                            ),
-                            Positioned.fill(
                               child: IgnorePointer(
                                 child: DecoratedBox(
                                   decoration: BoxDecoration(
@@ -670,12 +930,10 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                       begin: Alignment.topCenter,
                                       end: Alignment.bottomCenter,
                                       colors: [
-                                        Colors.black.withValues(alpha: 0.6),
-                                        Colors.black.withValues(alpha: 0.26),
-                                        Colors.black.withValues(alpha: 0.06),
+                                        Colors.black.withValues(alpha: 0.8),
                                         Colors.transparent,
                                       ],
-                                      stops: const [0, 0.48, 0.82, 1],
+                                      stops: const [0, 1],
                                     ),
                                   ),
                                 ),
@@ -951,13 +1209,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
   Future<void> _openPost(FeedPost post) async {
     await _repository.recordPresetView(post.preset.id);
     if (!mounted) return;
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => _PresetDetailPage(initialPost: post),
-      ),
-    );
+    await Navigator.pushNamed(context, buildPostRoutePathForPreset(post.preset));
     await _loadFeed();
   }
 
@@ -1040,9 +1292,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     if (_loading) {
-      return Center(
-        child: CircularProgressIndicator(color: cs.primary),
-      );
+      return const _TopEdgeLoadingPane(label: 'Loading feed...');
     }
 
     if (_error != null) {
@@ -1184,14 +1434,9 @@ class _CollectionTabState extends State<_CollectionTab> {
   }
 
   Future<void> _openCollection(CollectionSummary summary) async {
-    await Navigator.push(
+    await Navigator.pushNamed(
       context,
-      MaterialPageRoute(
-        builder: (_) => _CollectionDetailPage(
-          collectionId: summary.id,
-          initialSummary: summary,
-        ),
-      ),
+      buildCollectionRoutePathForSummary(summary),
     );
     await _loadCollections();
   }
@@ -1290,9 +1535,7 @@ class _CollectionTabState extends State<_CollectionTab> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     if (_loading) {
-      return Center(
-        child: CircularProgressIndicator(color: cs.primary),
-      );
+      return const _TopEdgeLoadingPane(label: 'Loading collections...');
     }
 
     if (_error != null) {
@@ -1391,7 +1634,11 @@ class _CollectionFeedTile extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final item = summary.firstItem;
     final BorderRadius cardRadius = BorderRadius.circular(16);
-    final preview = item == null
+    final String previewMode = summary.thumbnailMode ?? item?.mode ?? '2d';
+    final Map<String, dynamic> previewPayload = summary.thumbnailPayload.isNotEmpty
+        ? summary.thumbnailPayload
+        : (item?.snapshot ?? const <String, dynamic>{});
+    final preview = previewPayload.isEmpty
         ? Container(
             color: cs.surfaceContainerLow,
             child: Center(
@@ -1403,8 +1650,8 @@ class _CollectionFeedTile extends StatelessWidget {
             ),
           )
         : _GridPresetPreview(
-            mode: item.mode,
-            payload: item.snapshot,
+            mode: previewMode,
+            payload: previewPayload,
             borderRadius: cardRadius,
           );
 
@@ -1582,9 +1829,14 @@ class _FeedTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final BorderRadius cardRadius = BorderRadius.circular(16);
+    final String previewMode = post.preset.thumbnailMode ?? post.preset.mode;
+    final Map<String, dynamic> previewPayload =
+        post.preset.thumbnailPayload.isNotEmpty
+            ? post.preset.thumbnailPayload
+            : post.preset.payload;
     final Widget preview = _GridPresetPreview(
-      mode: post.preset.mode,
-      payload: post.preset.payload,
+      mode: previewMode,
+      payload: previewPayload,
       borderRadius: cardRadius,
     );
 
@@ -1773,17 +2025,10 @@ class _GridPresetPreview extends StatelessWidget {
     }
 
     if (adapted.mode == '2d') {
-      return _ScaledCardPresetViewport(
+      return WindowEffect2DPreview(
+        mode: adapted.mode,
+        payload: adapted.toMap(),
         borderRadius: borderRadius,
-        child: PresetViewer(
-          mode: adapted.mode,
-          payload: adapted.toMap(),
-          cleanView: true,
-          embedded: true,
-          disableAudio: true,
-          useGlobalTracking: true,
-          pointerPassthrough: pointerPassthrough,
-        ),
       );
     }
 
@@ -1953,57 +2198,6 @@ class _GridPresetPreview extends StatelessWidget {
     final audios = scene['audios'];
     if (audios is List && audios.isNotEmpty) return true;
     return false;
-  }
-}
-
-class _ScaledCardPresetViewport extends StatelessWidget {
-  const _ScaledCardPresetViewport({
-    required this.child,
-    required this.borderRadius,
-  });
-
-  final Widget child;
-  final BorderRadius borderRadius;
-  static const Size _virtualCanvas = Size(1920, 1080);
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: ColoredBox(
-        color: Colors.black,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final double width = constraints.maxWidth.isFinite
-                ? constraints.maxWidth
-                : _virtualCanvas.width;
-            final double height = constraints.maxHeight.isFinite
-                ? constraints.maxHeight
-                : _virtualCanvas.height;
-            final double scale = math.max(
-              width / _virtualCanvas.width,
-              height / _virtualCanvas.height,
-            );
-            final double scaledWidth = _virtualCanvas.width * scale;
-            final double scaledHeight = _virtualCanvas.height * scale;
-            return ClipRect(
-              child: OverflowBox(
-                alignment: Alignment.center,
-                minWidth: scaledWidth,
-                maxWidth: scaledWidth,
-                minHeight: scaledHeight,
-                maxHeight: scaledHeight,
-                child: SizedBox(
-                  width: _virtualCanvas.width,
-                  height: _virtualCanvas.height,
-                  child: child,
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
   }
 }
 
@@ -2202,6 +2396,135 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         SnackBar(content: Text('Share failed: $e')),
       );
     }
+  }
+
+  Future<void> _copyPostLinkToClipboard() async {
+    final String link = buildPostShareUrl(_post.preset);
+    await Clipboard.setData(ClipboardData(text: link));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Post link copied to clipboard.')),
+    );
+  }
+
+  Future<void> _openShareUrl(
+    String url, {
+    bool copyLinkFirst = false,
+  }) async {
+    if (copyLinkFirst) {
+      await _copyPostLinkToClipboard();
+    }
+    final Uri? uri = Uri.tryParse(url);
+    if (uri == null) return;
+    final bool launched =
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to open $url')),
+      );
+    }
+  }
+
+  Future<void> _openShareSheet() async {
+    final String link = buildPostShareUrl(_post.preset);
+    final String encodedLink = Uri.encodeComponent(link);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.person_add_alt_1_outlined),
+                title: const Text('Share to user'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _shareToUser();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.link),
+                title: const Text('Copy link'),
+                subtitle: Text(link, maxLines: 1, overflow: TextOverflow.ellipsis),
+                onTap: () {
+                  Navigator.pop(context);
+                  _copyPostLinkToClipboard();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.send),
+                title: const Text('Telegram'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openShareUrl('https://t.me/share/url?url=$encodedLink');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.public),
+                title: const Text('Facebook'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openShareUrl(
+                    'https://www.facebook.com/sharer/sharer.php?u=$encodedLink',
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.chat_bubble_outline),
+                title: const Text('WhatsApp'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openShareUrl('https://wa.me/?text=$encodedLink');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.alternate_email),
+                title: const Text('X (Twitter)'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openShareUrl('https://twitter.com/intent/tweet?url=$encodedLink');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined),
+                title: const Text('Instagram'),
+                subtitle: const Text('Copies link first'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openShareUrl(
+                    'https://www.instagram.com/',
+                    copyLinkFirst: true,
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_front_outlined),
+                title: const Text('Snapchat'),
+                subtitle: const Text('Copies link first'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openShareUrl(
+                    'https://www.snapchat.com/',
+                    copyLinkFirst: true,
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.forum_outlined),
+                title: const Text('Reddit'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openShareUrl('https://www.reddit.com/submit?url=$encodedLink');
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _sendComment() async {
@@ -2514,7 +2837,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                             active: false,
                             activeColor: cs.primary,
                             label: '',
-                            onTap: _shareToUser,
+                            onTap: _openShareSheet,
                           ),
                           _engagementButton(
                             icon: _post.isSaved
@@ -2563,8 +2886,10 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                                   const SizedBox(height: 12),
                                   Expanded(
                                     child: _loadingComments
-                                        ? const Center(
-                                            child: CircularProgressIndicator(),
+                                        ? const _TopEdgeLoadingPane(
+                                            label: 'Loading comments...',
+                                            backgroundColor: Colors.transparent,
+                                            minHeight: 2,
                                           )
                                         : _comments.isEmpty
                                             ? const Center(
@@ -2707,6 +3032,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   int _selectedItemIndex = -1;
   bool _publishing = false;
   bool _openingComposer = false;
+  bool _studioUploadingImage = false;
   bool _studioChromeVisible = true;
   bool _editorFullscreen = false;
   int _studioReanchorToken = 0;
@@ -3051,6 +3377,28 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     return double.tryParse(value?.toString() ?? '') ?? fallback;
   }
 
+  Widget _studioSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double> onChanged,
+  }) {
+    final double clamped = value.clamp(min, max).toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('$label: ${clamped.toStringAsFixed(3)}'),
+        Slider(
+          value: clamped,
+          min: min,
+          max: max,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+
   bool _payloadMatchesMode(Map<String, dynamic>? payload, String mode) {
     if (payload == null) return false;
     final raw = payload['mode']?.toString().toLowerCase();
@@ -3059,7 +3407,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   }
 
   void _applyStudioPayload(Map<String, dynamic> payload,
-      {bool remount = true}) {
+      {bool remount = false}) {
     final mode = _modeIndex == 0 ? '2d' : '3d';
     setState(() {
       _studioLivePayload = _cloneMap(payload);
@@ -3157,7 +3505,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     _applyStudioPayload(payload);
   }
 
-  void _studioAdd2DLayer(bool textLayer) {
+  void _studioAdd2DLayer(bool textLayer, {String imageUrl = ''}) {
     final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
     final scene = _studio2DScene();
     _normalizeStudio2DOrder(scene);
@@ -3180,7 +3528,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         'fontSize': 40.0,
         'fontFamily': 'Poppins',
       } else ...{
-        'url': '',
+        'url': imageUrl,
       },
     };
     payload['scene'] = scene;
@@ -3234,6 +3582,95 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     scene[key] = Map<String, dynamic>.from(raw)..[field] = value;
     payload['scene'] = scene;
     _applyStudioPayload(payload);
+  }
+
+  Map<String, dynamic> _studio2DControls() {
+    final dynamic payload = _studioLivePayload;
+    if (payload is! Map) return <String, dynamic>{};
+    final dynamic raw = payload['controls'];
+    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return <String, dynamic>{};
+  }
+
+  void _studioSet2DControlField(String field, dynamic value) {
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final controls = _studio2DControls();
+    controls[field] = value;
+    payload['controls'] = controls;
+    _applyStudioPayload(payload);
+  }
+
+  void _studioRecenter2DParallax() {
+    final frame = TrackingService.instance.frameNotifier.value;
+    final controls = _studio2DControls();
+    controls['anchorHeadX'] = frame.headX;
+    controls['anchorHeadY'] = frame.headY;
+    controls['zBase'] = frame.headZ.abs() < 0.000001
+        ? _toDouble(controls['zBase'], 0.2)
+        : frame.headZ;
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    payload['controls'] = controls;
+    _applyStudioPayload(payload);
+  }
+
+  Future<void> _studioPromptAddImageUrl() async {
+    final TextEditingController controller = TextEditingController();
+    final String? url = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Image URL'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/image.png',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (url == null || url.trim().isEmpty) return;
+    _studioAdd2DLayer(false, imageUrl: url.trim());
+  }
+
+  Future<void> _studioUpload2DImage() async {
+    if (_studioUploadingImage) return;
+    setState(() => _studioUploadingImage = true);
+    try {
+      final picked = await pickDeviceFile(accept: 'image/*');
+      if (picked == null) return;
+      final String publicUrl = await _repository.uploadAssetBytes(
+        bytes: picked.bytes,
+        fileName: picked.name,
+        contentType: picked.contentType,
+        folder: 'studio-layers',
+      );
+      if (!mounted) return;
+      _studioAdd2DLayer(false, imageUrl: publicUrl);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Image uploaded to studio layer.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Image upload failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _studioUploadingImage = false);
+      }
+    }
   }
 
   Map<String, dynamic> _studio3DScene() {
@@ -3449,6 +3886,17 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     final cs = Theme.of(context).colorScheme;
     if (_modeIndex == 0) {
       final keys = _studio2DLayerKeys();
+      final controls = _studio2DControls();
+      final scene = _studio2DScene();
+      final dynamic selectedLayerRaw =
+          _studioSelected2dLayerKey == null ? null : scene[_studioSelected2dLayerKey!];
+      final Map<String, dynamic>? selectedLayer = selectedLayerRaw is Map
+          ? Map<String, dynamic>.from(selectedLayerRaw)
+          : null;
+      final dynamic turningRaw = scene['turning_point'];
+      final Map<String, dynamic> turningPoint = turningRaw is Map
+          ? Map<String, dynamic>.from(turningRaw)
+          : <String, dynamic>{};
       _ensureStudio2DSelection();
       return Container(
         width: 320,
@@ -3469,10 +3917,15 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () => _studioAdd2DLayer(false),
+                  onPressed: _studioPromptAddImageUrl,
                   icon:
                       const Icon(Icons.add_photo_alternate_outlined, size: 16),
-                  label: const Text('Image'),
+                  label: const Text('Image URL'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _studioUploadingImage ? null : _studioUpload2DImage,
+                  icon: const Icon(Icons.upload_file_outlined, size: 16),
+                  label: Text(_studioUploadingImage ? 'Uploading...' : 'Upload'),
                 ),
                 OutlinedButton.icon(
                   onPressed: () => _studioAdd2DLayer(true),
@@ -3497,9 +3950,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
             ),
             const SizedBox(height: 8),
             if (keys.isEmpty)
-              const Expanded(child: Center(child: Text('No layers')))
+              const SizedBox(
+                height: 120,
+                child: Center(child: Text('No layers')),
+              )
             else
-              Expanded(
+              SizedBox(
+                height: 180,
                 child: ReorderableListView.builder(
                   itemCount: keys.length,
                   onReorder: _studioReorder2DLayer,
@@ -3555,6 +4012,224 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   },
                 ),
               ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (selectedLayer != null) ...[
+                      Text(
+                        'Layer: ${_studioSelected2dLayerKey ?? ''}',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 6),
+                      if (selectedLayer['isText'] == true)
+                        TextFormField(
+                          initialValue:
+                              (selectedLayer['textValue'] ?? '').toString(),
+                          onChanged: (value) => _studioSet2DLayerField(
+                            _studioSelected2dLayerKey!,
+                            'textValue',
+                            value,
+                          ),
+                          decoration: const InputDecoration(labelText: 'Text'),
+                        )
+                      else
+                        TextFormField(
+                          initialValue:
+                              (selectedLayer['url'] ?? '').toString(),
+                          onChanged: (value) => _studioSet2DLayerField(
+                            _studioSelected2dLayerKey!,
+                            'url',
+                            value.trim(),
+                          ),
+                          decoration: const InputDecoration(labelText: 'Image URL'),
+                        ),
+                      _studioSlider(
+                        label: 'X',
+                        min: -1500,
+                        max: 1500,
+                        value: _toDouble(selectedLayer['x'], 0),
+                        onChanged: (v) => _studioSet2DLayerField(
+                          _studioSelected2dLayerKey!,
+                          'x',
+                          v,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Y',
+                        min: -1500,
+                        max: 1500,
+                        value: _toDouble(selectedLayer['y'], 0),
+                        onChanged: (v) => _studioSet2DLayerField(
+                          _studioSelected2dLayerKey!,
+                          'y',
+                          v,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Scale',
+                        min: 0.05,
+                        max: 6,
+                        value: _toDouble(selectedLayer['scale'], 1),
+                        onChanged: (v) => _studioSet2DLayerField(
+                          _studioSelected2dLayerKey!,
+                          'scale',
+                          v,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    const Text(
+                      '2D Controls',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    _studioSlider(
+                      label: 'Global Scale',
+                      min: 0.5,
+                      max: 2.5,
+                      value: _toDouble(controls['scale'], 1.2),
+                      onChanged: (v) => _studioSet2DControlField('scale', v),
+                    ),
+                    _studioSlider(
+                      label: 'Global Depth',
+                      min: 0,
+                      max: 1,
+                      value: _toDouble(controls['depth'], 0.1),
+                      onChanged: (v) => _studioSet2DControlField('depth', v),
+                    ),
+                    _studioSlider(
+                      label: 'Global Shift',
+                      min: 0,
+                      max: 1,
+                      value: _toDouble(controls['shift'], 0.025),
+                      onChanged: (v) => _studioSet2DControlField('shift', v),
+                    ),
+                    _studioSlider(
+                      label: 'Global Tilt',
+                      min: 0,
+                      max: 1,
+                      value: _toDouble(controls['tilt'], 0),
+                      onChanged: (v) => _studioSet2DControlField('tilt', v),
+                    ),
+                    _studioSlider(
+                      label: 'Dead Zone X',
+                      min: 0,
+                      max: 0.1,
+                      value: _toDouble(controls['deadZoneX'], 0),
+                      onChanged: (v) =>
+                          _studioSet2DControlField('deadZoneX', v),
+                    ),
+                    _studioSlider(
+                      label: 'Dead Zone Y',
+                      min: 0,
+                      max: 0.1,
+                      value: _toDouble(controls['deadZoneY'], 0),
+                      onChanged: (v) =>
+                          _studioSet2DControlField('deadZoneY', v),
+                    ),
+                    _studioSlider(
+                      label: 'Dead Zone Z',
+                      min: 0,
+                      max: 0.1,
+                      value: _toDouble(controls['deadZoneZ'], 0),
+                      onChanged: (v) =>
+                          _studioSet2DControlField('deadZoneZ', v),
+                    ),
+                    _studioSlider(
+                      label: 'Dead Zone Yaw',
+                      min: 0,
+                      max: 10,
+                      value: _toDouble(controls['deadZoneYaw'], 0),
+                      onChanged: (v) =>
+                          _studioSet2DControlField('deadZoneYaw', v),
+                    ),
+                    _studioSlider(
+                      label: 'Dead Zone Pitch',
+                      min: 0,
+                      max: 10,
+                      value: _toDouble(controls['deadZonePitch'], 0),
+                      onChanged: (v) =>
+                          _studioSet2DControlField('deadZonePitch', v),
+                    ),
+                    _studioSlider(
+                      label: 'Z Base',
+                      min: 0.05,
+                      max: 2.0,
+                      value: _toDouble(controls['zBase'], 0.2),
+                      onChanged: (v) => _studioSet2DControlField('zBase', v),
+                    ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Manual Mode'),
+                      value: controls['manualMode'] == true,
+                      onChanged: (v) =>
+                          _studioSet2DControlField('manualMode', v),
+                    ),
+                    DropdownButtonFormField<String>(
+                      value: (() {
+                        final String selectedAspect =
+                            (controls['selectedAspect'] ?? '').toString();
+                        const options = <String>[
+                          '16:9 (width:height)',
+                          '18:9 (width:height)',
+                          '21:9 (width:height)',
+                          '4:3 (width:height)',
+                          '1:1 (square)',
+                          '9:16 (height:width)',
+                          '3:4 (height:width)',
+                          '2.35:1 (width:height)',
+                          '1.85:1 (width:height)',
+                          '2.39:1 (width:height)',
+                        ];
+                        return options.contains(selectedAspect)
+                            ? selectedAspect
+                            : null;
+                      })(),
+                      items: const <String>[
+                        '16:9 (width:height)',
+                        '18:9 (width:height)',
+                        '21:9 (width:height)',
+                        '4:3 (width:height)',
+                        '1:1 (square)',
+                        '9:16 (height:width)',
+                        '3:4 (height:width)',
+                        '2.35:1 (width:height)',
+                        '1.85:1 (width:height)',
+                        '2.39:1 (width:height)',
+                      ]
+                          .map((ratio) => DropdownMenuItem<String>(
+                                value: ratio,
+                                child: Text(ratio),
+                              ))
+                          .toList(),
+                      onChanged: (value) =>
+                          _studioSet2DControlField('selectedAspect', value),
+                      decoration: const InputDecoration(labelText: 'Aspect Ratio'),
+                    ),
+                    _studioSlider(
+                      label: 'Turning Point',
+                      min: -200,
+                      max: 200,
+                      value: _toDouble(turningPoint['order'], 0),
+                      onChanged: (v) => _studioSet2DLayerField(
+                        'turning_point',
+                        'order',
+                        v,
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _studioRecenter2DParallax,
+                      icon: const Icon(Icons.gps_fixed, size: 16),
+                      label: const Text('Recenter'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       );
@@ -3959,7 +4634,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   ),
                 ),
               ),
-              if (collectionMode && !_editorFullscreen)
+              if (collectionMode)
                 Positioned(
                   left: 12,
                   top: 132,
@@ -3981,28 +4656,27 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                     ),
                   ),
                 ),
-              if (!_editorFullscreen)
-                Positioned(
-                  right: 12,
-                  top: 132,
-                  bottom: 12,
-                  width: 320,
-                  child: IgnorePointer(
-                    ignoring: !_studioChromeVisible,
-                    child: AnimatedSlide(
-                      offset: _studioChromeVisible
-                          ? Offset.zero
-                          : const Offset(0.08, 0),
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      child: AnimatedOpacity(
-                        opacity: _studioChromeVisible ? 1 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: _buildStudioControlsPanel(context),
-                      ),
+              Positioned(
+                right: 12,
+                top: 132,
+                bottom: 12,
+                width: 320,
+                child: IgnorePointer(
+                  ignoring: !_studioChromeVisible,
+                  child: AnimatedSlide(
+                    offset: _studioChromeVisible
+                        ? Offset.zero
+                        : const Offset(0.08, 0),
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    child: AnimatedOpacity(
+                      opacity: _studioChromeVisible ? 1 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: _buildStudioControlsPanel(context),
                     ),
                   ),
                 ),
+              ),
             ],
           ),
         ),
@@ -4353,6 +5027,135 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     }
   }
 
+  CollectionSummary? get _activeSummary => _detail?.summary ?? widget.initialSummary;
+
+  Future<void> _copyCollectionLinkToClipboard() async {
+    final summary = _activeSummary;
+    if (summary == null) return;
+    final String link = buildCollectionShareUrl(summary);
+    await Clipboard.setData(ClipboardData(text: link));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Collection link copied to clipboard.')),
+    );
+  }
+
+  Future<void> _openCollectionShareUrl(
+    String url, {
+    bool copyLinkFirst = false,
+  }) async {
+    if (copyLinkFirst) {
+      await _copyCollectionLinkToClipboard();
+    }
+    final Uri? uri = Uri.tryParse(url);
+    if (uri == null) return;
+    final bool launched =
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to open $url')),
+      );
+    }
+  }
+
+  Future<void> _openCollectionShareSheet() async {
+    final summary = _activeSummary;
+    if (summary == null) return;
+    final String link = buildCollectionShareUrl(summary);
+    final String encodedLink = Uri.encodeComponent(link);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('Copy link'),
+              subtitle: Text(link, maxLines: 1, overflow: TextOverflow.ellipsis),
+              onTap: () {
+                Navigator.pop(context);
+                _copyCollectionLinkToClipboard();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.send),
+              title: const Text('Telegram'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl('https://t.me/share/url?url=$encodedLink');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.public),
+              title: const Text('Facebook'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://www.facebook.com/sharer/sharer.php?u=$encodedLink',
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text('WhatsApp'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl('https://wa.me/?text=$encodedLink');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.alternate_email),
+              title: const Text('X (Twitter)'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://twitter.com/intent/tweet?url=$encodedLink',
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Instagram'),
+              subtitle: const Text('Copies link first'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://www.instagram.com/',
+                  copyLinkFirst: true,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_front_outlined),
+              title: const Text('Snapchat'),
+              subtitle: const Text('Copies link first'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://www.snapchat.com/',
+                  copyLinkFirst: true,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.forum_outlined),
+              title: const Text('Reddit'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://www.reddit.com/submit?url=$encodedLink',
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCard(CollectionItemSnapshot item) {
     return Stack(
       fit: StackFit.expand,
@@ -4414,8 +5217,8 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               child: Builder(
                 builder: (context) {
                   if (_loading) {
-                    return Center(
-                      child: CircularProgressIndicator(color: cs.primary),
+                    return const _TopEdgeLoadingPane(
+                      label: 'Loading collection...',
                     );
                   }
                   if (_error != null) {
@@ -4503,6 +5306,11 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                         ),
                       ),
                     ),
+                  IconButton(
+                    tooltip: 'Share collection',
+                    onPressed: _openCollectionShareSheet,
+                    icon: Icon(Icons.share_outlined, color: cs.onSurfaceVariant),
+                  ),
                   if (_mine)
                     PopupMenuButton<String>(
                       color: cs.surfaceContainerHighest,
@@ -4602,50 +5410,8 @@ class _ProfileTabState extends State<_ProfileTab> {
 
   Future<void> _openPost(RenderPreset preset) async {
     await _repository.recordPresetView(preset.id);
-
-    final FeedPost? post = await _repository.fetchFeedPostById(preset.id);
     if (!mounted) return;
-    if (post != null) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => _PresetDetailPage(initialPost: post)),
-      );
-      await _load();
-      return;
-    }
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: Colors.black,
-          body: SafeArea(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: PresetViewer(
-                    mode: preset.mode,
-                    payload: preset.payload,
-                    cleanView: true,
-                    embedded: true,
-                    disableAudio: true,
-                    pointerPassthrough: true,
-                  ),
-                ),
-                Positioned(
-                  top: 14,
-                  left: 14,
-                  child: IconButton.filledTonal(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+    await Navigator.pushNamed(context, buildPostRoutePathForPreset(preset));
     await _load();
   }
 
@@ -4695,9 +5461,7 @@ class _ProfileTabState extends State<_ProfileTab> {
     final Color profilePanelColor =
         isDark ? const Color(0xFF1E1E1E) : cs.surface;
     if (_loading) {
-      return Center(
-        child: CircularProgressIndicator(color: cs.primary),
-      );
+      return const _TopEdgeLoadingPane(label: 'Loading profile...');
     }
 
     if (_profile == null) {
@@ -5241,28 +6005,16 @@ class _ChatTabState extends State<_ChatTab> {
   }
 
   Future<void> _openSharedPreset(String presetId) async {
-    final preset = await _repository.fetchPresetById(presetId);
-    if (!mounted || preset == null) return;
-
-    final FeedPost? post = await _repository.fetchFeedPostById(presetId);
+    final preset = await _repository.fetchPresetByRouteId(presetId);
     if (!mounted) return;
-    if (post != null) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => _PresetDetailPage(initialPost: post)),
-      );
+    if (preset != null) {
+      await Navigator.pushNamed(context, buildPostRoutePathForPreset(preset));
       return;
     }
-
-    final page = preset.mode == '2d'
-        ? LayerMode(cleanView: true, initialPresetPayload: preset.payload)
-        : Engine3DPage(
-            embedded: true,
-            cleanView: true,
-            disableAudio: true,
-            initialPresetPayload: preset.payload,
-          );
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+    await Navigator.pushNamed(
+      context,
+      '/post/${Uri.encodeComponent(presetId)}',
+    );
   }
 
   Future<void> _newDirectChat() async {
@@ -5314,9 +6066,7 @@ class _ChatTabState extends State<_ChatTab> {
     final Color messageInputColor =
         isDark ? const Color(0xFF1E1E1E) : cs.surfaceContainerHighest;
     if (_loading) {
-      return Center(
-        child: CircularProgressIndicator(color: cs.primary),
-      );
+      return const _TopEdgeLoadingPane(label: 'Loading chats...');
     }
     if (_error != null) {
       return Center(
@@ -5719,9 +6469,9 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
             ),
             const SizedBox(height: 10),
             if (_loading)
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: CircularProgressIndicator(color: cs.primary),
+              const SizedBox(
+                height: 72,
+                child: _TopEdgeLoadingPane(label: 'Searching users...'),
               )
             else if (_error != null)
               Padding(
@@ -5886,9 +6636,9 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
             ),
             const SizedBox(height: 10),
             if (_loading)
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: CircularProgressIndicator(color: cs.primary),
+              const SizedBox(
+                height: 72,
+                child: _TopEdgeLoadingPane(label: 'Searching users...'),
               )
             else if (_error != null)
               Padding(
@@ -6019,6 +6769,30 @@ class _PostCardComposerPage extends StatefulWidget {
 
 class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   final AppRepository _repository = AppRepository.instance;
+  static const List<String> _fontOptions = <String>[
+    'Poppins',
+    'Roboto',
+    'Montserrat',
+    'Open Sans',
+    'Lato',
+    'Oswald',
+    'Raleway',
+    'Playfair Display',
+    'Bebas Neue',
+    'Pacifico',
+  ];
+  static const List<String> _aspectOptions = <String>[
+    '16:9 (width:height)',
+    '18:9 (width:height)',
+    '21:9 (width:height)',
+    '4:3 (width:height)',
+    '1:1 (square)',
+    '9:16 (height:width)',
+    '3:4 (height:width)',
+    '2.35:1 (width:height)',
+    '1.85:1 (width:height)',
+    '2.39:1 (width:height)',
+  ];
 
   late final TextEditingController _titleController;
   late final TextEditingController _descriptionController;
@@ -6035,6 +6809,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   bool _mentionLoading = false;
 
   bool _submitting = false;
+  bool _uploadingLayerImage = false;
   bool _isPublic = true;
   bool _showPublishStep = false;
   int _thumbnailIndex = 0;
@@ -6081,6 +6856,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       }
     }
     _ensure3DWindowLayerDefaults();
+    _ensureTurningPointLayer();
     _ensure2DLayerSelection();
     _mentionController.addListener(_onMentionQueryChanged);
   }
@@ -6168,6 +6944,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       _thumbnailMode = item.mode;
       _thumbnailPayload = item.snapshot;
       _ensure3DWindowLayerDefaults();
+      _ensureTurningPointLayer();
       _ensure2DLayerSelection();
     });
   }
@@ -6325,6 +7102,49 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     return <String, dynamic>{};
   }
 
+  void _ensureTurningPointLayer() {
+    if (_thumbnailMode != '2d') return;
+    final Map<String, dynamic> scene = _thumbnail2DScene();
+    if (scene.containsKey('turning_point') &&
+        scene['turning_point'] is Map<String, dynamic>) {
+      return;
+    }
+    final List<double> orders = scene.entries
+        .where((entry) => entry.value is Map && entry.key != 'turning_point')
+        .map((entry) => _toDouble((entry.value as Map)['order'], 0))
+        .toList()
+      ..sort();
+    final int midIndex = orders.isEmpty
+        ? 0
+        : ((orders.length / 2).floor()).clamp(0, orders.length - 1).toInt();
+    final double midpointOrder = orders.isEmpty
+        ? 0
+        : orders[midIndex];
+    scene['turning_point'] = <String, dynamic>{
+      'x': 0.0,
+      'y': 0.0,
+      'scale': 1.0,
+      'order': midpointOrder,
+      'isVisible': false,
+      'isLocked': true,
+      'isText': false,
+      'canShift': false,
+      'canZoom': false,
+      'canTilt': false,
+      'minScale': 0.1,
+      'maxScale': 5.0,
+      'minX': -3000.0,
+      'maxX': 3000.0,
+      'minY': -3000.0,
+      'maxY': 3000.0,
+      'shiftSensMult': 1.0,
+      'zoomSensMult': 1.0,
+      'url': '',
+    };
+    _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+      ..['scene'] = scene;
+  }
+
   Map<String, dynamic> _thumbnailControls() {
     final dynamic raw = _thumbnailPayload['controls'];
     if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
@@ -6378,6 +7198,93 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
         ..['controls'] = controls;
     });
+  }
+
+  void _setTurningPointOrder(double value) {
+    final scene = _thumbnail2DScene();
+    final raw = scene['turning_point'];
+    if (raw is! Map) return;
+    scene['turning_point'] = Map<String, dynamic>.from(raw)..['order'] = value;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+    });
+  }
+
+  Future<void> _promptAdd2DImageUrl() async {
+    final TextEditingController controller = TextEditingController();
+    final String? url = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Image URL'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/image.png',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (url == null || url.trim().isEmpty) return;
+    _add2DLayer(textLayer: false, imageUrl: url.trim());
+  }
+
+  Future<void> _upload2DImageFromDevice() async {
+    if (_uploadingLayerImage) return;
+    setState(() => _uploadingLayerImage = true);
+    try {
+      final picked = await pickDeviceFile(accept: 'image/*');
+      if (picked == null) return;
+      final String publicUrl = await _repository.uploadAssetBytes(
+        bytes: picked.bytes,
+        fileName: picked.name,
+        contentType: picked.contentType,
+        folder: 'composer-layers',
+      );
+      if (!mounted) return;
+      _add2DLayer(textLayer: false, imageUrl: publicUrl);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Image uploaded and layer added.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Image upload failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingLayerImage = false);
+      }
+    }
+  }
+
+  void _recenterComposerParallax() {
+    final frame = TrackingService.instance.frameNotifier.value;
+    final controls = _thumbnailControls();
+    final double zBase =
+        frame.headZ.abs() < 0.000001 ? _toDouble(controls['zBase'], 0.2) : frame.headZ;
+    controls['anchorHeadX'] = frame.headX;
+    controls['anchorHeadY'] = frame.headY;
+    controls['zBase'] = zBase;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['controls'] = controls;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Parallax baseline recentered.')),
+    );
   }
 
   void _handle2DPreviewPanUpdate(DragUpdateDetails details) {
@@ -6468,8 +7375,34 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     });
   }
 
-  void _add2DLayer({required bool textLayer}) {
+  void _add2DLayer({
+    required bool textLayer,
+    String imageUrl = '',
+  }) {
     final scene = _thumbnail2DScene();
+    if (!scene.containsKey('turning_point')) {
+      scene['turning_point'] = <String, dynamic>{
+        'x': 0.0,
+        'y': 0.0,
+        'scale': 1.0,
+        'order': 0.0,
+        'isVisible': false,
+        'isLocked': true,
+        'isText': false,
+        'canShift': false,
+        'canZoom': false,
+        'canTilt': false,
+        'minScale': 0.1,
+        'maxScale': 5.0,
+        'minX': -3000.0,
+        'maxX': 3000.0,
+        'minY': -3000.0,
+        'maxY': 3000.0,
+        'shiftSensMult': 1.0,
+        'zoomSensMult': 1.0,
+        'url': '',
+      };
+    }
     final key = _next2DLayerKey(textLayer ? 'text_' : 'layer_');
     _normalize2DOrders(scene);
     final int order = _thumbnail2DLayerKeys().length;
@@ -6504,7 +7437,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         'textColorHex': '#FFFFFF',
         'fontFamily': 'Poppins',
       } else ...{
-        'url': '',
+        'url': imageUrl,
       },
     };
     scene[key] = layer;
@@ -6932,6 +7865,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final List<String> keys = _thumbnail2DLayerKeys();
     final Map<String, dynamic>? selected = _selected2DLayerMap();
     final controls = _thumbnailControls();
+    final dynamic turningRaw = _thumbnail2DScene()['turning_point'];
+    final Map<String, dynamic> turningPoint =
+        turningRaw is Map ? Map<String, dynamic>.from(turningRaw) : <String, dynamic>{};
     final String? selectedKey = _selected2dLayerKey;
     final bool selectedEditable =
         selectedKey != null && selectedKey != 'turning_point';
@@ -6965,14 +7901,24 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             runSpacing: 8,
             children: [
               OutlinedButton.icon(
-                onPressed: () => _add2DLayer(textLayer: false),
+                onPressed: _promptAdd2DImageUrl,
                 icon: const Icon(Icons.add_photo_alternate_outlined, size: 16),
-                label: const Text('Add Image'),
+                label: const Text('Add Image URL'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _uploadingLayerImage ? null : _upload2DImageFromDevice,
+                icon: const Icon(Icons.upload_file_outlined, size: 16),
+                label: Text(_uploadingLayerImage ? 'Uploading...' : 'Upload Image'),
               ),
               OutlinedButton.icon(
                 onPressed: () => _add2DLayer(textLayer: true),
                 icon: const Icon(Icons.text_fields, size: 16),
                 label: const Text('Add Text'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _recenterComposerParallax,
+                icon: const Icon(Icons.gps_fixed, size: 16),
+                label: const Text('Recenter'),
               ),
               OutlinedButton.icon(
                 onPressed: selectedEditable ? _duplicateSelected2DLayer : null,
@@ -7162,15 +8108,195 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                 value: _toDouble(selected['scale'], 1),
                 onChanged: (v) => _set2DLayerField(selectedKey!, 'scale', v),
               ),
+              _composerSlider(
+                label: 'Depth Order',
+                min: -200,
+                max: 200,
+                value: _toDouble(selected['order'], 0),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'order', v),
+              ),
               if (selected['isText'] == true)
-                _composerSlider(
-                  label: 'Font Size',
-                  min: 8,
-                  max: 300,
-                  value: _toDouble(selected['fontSize'], 40),
-                  onChanged: (v) =>
-                      _set2DLayerField(selectedKey!, 'fontSize', v),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _composerSlider(
+                      label: 'Font Size',
+                      min: 8,
+                      max: 300,
+                      value: _toDouble(selected['fontSize'], 40),
+                      onChanged: (v) =>
+                          _set2DLayerField(selectedKey!, 'fontSize', v),
+                    ),
+                    _composerSlider(
+                      label: 'Font Weight',
+                      min: 0,
+                      max: 8,
+                      value: _toDouble(selected['fontWeightIndex'], 4),
+                      onChanged: (v) => _set2DLayerField(
+                        selectedKey!,
+                        'fontWeightIndex',
+                        v.round(),
+                      ),
+                    ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Italic'),
+                      value: selected['isItalic'] == true,
+                      onChanged: (v) =>
+                          _set2DLayerField(selectedKey!, 'isItalic', v),
+                    ),
+                    DropdownButtonFormField<String>(
+                      value: (() {
+                        final String font =
+                            (selected['fontFamily'] ?? 'Poppins').toString();
+                        return _fontOptions.contains(font) ? font : _fontOptions.first;
+                      })(),
+                      items: _fontOptions
+                          .map((font) => DropdownMenuItem<String>(
+                                value: font,
+                                child: Text(font),
+                              ))
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        _set2DLayerField(selectedKey!, 'fontFamily', value);
+                      },
+                      decoration: const InputDecoration(labelText: 'Font Family'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue:
+                          (selected['textColorHex'] ?? '#FFFFFF').toString(),
+                      onChanged: (value) => _set2DLayerField(
+                        selectedKey!,
+                        'textColorHex',
+                        value.trim(),
+                      ),
+                      decoration:
+                          const InputDecoration(labelText: 'Text Color (Hex)'),
+                    ),
+                    const SizedBox(height: 8),
+                    _composerSlider(
+                      label: 'Stroke Width',
+                      min: 0,
+                      max: 20,
+                      value: _toDouble(selected['strokeWidth'], 0),
+                      onChanged: (v) =>
+                          _set2DLayerField(selectedKey!, 'strokeWidth', v),
+                    ),
+                    TextFormField(
+                      initialValue:
+                          (selected['strokeColorHex'] ?? '#000000').toString(),
+                      onChanged: (value) => _set2DLayerField(
+                        selectedKey!,
+                        'strokeColorHex',
+                        value.trim(),
+                      ),
+                      decoration:
+                          const InputDecoration(labelText: 'Stroke Color (Hex)'),
+                    ),
+                    const SizedBox(height: 8),
+                    _composerSlider(
+                      label: 'Shadow Blur',
+                      min: 0,
+                      max: 40,
+                      value: _toDouble(selected['shadowBlur'], 0),
+                      onChanged: (v) =>
+                          _set2DLayerField(selectedKey!, 'shadowBlur', v),
+                    ),
+                    TextFormField(
+                      initialValue:
+                          (selected['shadowColorHex'] ?? '#000000').toString(),
+                      onChanged: (value) => _set2DLayerField(
+                        selectedKey!,
+                        'shadowColorHex',
+                        value.trim(),
+                      ),
+                      decoration:
+                          const InputDecoration(labelText: 'Shadow Color (Hex)'),
+                    ),
+                  ],
                 ),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Can Shift'),
+                value: selected['canShift'] != false,
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'canShift', v),
+              ),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Can Zoom'),
+                value: selected['canZoom'] != false,
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'canZoom', v),
+              ),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Can Tilt'),
+                value: selected['canTilt'] != false,
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'canTilt', v),
+              ),
+              _composerSlider(
+                label: 'Shift Sensitivity Mult',
+                min: 0,
+                max: 3,
+                value: _toDouble(selected['shiftSensMult'], 1),
+                onChanged: (v) =>
+                    _set2DLayerField(selectedKey!, 'shiftSensMult', v),
+              ),
+              _composerSlider(
+                label: 'Zoom Sensitivity Mult',
+                min: 0,
+                max: 3,
+                value: _toDouble(selected['zoomSensMult'], 1),
+                onChanged: (v) =>
+                    _set2DLayerField(selectedKey!, 'zoomSensMult', v),
+              ),
+              _composerSlider(
+                label: 'Min Scale',
+                min: 0.01,
+                max: 5,
+                value: _toDouble(selected['minScale'], 0.1),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'minScale', v),
+              ),
+              _composerSlider(
+                label: 'Max Scale',
+                min: 0.05,
+                max: 10,
+                value: _toDouble(selected['maxScale'], 5),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'maxScale', v),
+              ),
+              _composerSlider(
+                label: 'Min X',
+                min: -3000,
+                max: 3000,
+                value: _toDouble(selected['minX'], -3000),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'minX', v),
+              ),
+              _composerSlider(
+                label: 'Max X',
+                min: -3000,
+                max: 3000,
+                value: _toDouble(selected['maxX'], 3000),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'maxX', v),
+              ),
+              _composerSlider(
+                label: 'Min Y',
+                min: -3000,
+                max: 3000,
+                value: _toDouble(selected['minY'], -3000),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'minY', v),
+              ),
+              _composerSlider(
+                label: 'Max Y',
+                min: -3000,
+                max: 3000,
+                value: _toDouble(selected['maxY'], 3000),
+                onChanged: (v) => _set2DLayerField(selectedKey!, 'maxY', v),
+              ),
             ],
             const SizedBox(height: 8),
             Text(
@@ -7210,6 +8336,13 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               onChanged: (v) => _set2DControlField('tilt', v),
             ),
             _composerSlider(
+              label: 'Tilt Sensitivity',
+              min: 0,
+              max: 2,
+              value: _toDouble(controls['tiltSensitivity'], 1),
+              onChanged: (v) => _set2DControlField('tiltSensitivity', v),
+            ),
+            _composerSlider(
               label: 'Dead Zone X',
               min: 0,
               max: 0.1,
@@ -7222,6 +8355,83 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               max: 0.1,
               value: _toDouble(controls['deadZoneY'], 0),
               onChanged: (v) => _set2DControlField('deadZoneY', v),
+            ),
+            _composerSlider(
+              label: 'Dead Zone Z',
+              min: 0,
+              max: 0.1,
+              value: _toDouble(controls['deadZoneZ'], 0),
+              onChanged: (v) => _set2DControlField('deadZoneZ', v),
+            ),
+            _composerSlider(
+              label: 'Dead Zone Yaw',
+              min: 0,
+              max: 10,
+              value: _toDouble(controls['deadZoneYaw'], 0),
+              onChanged: (v) => _set2DControlField('deadZoneYaw', v),
+            ),
+            _composerSlider(
+              label: 'Dead Zone Pitch',
+              min: 0,
+              max: 10,
+              value: _toDouble(controls['deadZonePitch'], 0),
+              onChanged: (v) => _set2DControlField('deadZonePitch', v),
+            ),
+            _composerSlider(
+              label: 'Z Base',
+              min: 0.05,
+              max: 2.0,
+              value: _toDouble(controls['zBase'], 0.2),
+              onChanged: (v) => _set2DControlField('zBase', v),
+            ),
+            _composerSlider(
+              label: 'Anchor Head X',
+              min: -1,
+              max: 1,
+              value: _toDouble(controls['anchorHeadX'], 0),
+              onChanged: (v) => _set2DControlField('anchorHeadX', v),
+            ),
+            _composerSlider(
+              label: 'Anchor Head Y',
+              min: -1,
+              max: 1,
+              value: _toDouble(controls['anchorHeadY'], 0),
+              onChanged: (v) => _set2DControlField('anchorHeadY', v),
+            ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Manual Mode'),
+              subtitle: const Text('Use sliders/manual camera values only'),
+              value: controls['manualMode'] == true,
+              onChanged: (v) => _set2DControlField('manualMode', v),
+            ),
+            DropdownButtonFormField<String>(
+              value: (() {
+                final String selectedAspect =
+                    (controls['selectedAspect'] ?? '').toString();
+                if (_aspectOptions.contains(selectedAspect)) {
+                  return selectedAspect;
+                }
+                return null;
+              })(),
+              items: _aspectOptions
+                  .map((ratio) =>
+                      DropdownMenuItem<String>(value: ratio, child: Text(ratio)))
+                  .toList(),
+              onChanged: (value) {
+                _set2DControlField('selectedAspect', value);
+              },
+              decoration: const InputDecoration(
+                labelText: 'Aspect Ratio',
+              ),
+            ),
+            _composerSlider(
+              label: 'Turning Point Depth',
+              min: -200,
+              max: 200,
+              value: _toDouble(turningPoint['order'], 0),
+              onChanged: _setTurningPointOrder,
             ),
           ],
           if (!selectedEditable)
@@ -7274,6 +8484,8 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     try {
       final tags = _parseTags(_tagsController.text);
       final mentions = _selectedMentionIds.toList();
+      final Map<String, dynamic> canonicalPayload =
+          jsonDecode(jsonEncode(_thumbnailPayload)) as Map<String, dynamic>;
 
       if (widget.kind == _ComposerKind.single) {
         final String presetId;
@@ -7285,22 +8497,22 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             description: description,
             tags: tags,
             mentionUserIds: mentions,
-            payload: widget.payload,
-            thumbnailPayload: _thumbnailPayload,
+            payload: canonicalPayload,
+            thumbnailPayload: canonicalPayload,
             thumbnailMode: _thumbnailMode,
             visibility: _isPublic ? 'public' : 'private',
           );
         } else {
           presetId = await _repository.publishPresetPost(
-            mode: widget.mode,
+            mode: _thumbnailMode,
             name: widget.name.isEmpty ? title : widget.name,
-            payload: widget.payload,
+            payload: canonicalPayload,
             title: title,
             description: description,
             tags: tags,
             mentionUserIds: mentions,
             visibility: _isPublic ? 'public' : 'private',
-            thumbnailPayload: _thumbnailPayload,
+            thumbnailPayload: canonicalPayload,
             thumbnailMode: _thumbnailMode,
           );
         }
@@ -7877,9 +9089,9 @@ class _SettingsTabState extends State<_SettingsTab> {
               ),
               const SizedBox(height: 12),
               if (_prefsLoading)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: CircularProgressIndicator(color: cs.primary),
+                const SizedBox(
+                  height: 60,
+                  child: _TopEdgeLoadingPane(label: 'Loading tracker config...'),
                 )
               else ...[
                 SwitchListTile(

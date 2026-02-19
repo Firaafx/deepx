@@ -20,6 +20,13 @@ class AppRepository {
 
   static const String assetsBucket = 'deepx-assets';
   static const String avatarsBucket = 'deepx-avatars';
+  static final RegExp _uuidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}\-'
+    r'[0-9a-fA-F]{4}\-'
+    r'[0-9a-fA-F]{4}\-'
+    r'[0-9a-fA-F]{4}\-'
+    r'[0-9a-fA-F]{12}$',
+  );
 
   SupabaseClient get _client => Supabase.instance.client;
 
@@ -518,12 +525,27 @@ class AppRepository {
   }
 
   Future<FeedPost?> fetchFeedPostById(String presetId) async {
-    final row = await _client
+    return fetchFeedPostByRouteId(presetId);
+  }
+
+  Future<FeedPost?> fetchFeedPostByRouteId(String idOrShareId) async {
+    final String routeId = idOrShareId.trim();
+    if (routeId.isEmpty) return null;
+
+    Map<String, dynamic>? row = await _client
         .from('presets')
         .select('*')
-        .eq('id', presetId)
+        .eq('share_id', routeId)
         .maybeSingle();
+    if (row == null && _looksLikeUuid(routeId)) {
+      row = await _client
+          .from('presets')
+          .select('*')
+          .eq('id', routeId)
+          .maybeSingle();
+    }
     if (row == null) return null;
+
     final RenderPreset preset = RenderPreset.fromMap(row);
     final bool canView = preset.isPublic || preset.userId == currentUser?.id;
     if (!canView) return null;
@@ -815,13 +837,30 @@ class AppRepository {
   }
 
   Future<RenderPreset?> fetchPresetById(String presetId) async {
+    return fetchPresetByRouteId(presetId);
+  }
+
+  Future<RenderPreset?> fetchPresetByRouteId(String idOrShareId) async {
+    final String routeId = idOrShareId.trim();
+    if (routeId.isEmpty) return null;
+
     final row = await _client
         .from('presets')
         .select('*')
-        .eq('id', presetId)
+        .eq('share_id', routeId)
         .maybeSingle();
-    if (row == null) return null;
-    return RenderPreset.fromMap(row);
+    if (row != null) {
+      return RenderPreset.fromMap(row);
+    }
+    if (!_looksLikeUuid(routeId)) return null;
+
+    final uuidRow = await _client
+        .from('presets')
+        .select('*')
+        .eq('id', routeId)
+        .maybeSingle();
+    if (uuidRow == null) return null;
+    return RenderPreset.fromMap(uuidRow);
   }
 
   Future<Map<String, RenderPreset>> fetchPresetsByIds(List<String> ids) async {
@@ -1237,12 +1276,31 @@ class AppRepository {
   }
 
   Future<CollectionDetail?> fetchCollectionById(String collectionId) async {
-    final row = await _client
+    return fetchCollectionByRouteId(collectionId);
+  }
+
+  Future<CollectionDetail?> fetchCollectionByRouteId(
+    String idOrShareId,
+  ) async {
+    final String routeId = idOrShareId.trim();
+    if (routeId.isEmpty) return null;
+
+    Map<String, dynamic>? row = await _client
         .from('collections')
         .select('*')
-        .eq('id', collectionId)
+        .eq('share_id', routeId)
         .maybeSingle();
+    if (row == null && _looksLikeUuid(routeId)) {
+      row = await _client
+          .from('collections')
+          .select('*')
+          .eq('id', routeId)
+          .maybeSingle();
+    }
     if (row == null) return null;
+
+    final String collectionId = row['id']?.toString() ?? '';
+    if (collectionId.isEmpty) return null;
 
     final List<dynamic> itemRows = await _client
         .from('collection_items')
@@ -1258,7 +1316,8 @@ class AppRepository {
 
     return CollectionDetail(
       summary: CollectionSummary(
-        id: row['id'].toString(),
+        id: collectionId,
+        shareId: row['share_id']?.toString() ?? '',
         userId: row['user_id'].toString(),
         name: row['name']?.toString() ?? 'Untitled collection',
         description: row['description']?.toString() ?? '',
@@ -1408,6 +1467,7 @@ class AppRepository {
       final items = itemsByCollection[id] ?? const <CollectionItemSnapshot>[];
       return CollectionSummary(
         id: id,
+        shareId: map['share_id']?.toString() ?? '',
         userId: map['user_id']?.toString() ?? '',
         name: map['name']?.toString() ?? 'Untitled collection',
         description: map['description']?.toString() ?? '',
@@ -1641,6 +1701,10 @@ class AppRepository {
           .toList();
     }
     return const <String>[];
+  }
+
+  bool _looksLikeUuid(String value) {
+    return _uuidPattern.hasMatch(value);
   }
 
   String _sanitizeFileName(String input) {

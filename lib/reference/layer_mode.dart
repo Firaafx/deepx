@@ -1,47 +1,76 @@
-// lib/layer_mode.dart
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
-import 'package:collection/collection.dart';
-import 'dart:math' as math;
-import 'dart:convert';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:web/web.dart' as web;
-import 'dart:ui_web' as ui_web;
-import 'dart:js_interop';
 
-import 'models/preset_payload_v2.dart';
-import 'services/app_repository.dart';
-import 'services/tracking_service.dart';
-import 'services/web_file_upload.dart';
+// Begin custom widget code
+
+// DO NOT REMOVE OR MODIFY THE CODE ABOVE!
+
+import 'dart:async' show Timer;
+
+import 'package:flutter/gestures.dart';
+
+import 'package:collection/collection.dart';
+
+import 'dart:math' as math;
+
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:google_fonts/google_fonts.dart';
 
 class LayerConfig {
   double x, y, scale;
+
   int order;
+
   bool isVisible;
+
   bool isLocked;
+
   final String? url;
+
   String name;
+
   // Text Properties
+
   bool isText;
+
   String? textValue;
+
   double fontSize;
+
   int fontWeightIndex;
+
   bool isItalic;
+
   double shadowBlur;
+
   String shadowColorHex;
+
   double strokeWidth;
+
   String strokeColorHex;
+
   String textColorHex;
+
   String fontFamily;
+
   // Constraints & Sensitivity
+
   double minScale, maxScale;
+
   double minX, maxX, minY, maxY;
+
   bool canShift, canZoom, canTilt;
+
   double shiftSensMult, zoomSensMult;
+
   // New for rectangles/bezels
+
   bool isRect;
+
   String bezelType; // 'top' or 'bottom' or ''
+
   LayerConfig({
     this.x = 0.0,
     this.y = 0.0,
@@ -76,6 +105,7 @@ class LayerConfig {
     this.isRect = false,
     this.bezelType = '',
   });
+
   LayerConfig copy() {
     return LayerConfig(
       x: x,
@@ -147,6 +177,7 @@ class LayerConfig {
         'isRect': isRect,
         'bezelType': bezelType,
       };
+
   factory LayerConfig.fromMap(
       Map<String, dynamic> map, String? url, String name, int defaultOrder) {
     return LayerConfig(
@@ -187,36 +218,10 @@ class LayerConfig {
 }
 
 class LayerMode extends StatefulWidget {
-  const LayerMode({
-    super.key,
-    this.width,
-    this.height,
-    this.initialPresetPayload,
-    this.cleanView = false,
-    this.externalHeadPose,
-    this.embedded = false,
-    this.embeddedStudio = false,
-    this.persistPresets = true,
-    this.onPresetSaved,
-    this.onLivePayloadChanged,
-    this.useGlobalTracking = true,
-    this.pointerPassthrough = false,
-    this.reanchorToken = 0,
-    this.studioSurface = false,
-  });
+  const LayerMode({super.key, this.width, this.height});
+
   final double? width, height;
-  final Map<String, dynamic>? initialPresetPayload;
-  final bool cleanView;
-  final Map<String, double>? externalHeadPose;
-  final bool embedded;
-  final bool embeddedStudio;
-  final bool persistPresets;
-  final void Function(String name, Map<String, dynamic> payload)? onPresetSaved;
-  final ValueChanged<Map<String, dynamic>>? onLivePayloadChanged;
-  final bool useGlobalTracking;
-  final bool pointerPassthrough;
-  final int reanchorToken;
-  final bool studioSurface;
+
   @override
   State<LayerMode> createState() => _LayerModeState();
 }
@@ -234,6 +239,7 @@ class _LayerModeState extends State<LayerMode> {
     'Bebas Neue',
     'Pacifico'
   ];
+
   final List<String> aspectRatios = [
     '16:9 (width:height)',
     '18:9 (width:height)',
@@ -246,375 +252,135 @@ class _LayerModeState extends State<LayerMode> {
     '1.85:1 (width:height)',
     '2.39:1 (width:height)'
   ];
-  String? selectedAspect;
-  double headX = 0, headY = 0, yaw = 0, pitch = 0, zValue = 0.2, zBase = 0.2;
+
+  String? selectedAspect = null;
+
+  double headX = 0, headY = 0, yaw = 0, pitch = 0, zValue = 100, zBase = 100;
+
   double anchorHeadX = 0, anchorHeadY = 0;
+
   double currentScale = 1.2,
       depthZoomSens = 0.1,
       shiftSens = 0.025,
       tiltSens = 0.0,
       tiltSensitivity = 1.0;
+
   double sensitivity = 1.0;
+
   double deadZoneX = 0.0,
       deadZoneY = 0.0,
       deadZoneZ = 0.0,
       deadZoneYaw = 0.0,
       deadZonePitch = 0.0;
-  bool isEditMode = false, isLoaded = false;
-  bool showLayerPanel = true, showPropPanel = true;
-  bool isClearMode = false;
-  bool showTracker = false;
-  bool manualMode = false;
-  Offset layerPanelPos = const Offset(20, 100);
-  Offset propPanelPos = Offset.zero;
-  Offset controlPanelPos = Offset.zero;
-  int selectedLayerIndex = 0, imagesLoadedCount = 0;
-  List<LayerConfig> layerConfigs = [];
-  List<String> undoStack = [], redoStack = [];
-  String? currentPresetName;
-  Map<String, String> presets = {}; // name -> json string
-  TextEditingController urlController = TextEditingController();
-  TextEditingController presetNameController = TextEditingController();
-  Timer? _debounceTimer;
-  String? _lastLivePayloadDigest;
-  late String viewID;
-  late String _trackerFrameElementId;
-  late String _trackerBridgeChannel;
-  web.HTMLIFrameElement? _trackerIframe;
-  final AppRepository _repository = AppRepository.instance;
-  final StreamController<Map<String, dynamic>> _dataController =
-      StreamController.broadcast();
-  StreamSubscription? _messageSubscription;
-  StreamSubscription<Map<String, dynamic>>? _trackingDataSubscription;
-  VoidCallback? _globalTrackingListener;
-  bool _uploadingImage = false;
 
-  void _reanchorRuntimeToCurrentHead() {
-    setState(() {
-      anchorHeadX = headX;
-      anchorHeadY = headY;
-      zBase = zValue;
-    });
-  }
+  bool isEditMode = false, isLoaded = false;
+
+  bool showLayerPanel = true, showPropPanel = true;
+
+  bool isClearMode = false;
+
+  Offset layerPanelPos = const Offset(20, 100);
+
+  Offset propPanelPos = Offset.zero;
+
+  Offset controlPanelPos = Offset.zero;
+
+  int selectedLayerIndex = 0, imagesLoadedCount = 0;
+
+  List<LayerConfig> layerConfigs = [];
+
+  List<String> undoStack = [], redoStack = [];
+
+  String? currentPresetName;
+
+  Map<String, String> presets = {}; // name -> json string
+
+  TextEditingController urlController = TextEditingController();
+
+  TextEditingController presetNameController = TextEditingController();
+
+  final String MANUAL_SAVE_JSON =
+      '{"background.jpg":{"x":0,"y":0,"scale":0.4,"order":0,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/background.jpg","name":"background.jpg"},"sun_rays-min.png":{"x":269,"y":33,"scale":0.88,"order":15,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":false,"canZoom":false,"canTilt":false,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/sun_rays-min.png","name":"sun_rays-min.png"},"mountain_10-min.png":{"x":189,"y":124,"scale":0.64,"order":1,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_10-min.png","name":"mountain_10-min.png"},"mountain_9-min.png":{"x":-251,"y":283,"scale":0.76,"order":4,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_9-min.png","name":"mountain_9-min.png"},"mountain_8-min.png":{"x":-38,"y":204,"scale":0.52,"order":3,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_8-min.png","name":"mountain_8-min.png"},"mountain_7-min.png":{"x":928,"y":212,"scale":0.52,"order":5,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_7-min.png","name":"mountain_7-min.png"},"mountain_6-min.png":{"x":-867,"y":209,"scale":0.52,"order":9,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_6-min.png","name":"mountain_6-min.png"},"mountain_5-min.png":{"x":22,"y":238,"scale":0.64,"order":7,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_5-min.png","name":"mountain_5-min.png"},"mountain_4-min.png":{"x":414,"y":277,"scale":0.52,"order":8,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_4-min.png","name":"mountain_4-min.png"},"mountain_3-min.png":{"x":1330,"y":136,"scale":0.4,"order":18,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_3-min.png","name":"mountain_3-min.png"},"mountain_2-min.png":{"x":-519,"y":430,"scale":0.5270642201834863,"order":16,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_2-min.png","name":"mountain_2-min.png"},"mountain_1-min.png":{"x":-1404,"y":65,"scale":0.4,"order":20,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/mountain_1-min.png","name":"mountain_1-min.png"},"fog_7-min.png":{"x":0,"y":0,"scale":1,"order":10,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_7-min.png","name":"fog_7-min.png"},"fog_6-min.png":{"x":0,"y":0,"scale":1,"order":2,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_6-min.png","name":"fog_6-min.png"},"fog_5-min.png":{"x":556,"y":195,"scale":1,"order":11,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_5-min.png","name":"fog_5-min.png"},"fog_4-min.png":{"x":0,"y":0,"scale":1,"order":6,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_4-min.png","name":"fog_4-min.png"},"fog_3-min.png":{"x":-18,"y":88,"scale":1,"order":13,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_3-min.png","name":"fog_3-min.png"},"fog_2-min.png":{"x":0,"y":0,"scale":1,"order":19,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_2-min.png","name":"fog_2-min.png"},"fog_1-min.png":{"x":0,"y":0,"scale":1,"order":17,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":true,"canZoom":true,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/fog_1-min.png","name":"fog_1-min.png"},"black_shadow-min.png":{"x":0,"y":0,"scale":1,"order":21,"isVisible":true,"isLocked":false,"isText":false,"textValue":"New Text","fontSize":40,"fontWeightIndex":4,"isItalic":false,"shadowBlur":0,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Poppins","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":false,"canZoom":false,"canTilt":true,"shiftSensMult":1,"zoomSensMult":1,"url":"https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/black_shadow-min.png","name":"black_shadow-min.png"},"Text_1766263666111_copy":{"x":400,"y":176,"scale":1.12,"order":12,"isVisible":true,"isLocked":false,"isText":true,"textValue":"Shanghai","fontSize":148.348623853211,"fontWeightIndex":3,"isItalic":false,"shadowBlur":50,"shadowColorHex":"#000000","strokeWidth":0,"strokeColorHex":"#000000","textColorHex":"#FFFFFF","fontFamily":"Pacifico","minScale":0.1,"maxScale":5,"minX":-3000,"maxX":3000,"minY":-3000,"maxY":3000,"canShift":false,"canZoom":true,"canTilt":false,"shiftSensMult":1,"zoomSensMult":1,"url":null,"name":"Text_1766263666111_copy"}}';
+
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
-    if (widget.embeddedStudio) {
-      isEditMode = true;
-      showLayerPanel = false;
-      showPropPanel = false;
-      isClearMode = false;
-    }
-    _bootstrap();
 
-    if (widget.externalHeadPose != null) {
-      _applyExternalHeadPose(widget.externalHeadPose!);
-    } else if (widget.useGlobalTracking) {
-      _globalTrackingListener = () {
-        final frame = TrackingService.instance.frameNotifier.value;
-        if (!mounted) return;
-        if (!isEditMode && !manualMode) {
-          setState(() {
-            _applyHeadTrackingMap(
-              <String, dynamic>{'head': frame.toHeadPoseMap()},
-            );
-          });
-        }
-      };
-      TrackingService.instance.frameNotifier
-          .addListener(_globalTrackingListener!);
-    } else {
-      _initTrackerBridge();
+    _loadPrefs();
+
+    _initLayers();
+
+    _loadControlSettings();
+
+    _loadPresets();
+  }
+
+  Future<void> _loadPresets() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final String? presetsJson = prefs.getString('layer_presets');
+
+    if (presetsJson != null) {
+      Map<String, dynamic> map = jsonDecode(presetsJson);
+
+      setState(() {
+        presets = map.map((key, value) => MapEntry(key, value.toString()));
+      });
     }
   }
 
-  @override
-  void didUpdateWidget(covariant LayerMode oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final bool externalPayloadChanged = !const DeepCollectionEquality()
-        .equals(widget.initialPresetPayload, oldWidget.initialPresetPayload);
-    if (externalPayloadChanged) {
-      final adapted = _adaptPresetPayload(widget.initialPresetPayload);
-      if (adapted != null) {
-        _applyPresetControls(adapted.controls);
-        unawaited(_initLayers(savedMap: adapted.scene));
-      }
-    }
-    if (widget.reanchorToken != oldWidget.reanchorToken) {
-      _reanchorRuntimeToCurrentHead();
-    }
-    if (widget.externalHeadPose != null) {
-      _applyExternalHeadPose(widget.externalHeadPose!);
-      return;
-    }
-    if (widget.useGlobalTracking && !oldWidget.useGlobalTracking) {
-      _globalTrackingListener ??= () {
-        final frame = TrackingService.instance.frameNotifier.value;
-        if (!mounted) return;
-        if (!isEditMode && !manualMode) {
-          setState(() {
-            _applyHeadTrackingMap(
-              <String, dynamic>{'head': frame.toHeadPoseMap()},
-            );
-          });
-        }
-      };
-      TrackingService.instance.frameNotifier
-          .addListener(_globalTrackingListener!);
-    } else if (!widget.useGlobalTracking && oldWidget.useGlobalTracking) {
-      final listener = _globalTrackingListener;
-      if (listener != null) {
-        TrackingService.instance.frameNotifier.removeListener(listener);
-      }
-      _globalTrackingListener = null;
-      _initTrackerBridge();
+  Future<void> _savePresets() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString('layer_presets', jsonEncode(presets));
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    selectedAspect = prefs.getString('parallax_aspect_v1');
+
+    setState(() {});
+  }
+
+  Future<void> _loadControlSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final String? data = prefs.getString('parallax_control_v1');
+
+    if (data != null) {
+      Map<String, dynamic> map = jsonDecode(data);
+
+      setState(() {
+        currentScale = map['scale'] ?? 1.2;
+
+        depthZoomSens = (map['depth'] ?? 0.1).clamp(0.0, 1.0);
+
+        shiftSens = (map['shift'] ?? 0.025).clamp(0.0, 1.0);
+
+        tiltSens = (map['tilt'] ?? 0.0).clamp(0.0, 1.0);
+
+        tiltSensitivity = (map['tiltSensitivity'] ?? 1.0).clamp(0.0, 1.0);
+
+        deadZoneX = (map['deadZoneX'] ?? 0.0).clamp(0.001, 0.1);
+
+        deadZoneY = (map['deadZoneY'] ?? 0.0).clamp(0.001, 0.1);
+
+        deadZoneZ = (map['deadZoneZ'] ?? 0.0).clamp(0.0, 10.0);
+
+        deadZoneYaw = (map['deadZoneYaw'] ?? 0.0).clamp(0.0, 10.0);
+
+        deadZonePitch = (map['deadZonePitch'] ?? 0.0).clamp(0.0, 10.0);
+      });
     }
   }
 
-  PresetPayloadV2? _adaptPresetPayload(Map<String, dynamic>? payload) {
-    if (payload == null) return null;
-    return PresetPayloadV2.fromMap(payload, fallbackMode: '2d');
-  }
+  Future<void> _saveControlSettings() async {
+    final prefs = await SharedPreferences.getInstance();
 
-  Future<void> _bootstrap() async {
-    if (widget.cleanView) {
-      final adapted = _adaptPresetPayload(widget.initialPresetPayload);
-      if (adapted != null) {
-        _applyControlSettingsMap(adapted.controls);
-      }
-      await _initLayers(
-          savedMap: adapted?.scene ?? widget.initialPresetPayload);
-      return;
-    }
-
-    Map<String, dynamic>? modeState;
-    try {
-      modeState = await _repository.fetchModeState('2d');
-    } catch (e) {
-      debugPrint('Failed to load 2D mode state: $e');
-    }
-
-    final controls = _asMap(modeState?['controls']);
-    _applyControlSettingsMap(controls);
-    selectedAspect = modeState?['selectedAspect'] as String?;
-    if (selectedAspect != null && selectedAspect!.isEmpty) {
-      selectedAspect = null;
-    }
-
-    final savedLayers = _asMap(modeState?['layers']);
-    final adaptedPreset = _adaptPresetPayload(widget.initialPresetPayload);
-    if (adaptedPreset != null) {
-      _applyControlSettingsMap(adaptedPreset.controls);
-    }
-    await _initLayers(
-      savedMap:
-          adaptedPreset?.scene ?? widget.initialPresetPayload ?? savedLayers,
-    );
-    await _loadPresets();
-  }
-
-  void _initTrackerBridge() {
-    viewID = 'cyber-tracker-${DateTime.now().millisecondsSinceEpoch}';
-    _trackerFrameElementId =
-        'layer-tracker-${DateTime.now().millisecondsSinceEpoch}';
-    _trackerBridgeChannel =
-        'layer-tracker-bridge-${DateTime.now().microsecondsSinceEpoch}';
-    ui_web.platformViewRegistry.registerViewFactory(viewID, (int viewId) {
-      final web.HTMLIFrameElement iframe = web.HTMLIFrameElement();
-      iframe.id = _trackerFrameElementId;
-      iframe.setAttribute('width', '100%');
-      iframe.setAttribute('height', '100%');
-      iframe.src = 'assets/tracker.html?channel=$_trackerBridgeChannel';
-      iframe.style.setProperty('border', 'none');
-      iframe.style.setProperty('background', 'transparent');
-      iframe.allow = 'camera *; microphone *; fullscreen *';
-      _trackerIframe = iframe;
-      scheduleMicrotask(_postTrackerConfig);
-      return iframe;
-    });
-
-    _messageSubscription = web.window.onMessage.listen((event) {
-      if (!_isFromTracker(event)) return;
-      final Map<String, dynamic>? messageData = _extractPayload(event.data);
-      if (messageData == null) return;
-      if (messageData['channel'] != null &&
-          messageData['channel'].toString() != _trackerBridgeChannel) {
-        return;
-      }
-      if (messageData['type'] == 'hide_tracker') {
-        setState(() => showTracker = false);
-        return;
-      }
-      _dataController.add(messageData);
-    });
-
-    _trackingDataSubscription = _dataController.stream.listen((data) {
-      if (!isEditMode && !manualMode) {
-        setState(() => _applyHeadTrackingMap(data));
-      }
-    });
-  }
-
-  void _postTrackerConfig() {
-    final iframe = _trackerIframe;
-    if (iframe == null) return;
-    final payload = <String, dynamic>{
-      'type': 'tracker_config',
-      'channel': _trackerBridgeChannel,
-      'enabled': true,
-      'uiVisible': showTracker,
-      'showCursor': showTracker,
-      'headless': !showTracker,
-    };
-    try {
-      iframe.contentWindow?.postMessage(jsonEncode(payload).toJS, '*'.toJS);
-    } catch (_) {}
-  }
-
-  bool _isFromTracker(web.MessageEvent event) {
-    final iframe = _trackerIframe;
-    if (iframe == null) return false;
-    final source = event.source;
-    if (source == null) return false;
-    return identical(source, iframe.contentWindow) ||
-        source == iframe.contentWindow;
-  }
-
-  Map<String, dynamic>? _extractPayload(dynamic data) {
-    if (data is Map<String, dynamic>) return data;
-    if (data is Map) return Map<String, dynamic>.from(data);
-    if (data is JSString) return _decodePayload(data.toDart);
-    if (data is String) return _decodePayload(data);
-    return null;
-  }
-
-  Map<String, dynamic>? _decodePayload(String value) {
-    try {
-      final decoded = jsonDecode(value);
-      if (decoded is Map<String, dynamic>) return decoded;
-      if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    } catch (_) {}
-    return null;
-  }
-
-  Map<String, dynamic>? _asMap(dynamic value) {
-    if (value is Map<String, dynamic>) return value;
-    if (value is Map) return Map<String, dynamic>.from(value);
-    return null;
-  }
-
-  void _applyHeadTrackingMap(Map<String, dynamic> data) {
-    final Map<String, dynamic> headData =
-        _asMap(data['head']) ?? <String, dynamic>{};
-    final double rawHeadX = (headData['x'] ?? 0.0).toDouble();
-    final double rawHeadY = (headData['y'] ?? 0.0).toDouble();
-    final double rawZ = (headData['z'] ?? 0.0).toDouble();
-    final double rawYaw = (headData['yaw'] ?? 0.0).toDouble();
-    final double rawPitch = (headData['pitch'] ?? 0.0).toDouble();
-
-    final double deltaX = rawHeadX - headX;
-    if (deltaX.abs() > deadZoneX) {
-      headX += (deltaX.abs() - deadZoneX) * deltaX.sign;
-    }
-    final double deltaY = rawHeadY - headY;
-    if (deltaY.abs() > deadZoneY) {
-      headY += (deltaY.abs() - deadZoneY) * deltaY.sign;
-    }
-    final double deltaZ = rawZ - zValue;
-    if (deltaZ.abs() > deadZoneZ) {
-      zValue += (deltaZ.abs() - deadZoneZ) * deltaZ.sign;
-    }
-    final double deltaYaw = rawYaw - yaw;
-    if (deltaYaw.abs() > deadZoneYaw) {
-      yaw += (deltaYaw.abs() - deadZoneYaw) * deltaYaw.sign;
-    }
-    final double deltaPitch = rawPitch - pitch;
-    if (deltaPitch.abs() > deadZonePitch) {
-      pitch += (deltaPitch.abs() - deadZonePitch) * deltaPitch.sign;
-    }
-  }
-
-  void _applyExternalHeadPose(Map<String, double> pose) {
-    if (!mounted) return;
-    setState(() {
-      _applyHeadTrackingMap(
-        <String, dynamic>{
-          'head': <String, dynamic>{
-            'x': pose['x'] ?? 0.0,
-            'y': pose['y'] ?? 0.0,
-            'z': pose['z'] ?? 0.2,
-            'yaw': pose['yaw'] ?? 0.0,
-            'pitch': pose['pitch'] ?? 0.0,
-          },
-        },
-      );
-    });
-  }
-
-  @override
-  void dispose() {
-    debugPrint(
-        'Disposing LayerMode(cleanView=${widget.cleanView}, embedded=${widget.embedded}, embeddedStudio=${widget.embeddedStudio})');
-    _debounceTimer?.cancel();
-    urlController.dispose();
-    presetNameController.dispose();
-    final listener = _globalTrackingListener;
-    if (listener != null) {
-      TrackingService.instance.frameNotifier.removeListener(listener);
-      _globalTrackingListener = null;
-    }
-    final iframe = _trackerIframe;
-    if (iframe != null && !widget.useGlobalTracking) {
-      try {
-        iframe.contentWindow?.postMessage(
-          jsonEncode(<String, dynamic>{
-            'type': 'dispose_tracker',
-            'channel': _trackerBridgeChannel,
-          }).toJS,
-          '*'.toJS,
-        );
-      } catch (_) {}
-    }
-    _messageSubscription?.cancel();
-    _trackingDataSubscription?.cancel();
-    _dataController.close();
-    super.dispose();
-  }
-
-  void _applyControlSettingsMap(Map<String, dynamic>? map) {
-    if (map == null) return;
-    setState(() {
-      currentScale = ((map['scale'] ?? 1.2) as num).toDouble();
-      depthZoomSens = ((map['depth'] ?? 0.1) as num).toDouble().clamp(0.0, 1.0);
-      shiftSens = ((map['shift'] ?? 0.025) as num).toDouble().clamp(0.0, 1.0);
-      tiltSens = ((map['tilt'] ?? 0.0) as num).toDouble().clamp(0.0, 1.0);
-      tiltSensitivity =
-          ((map['tiltSensitivity'] ?? 1.0) as num).toDouble().clamp(0.0, 1.0);
-      deadZoneX =
-          ((map['deadZoneX'] ?? 0.0) as num).toDouble().clamp(0.001, 0.1);
-      deadZoneY =
-          ((map['deadZoneY'] ?? 0.0) as num).toDouble().clamp(0.001, 0.1);
-      deadZoneZ = ((map['deadZoneZ'] ?? 0.0) as num).toDouble().clamp(0.0, 0.1);
-      deadZoneYaw =
-          ((map['deadZoneYaw'] ?? 0.0) as num).toDouble().clamp(0.0, 10.0);
-      deadZonePitch =
-          ((map['deadZonePitch'] ?? 0.0) as num).toDouble().clamp(0.0, 10.0);
-      manualMode = map['manualMode'] == true;
-      if (!widget.useGlobalTracking) {
-        showTracker = map['showTracker'] == true;
-      }
-      zBase = ((map['zBase'] ?? zBase) as num).toDouble();
-      anchorHeadX = ((map['anchorHeadX'] ?? anchorHeadX) as num).toDouble();
-      anchorHeadY = ((map['anchorHeadY'] ?? anchorHeadY) as num).toDouble();
-    });
-    if (widget.externalHeadPose == null && !widget.useGlobalTracking) {
-      _postTrackerConfig();
-    }
-  }
-
-  Map<String, dynamic> _controlSettingsMap() {
-    return <String, dynamic>{
+    Map<String, dynamic> map = {
       'scale': currentScale,
       'depth': depthZoomSens,
       'shift': shiftSens,
@@ -625,106 +391,14 @@ class _LayerModeState extends State<LayerMode> {
       'deadZoneZ': deadZoneZ,
       'deadZoneYaw': deadZoneYaw,
       'deadZonePitch': deadZonePitch,
-      'manualMode': manualMode,
-      if (!widget.useGlobalTracking) 'showTracker': showTracker,
-      'zBase': zBase,
-      'anchorHeadX': anchorHeadX,
-      'anchorHeadY': anchorHeadY,
     };
-  }
 
-  Map<String, dynamic> _buildModeStatePayload() {
-    return <String, dynamic>{
-      'selectedAspect': selectedAspect,
-      'controls': _controlSettingsMap(),
-      'layers': _buildSceneLayersMap(),
-    };
-  }
-
-  Map<String, dynamic> _buildSceneLayersMap() {
-    return <String, dynamic>{
-      for (final LayerConfig layer in layerConfigs) layer.name: layer.toMap(),
-    };
-  }
-
-  Map<String, dynamic> _buildPresetPayload() {
-    return PresetPayloadV2(
-      mode: '2d',
-      scene: _buildSceneLayersMap(),
-      controls: <String, dynamic>{
-        ..._controlSettingsMap(),
-        'selectedAspect': selectedAspect,
-      },
-      meta: <String, dynamic>{
-        'savedAt': DateTime.now().toUtc().toIso8601String(),
-        'editor': 'layer_mode',
-      },
-    ).toMap();
-  }
-
-  Map<String, dynamic> _buildLivePresetPayload() {
-    return PresetPayloadV2(
-      mode: '2d',
-      scene: _buildSceneLayersMap(),
-      controls: <String, dynamic>{
-        ..._controlSettingsMap(),
-        'selectedAspect': selectedAspect,
-      },
-      meta: const <String, dynamic>{
-        'editor': 'layer_mode',
-      },
-    ).toMap();
-  }
-
-  void _emitLivePayloadIfChanged() {
-    final callback = widget.onLivePayloadChanged;
-    if (callback == null) return;
-    final payload = _buildLivePresetPayload();
-    final digest = jsonEncode(payload);
-    if (_lastLivePayloadDigest == digest) return;
-    _lastLivePayloadDigest = digest;
-    callback(payload);
-  }
-
-  void _applyPresetControls(Map<String, dynamic>? controls) {
-    if (controls == null) return;
-    _applyControlSettingsMap(controls);
-    final dynamic presetAspect = controls['selectedAspect'];
-    if (presetAspect == null) return;
-    final String value = presetAspect.toString();
-    if (value.isEmpty) return;
-    setState(() => selectedAspect = value);
-  }
-
-  Map<String, dynamic> _extractSceneMapFromPayload(
-      Map<String, dynamic> payload) {
-    final adapted = PresetPayloadV2.fromMap(payload, fallbackMode: '2d');
-    _applyPresetControls(adapted.controls);
-    return adapted.scene;
-  }
-
-  Future<void> _loadFromPayload(Map<String, dynamic> payload,
-      {String? presetName}) async {
-    final scene = _extractSceneMapFromPayload(payload);
-    await _initLayers(savedMap: scene);
-    if (!mounted) return;
-    setState(() {
-      selectedLayerIndex = 0;
-      showPropPanel = false;
-      currentPresetName = presetName;
-    });
-  }
-
-  Future<void> _saveControlSettings() async {
-    if (widget.cleanView) return;
-    await _repository.upsertModeState(
-      mode: '2d',
-      state: _buildModeStatePayload(),
-    );
+    await prefs.setString('parallax_control_v1', jsonEncode(map));
   }
 
   void _debounceSave() {
     _debounceTimer?.cancel();
+
     _debounceTimer = Timer(const Duration(milliseconds: 500), () {
       _saveControlSettings();
     });
@@ -732,16 +406,23 @@ class _LayerModeState extends State<LayerMode> {
 
   void _saveToHistory() {
     String current = jsonEncode(layerConfigs.map((e) => e.toMap()).toList());
+
     if (undoStack.isNotEmpty && undoStack.last == current) return;
+
     undoStack.add(current);
+
     if (undoStack.length > 50) undoStack.removeAt(0);
+
     redoStack.clear();
   }
 
   void _undo() {
     if (undoStack.isEmpty) return;
+
     redoStack.add(jsonEncode(layerConfigs.map((e) => e.toMap()).toList()));
+
     final state = jsonDecode(undoStack.removeLast()) as List;
+
     setState(() {
       layerConfigs = state
           .map((m) => LayerConfig.fromMap(m, m['url'], m['name'], m['order']))
@@ -751,8 +432,11 @@ class _LayerModeState extends State<LayerMode> {
 
   void _redo() {
     if (redoStack.isEmpty) return;
+
     undoStack.add(jsonEncode(layerConfigs.map((e) => e.toMap()).toList()));
+
     final state = jsonDecode(redoStack.removeLast()) as List;
+
     setState(() {
       layerConfigs = state
           .map((m) => LayerConfig.fromMap(m, m['url'], m['name'], m['order']))
@@ -760,39 +444,75 @@ class _LayerModeState extends State<LayerMode> {
     });
   }
 
-  Future<void> _loadPresets() async {
-    if (widget.cleanView || !widget.persistPresets) return;
-    final items = await _repository.fetchUserPresets(mode: '2d');
-    final Map<String, String> loaded = <String, String>{};
-    for (final item in items) {
-      loaded[item.name] = jsonEncode(item.payload);
+  Future<void> _initLayers() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final String? localData = prefs.getString('parallax_layer_settings_v5');
+
+    // Use local storage if exists, otherwise fallback to MANUAL_SAVE_JSON
+
+    Map<String, dynamic> savedMap = localData != null
+        ? jsonDecode(localData)
+        : jsonDecode(MANUAL_SAVE_JSON);
+
+    List<LayerConfig> loaded = [];
+
+    final List<String> rawLayers = [
+      "background.jpg",
+      "sun_rays-min.png",
+      "mountain_10-min.png",
+      "mountain_9-min.png",
+      "mountain_8-min.png",
+      "mountain_7-min.png",
+      "mountain_6-min.png",
+      "mountain_5-min.png",
+      "mountain_4-min.png",
+      "mountain_3-min.png",
+      "mountain_2-min.png",
+      "mountain_1-min.png",
+      "fog_7-min.png",
+      "fog_6-min.png",
+      "fog_5-min.png",
+      "fog_4-min.png",
+      "fog_3-min.png",
+      "fog_2-min.png",
+      "fog_1-min.png",
+      "black_shadow-min.png"
+    ];
+
+    int defaultOrder = 0;
+
+    for (int i = 0; i < rawLayers.length; i++) {
+      String name = rawLayers[i];
+
+      String defaultUrl =
+          "https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/compressed/img/$name";
+
+      if (savedMap.containsKey(name)) {
+        var cfgMap = savedMap[name];
+
+        loaded.add(LayerConfig.fromMap(
+            cfgMap, cfgMap['url'] ?? defaultUrl, name, cfgMap['order'] ?? i));
+      } else {
+        loaded.add(LayerConfig(order: i, url: defaultUrl, name: name));
+      }
+
+      defaultOrder++;
     }
-    if (!mounted) return;
-    setState(() => presets = loaded);
-  }
 
-  Future<void> _initLayers({Map<String, dynamic>? savedMap}) async {
-    final Map<String, dynamic> safeSavedMap = savedMap ?? <String, dynamic>{};
-    final List<LayerConfig> loaded = <LayerConfig>[];
+    // Add other layers from JSON (texts, bezels, etc.)
 
-    int order = 0;
-    for (final entry in safeSavedMap.entries) {
-      final String key = entry.key;
-      final dynamic rawValue = entry.value;
-      if (rawValue is! Map) continue;
-      final Map<String, dynamic> value = rawValue.cast<String, dynamic>();
-      loaded.add(
-        LayerConfig.fromMap(
-          value,
-          value['url']?.toString(),
-          key,
-          value['order'] is num ? (value['order'] as num).toInt() : order,
-        ),
-      );
-      order++;
-    }
+    savedMap.forEach((key, value) {
+      if (!rawLayers.contains(key) && !loaded.any((l) => l.name == key)) {
+        loaded.add(LayerConfig.fromMap(
+            value, value['url'], key, value['order'] ?? defaultOrder));
 
-    // Add structural layers if missing.
+        defaultOrder++;
+      }
+    });
+
+    // Add bezel layers if not exist
+
     if (!loaded.any((l) => l.name == 'top_bezel')) {
       loaded.add(LayerConfig(
         name: 'top_bezel',
@@ -805,6 +525,7 @@ class _LayerModeState extends State<LayerMode> {
         canTilt: false,
       ));
     }
+
     if (!loaded.any((l) => l.name == 'bottom_bezel')) {
       loaded.add(LayerConfig(
         name: 'bottom_bezel',
@@ -817,6 +538,7 @@ class _LayerModeState extends State<LayerMode> {
         canTilt: false,
       ));
     }
+
     if (!loaded.any((l) => l.name == 'turning_point')) {
       loaded.add(LayerConfig(
         name: 'turning_point',
@@ -829,29 +551,39 @@ class _LayerModeState extends State<LayerMode> {
       ));
     } else {
       loaded.firstWhere((l) => l.name == 'turning_point').isLocked = true;
+
       loaded.firstWhere((l) => l.name == 'turning_point').isVisible = false;
     }
 
-    // Place turning_point in middle depth and normalize ordering.
+    // Place turning_point in the middle order if not already positioned properly
+
     if (loaded.any((l) => l.name == 'turning_point')) {
       var turning = loaded.firstWhere((l) => l.name == 'turning_point');
+
       loaded.remove(turning);
+
       loaded.sort((a, b) => a.order.compareTo(b.order));
+
       int middle = loaded.length ~/ 2;
+
       loaded.insert(middle, turning);
+
       for (int i = 0; i < loaded.length; i++) {
         loaded[i].order = i;
       }
     }
 
     int totalImages = 0;
+
     for (var config in loaded) {
       if (config.url != null) {
         totalImages++;
+
         precacheImage(NetworkImage(config.url!), context).then((_) {
           if (mounted) {
             setState(() {
               imagesLoadedCount++;
+
               if (imagesLoadedCount >= totalImages) isLoaded = true;
             });
           }
@@ -859,275 +591,287 @@ class _LayerModeState extends State<LayerMode> {
           if (mounted) {
             setState(() {
               imagesLoadedCount++;
+
               if (imagesLoadedCount >= totalImages) isLoaded = true;
             });
           }
         });
       }
     }
+
     if (totalImages == 0) {
       isLoaded = true;
     }
-    if (mounted) {
-      setState(() => layerConfigs = loaded);
-    }
+
+    setState(() => layerConfigs = loaded);
   }
 
   Future<void> _saveAllConfigs() async {
-    if (widget.cleanView) return;
-    await _repository.upsertModeState(
-      mode: '2d',
-      state: _buildModeStatePayload(),
-    );
+    final prefs = await SharedPreferences.getInstance();
+
+    Map<String, dynamic> data = {for (var c in layerConfigs) c.name: c.toMap()};
+
+    String jsonStr = jsonEncode(data);
+
+    await prefs.setString('parallax_layer_settings_v5', jsonStr);
+
+    await prefs.setString('parallax_aspect_v1', selectedAspect ?? '');
   }
 
   Future<void> _savePreset(String name) async {
     if (name.isEmpty) return;
-    final Map<String, dynamic> payload = _buildPresetPayload();
-    final String jsonStr = jsonEncode(payload);
+
+    Map<String, dynamic> data = {for (var c in layerConfigs) c.name: c.toMap()};
+
+    String jsonStr = jsonEncode(data);
+
     setState(() {
       presets[name] = jsonStr;
+
       currentPresetName = name;
     });
-    if (!widget.cleanView && widget.persistPresets) {
-      await _repository.savePreset(mode: '2d', name: name, payload: payload);
-      await _loadPresets();
-    }
-    widget.onPresetSaved?.call(name, payload);
+
+    await _savePresets();
   }
 
   Future<void> _loadPreset(String name) async {
     if (!presets.containsKey(name)) return;
-    final String jsonStr = presets[name]!;
-    final Map<String, dynamic> payload =
-        Map<String, dynamic>.from(jsonDecode(jsonStr) as Map);
-    await _loadFromPayload(payload, presetName: name);
+
+    String jsonStr = presets[name]!;
+
+    Map<String, dynamic> savedMap = jsonDecode(jsonStr);
+
+    List<LayerConfig> loaded = [];
+
+    int defaultOrder = 0;
+
+    savedMap.forEach((key, value) {
+      loaded.add(LayerConfig.fromMap(value, value['url'], key, defaultOrder++));
+    });
+
+    // Ensure bezels and turning point are present
+
+    if (!loaded.any((l) => l.name == 'top_bezel')) {
+      loaded.add(LayerConfig(
+        name: 'top_bezel',
+        order: loaded.length,
+        isRect: true,
+        bezelType: 'top',
+        isVisible: true,
+        canShift: false,
+        canZoom: false,
+        canTilt: false,
+      ));
+    }
+
+    if (!loaded.any((l) => l.name == 'bottom_bezel')) {
+      loaded.add(LayerConfig(
+        name: 'bottom_bezel',
+        order: loaded.length,
+        isRect: true,
+        bezelType: 'bottom',
+        isVisible: true,
+        canShift: false,
+        canZoom: false,
+        canTilt: false,
+      ));
+    }
+
+    if (!loaded.any((l) => l.name == 'turning_point')) {
+      loaded.add(LayerConfig(
+        name: 'turning_point',
+        order: loaded.length,
+        isVisible: false,
+        isLocked: true,
+        canShift: false,
+        canZoom: false,
+        canTilt: false,
+      ));
+    }
+
+    // Re-order
+
+    loaded.sort((a, b) => a.order.compareTo(b.order));
+
+    setState(() {
+      layerConfigs = loaded;
+
+      selectedLayerIndex = 0;
+
+      showPropPanel = false;
+
+      currentPresetName = name;
+    });
+
+    // Precache images
+
+    imagesLoadedCount = 0;
+
+    isLoaded = false;
+
+    int total = 0;
+
+    for (var config in loaded) {
+      if (config.url != null) {
+        total++;
+
+        precacheImage(NetworkImage(config.url!), context).then((_) {
+          setState(() {
+            imagesLoadedCount++;
+
+            if (imagesLoadedCount >= total) isLoaded = true;
+          });
+        }).catchError((e) {
+          setState(() {
+            imagesLoadedCount++;
+
+            if (imagesLoadedCount >= total) isLoaded = true;
+          });
+        });
+      }
+    }
+
+    if (total == 0) isLoaded = true;
   }
 
   void _clearLayers() {
     setState(() {
       layerConfigs.removeWhere((c) => !c.isRect && c.name != 'turning_point');
+
       selectedLayerIndex = 0;
+
       showPropPanel = false;
     });
   }
 
   Future<void> _addImage() async {
-    final String url = urlController.text.trim();
-    await _addImageFromUrl(url);
-  }
+    String url = urlController.text.trim();
 
-  Future<void> _addImageFromUrl(String url) async {
     if (url.isEmpty) return;
+
     String name = url.split('/').last.split('?').first;
+
     if (name.isEmpty) name = "Image_${DateTime.now().millisecondsSinceEpoch}";
+
     LayerConfig newLayer = LayerConfig(
       order: layerConfigs.length,
       url: url,
       name: name,
     );
+
     setState(() {
       layerConfigs.add(newLayer);
+
       selectedLayerIndex = layerConfigs.length - 1;
+
       showPropPanel = true;
     });
+
     urlController.clear();
+
     // Precache
+
     precacheImage(NetworkImage(url), context).then((_) {
-      if (mounted) {
-        setState(() => isLoaded = true);
-      }
+      setState(() => isLoaded = true);
     }).catchError((e) {});
   }
 
-  Future<void> _uploadImageFromDevice() async {
-    if (_uploadingImage) return;
-    setState(() => _uploadingImage = true);
-    final file = await pickDeviceFile(accept: 'image/*');
-    if (file == null) {
-      if (mounted) {
-        setState(() => _uploadingImage = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No file selected.')),
-        );
-      }
-      return;
-    }
+  double _smooth(double current, double target, {double sensitivity = 1.0}) {
+    if (isEditMode) return current;
 
-    try {
-      final String url = await _repository.uploadAssetBytes(
-        bytes: file.bytes,
-        fileName: file.name,
-        contentType: file.contentType,
-        folder: 'images',
-      );
-      if (!mounted) return;
-      urlController.text = url;
-      await _addImageFromUrl(url);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Image uploaded and added to layers.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Upload failed: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _uploadingImage = false);
-      }
-    }
+    double alpha =
+        ((target - current).abs() * 4.0 * sensitivity).clamp(0.05, 0.9);
+
+    return (current * (1 - alpha)) + (target * alpha);
   }
 
   Color _fromHex(String hex) {
     hex = hex.replaceAll('#', '');
-    if (hex.length == 6) hex = 'FF$hex';
+
+    if (hex.length == 6) hex = 'FF' + hex;
+
     return Color(int.parse(hex, radix: 16));
   }
 
   double get _aspectRatio {
     if (selectedAspect == null) return 0.0;
+
     String ratioStr = selectedAspect!.split(' (')[0];
+
     List<String> parts = ratioStr.split(':');
+
     return double.parse(parts[0]) / double.parse(parts[1]);
   }
 
   double get _barHeight {
     if (selectedAspect == null) return 0.0;
+
     double dw = MediaQuery.of(context).size.width;
+
     double dh = MediaQuery.of(context).size.height;
+
     double contentH = dw / _aspectRatio;
+
     if (contentH < dh) {
       return (dh - contentH) / 2;
     }
+
     return 0.0;
+  }
+
+  bool get _bezelActive {
+    return layerConfigs
+        .where((c) =>
+            c.isRect && (c.name == 'top_bezel' || c.name == 'bottom_bezel'))
+        .every((c) => c.isVisible);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!isLoaded) {
-      if (widget.cleanView || widget.embedded) {
-        return const ColoredBox(color: Colors.black);
-      }
+    if (!isLoaded)
       return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
-          children: [
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: LinearProgressIndicator(
-                minHeight: 3,
-                color: Colors.cyanAccent,
-                backgroundColor: Colors.transparent,
-              ),
-            ),
-            Center(
-              child: Text(
-                'Loading editor...',
-                style: TextStyle(color: Colors.white70),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    if (!widget.cleanView && propPanelPos == Offset.zero) {
+          backgroundColor: Colors.black,
+          body: Center(
+              child: CircularProgressIndicator(color: Colors.cyanAccent)));
+
+    if (propPanelPos == Offset.zero)
       propPanelPos = Offset(MediaQuery.of(context).size.width - 320,
           MediaQuery.of(context).size.height / 2 - 300);
-    }
-    if (!widget.cleanView && controlPanelPos == Offset.zero) {
+
+    if (controlPanelPos == Offset.zero)
       controlPanelPos = Offset(MediaQuery.of(context).size.width - 320, 100);
-    }
-    final bool showInternalUi = !widget.cleanView && !widget.embeddedStudio;
-    final stack = Stack(
-      clipBehavior: Clip.none,
-      children: [
-        _buildLayersStack(),
-        if (!widget.cleanView &&
-            widget.externalHeadPose == null &&
-            !widget.useGlobalTracking)
-          Positioned.fill(
-            child: IgnorePointer(
-              ignoring: !showTracker,
-              child: ClipRect(
-                child: Opacity(
-                  opacity: showTracker ? 1 : 0,
-                  child: HtmlElementView(viewType: viewID),
-                ),
-              ),
-            ),
-          ),
-        if (showInternalUi && !isClearMode)
-          const Positioned(left: 20, bottom: 20, child: SizedBox()),
-        if (showInternalUi && !isClearMode)
-          Positioned(
-              bottom: 20,
-              left: 0,
-              right: 0,
-              child: Center(child: _buildBottomCenterToggle())),
-        if (showInternalUi && isEditMode && !isClearMode)
-          Positioned(right: 20, bottom: 20, child: _buildBottomRightControls()),
-        if (showInternalUi && isEditMode && !isClearMode) ...[
-          if (showLayerPanel) _buildDraggableLayerManager(),
-          _buildEditHeader(),
-          if (showPropPanel && layerConfigs.isNotEmpty)
-            _buildDraggablePropertiesPanel(),
-          _buildPanelToggles(),
-          Positioned(top: 60, left: 20, child: _aspectDropdown()),
-        ] else if (showInternalUi && !isClearMode) ...[
-          _buildDraggableControlPanel(),
-        ],
-        if (showInternalUi)
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          _buildLayersStack(),
+          if (!isClearMode)
+            Positioned(left: 20, bottom: 20, child: const SizedBox()),
+          if (!isClearMode)
+            Positioned(
+                bottom: 20,
+                left: 0,
+                right: 0,
+                child: Center(child: _buildBottomCenterToggle())),
+          if (isEditMode && !isClearMode)
+            Positioned(
+                right: 20, bottom: 20, child: _buildBottomRightControls()),
+          if (isEditMode && !isClearMode) ...[
+            if (showLayerPanel) _buildDraggableLayerManager(),
+            _buildEditHeader(),
+            if (showPropPanel && layerConfigs.isNotEmpty)
+              _buildDraggablePropertiesPanel(),
+            _buildPanelToggles(),
+            Positioned(top: 60, left: 20, child: _aspectDropdown()),
+          ] else if (!isClearMode) ...[
+            _buildDraggableControlPanel(),
+          ],
           Positioned(right: 20, bottom: 20, child: _buildClearToggle()),
-        if (!widget.cleanView && !widget.embedded)
-          Positioned(
-            bottom: 20,
-            left: 20,
-            child: Row(
-              children: [
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.pushReplacementNamed(context, '/3d');
-                  },
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.cyanAccent),
-                  child: const Text(
-                    '3D mode',
-                    style: TextStyle(color: Colors.black),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.pushReplacementNamed(context, '/feed');
-                  },
-                  style:
-                      ElevatedButton.styleFrom(backgroundColor: Colors.white),
-                  child: const Text(
-                    'Feed',
-                    style: TextStyle(color: Colors.black),
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
+        ],
+      ),
     );
-    final Widget wrapped = IgnorePointer(
-      ignoring: widget.pointerPassthrough,
-      child: stack,
-    );
-    if (widget.onLivePayloadChanged != null &&
-        (widget.studioSurface || widget.embeddedStudio)) {
-      scheduleMicrotask(_emitLivePayloadIfChanged);
-    }
-    if (widget.cleanView || widget.embedded) {
-      return ColoredBox(color: Colors.black, child: wrapped);
-    }
-    return Scaffold(backgroundColor: Colors.black, body: wrapped);
   }
 
   Widget _aspectDropdown() {
@@ -1155,6 +899,7 @@ class _LayerModeState extends State<LayerMode> {
   Widget _buildLayersStack() {
     List<LayerConfig> sorted = List.from(layerConfigs)
       ..sort((a, b) => a.order.compareTo(b.order));
+
     return Stack(
         clipBehavior: Clip.none,
         fit: StackFit.expand,
@@ -1166,11 +911,16 @@ class _LayerModeState extends State<LayerMode> {
 
   Widget _buildInteractiveLayer(LayerConfig config) {
     if (config.name == 'turning_point') return const SizedBox.shrink();
+
     int idx = layerConfigs.indexOf(config);
+
     bool isSelected = selectedLayerIndex == idx && isEditMode;
+
     if (config.isRect) {
       if (!config.isVisible) return const SizedBox.shrink();
+
       double barHeight = _barHeight;
+
       return Positioned(
         top: config.bezelType == 'top' ? 0 : null,
         bottom: config.bezelType == 'bottom' ? 0 : null,
@@ -1182,26 +932,37 @@ class _LayerModeState extends State<LayerMode> {
         ),
       );
     }
+
     LayerConfig? turningPoint =
         layerConfigs.firstWhereOrNull((c) => c.name == 'turning_point');
+
     double bezelOrder = turningPoint != null
         ? turningPoint.order.toDouble()
         : layerConfigs
                 .map((c) => c.order.toDouble())
                 .fold(-double.infinity, math.max) +
             1;
+
     double depthFactor = config.order.toDouble() - bezelOrder;
+
     double shiftSign = depthFactor.sign;
+
     double zoomDirSign = depthFactor.sign;
+
     double effectiveDepth = depthFactor.abs();
+
     double devX = headX - anchorHeadX;
+
     double devY = headY - anchorHeadY;
+
     double tiltXcalc = yaw / 60.0;
+
     double tiltYcalc = pitch / 40.0;
+
     double shiftX = isEditMode
         ? config.x
         : (config.canShift
-            ? ((devX *
+            ? ((-devX *
                         shiftSens *
                         effectiveDepth *
                         80.0 *
@@ -1211,6 +972,7 @@ class _LayerModeState extends State<LayerMode> {
                     config.x)
                 .clamp(config.minX, config.maxX)
             : config.x);
+
     double shiftY = isEditMode
         ? config.y
         : (config.canShift
@@ -1224,33 +986,41 @@ class _LayerModeState extends State<LayerMode> {
                     config.y)
                 .clamp(config.minY, config.maxY)
             : config.y);
-    double deltaZ = (zValue - zBase) / zBase;
+
+    double deltaZ = (zValue / zBase) - 1.0;
+
     double zoomFactor = deltaZ *
         depthZoomSens *
         4.0 *
         (effectiveDepth + 0.5) *
         config.zoomSensMult *
         sensitivity;
+
     double scale = isEditMode
         ? config.scale
         : (config.canZoom
             ? (config.scale * currentScale * (1.0 + (zoomFactor * zoomDirSign)))
                 .clamp(config.minScale, config.maxScale)
             : config.scale);
+
     Matrix4 tiltTransform = Matrix4.identity();
+
     if (!isEditMode && config.canTilt) {
       tiltTransform.setEntry(3, 2, 0.001);
+
       tiltTransform.rotateX(-tiltYcalc *
           tiltSens *
           sensitivity *
           effectiveDepth *
           tiltSensitivity);
+
       tiltTransform.rotateY(tiltXcalc *
           tiltSens *
           sensitivity *
           effectiveDepth *
           tiltSensitivity);
     }
+
     return Positioned.fill(
       child: IgnorePointer(
         ignoring: isEditMode ? !isSelected : true,
@@ -1258,6 +1028,7 @@ class _LayerModeState extends State<LayerMode> {
           onPointerSignal: (event) {
             if (isSelected && !config.isLocked && event is PointerScrollEvent) {
               _saveToHistory();
+
               setState(() => config.scale =
                   (config.scale - event.scrollDelta.dy / 1000)
                       .clamp(0.1, 10.0));
@@ -1267,8 +1038,10 @@ class _LayerModeState extends State<LayerMode> {
             onPanUpdate: (details) {
               if (isSelected && !config.isLocked) {
                 _saveToHistory();
+
                 setState(() {
                   config.x += details.delta.dx;
+
                   config.y += details.delta.dy;
                 });
               }
@@ -1358,7 +1131,7 @@ class _LayerModeState extends State<LayerMode> {
           width: 320,
           height: 600,
           decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.9),
+              color: Colors.black.withOpacity(0.9),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.cyanAccent, width: 0.5)),
           child: Column(children: [
@@ -1376,38 +1149,23 @@ class _LayerModeState extends State<LayerMode> {
                 Expanded(
                   child: TextField(
                     controller: urlController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       hintText: "Image URL",
                       hintStyle: TextStyle(color: Colors.white54),
                       filled: true,
                       fillColor: Colors.white10,
                       border: OutlineInputBorder(),
                     ),
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: Colors.white),
                   ),
                 ),
-                const SizedBox(width: 8),
-                Column(
-                  children: [
-                    ElevatedButton(
-                      onPressed: _addImage,
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.cyanAccent),
-                      child: const Text("Add Image",
-                          style: TextStyle(color: Colors.black)),
-                    ),
-                    const SizedBox(height: 6),
-                    ElevatedButton(
-                      onPressed:
-                          _uploadingImage ? null : _uploadImageFromDevice,
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.amberAccent),
-                      child: Text(
-                        _uploadingImage ? "Uploading..." : "Upload",
-                        style: const TextStyle(color: Colors.black),
-                      ),
-                    ),
-                  ],
+                SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _addImage,
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.cyanAccent),
+                  child:
+                      Text("Add Image", style: TextStyle(color: Colors.black)),
                 ),
               ]),
             ),
@@ -1417,28 +1175,30 @@ class _LayerModeState extends State<LayerMode> {
                 Expanded(
                   child: TextField(
                     controller: presetNameController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       hintText: "Preset Name",
                       hintStyle: TextStyle(color: Colors.white54),
                       filled: true,
                       fillColor: Colors.white10,
                       border: OutlineInputBorder(),
                     ),
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: Colors.white),
                   ),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () {
                     String name = presetNameController.text.trim();
+
                     if (name.isNotEmpty) {
                       _savePreset(name);
+
                       presetNameController.clear();
                     }
                   },
                   style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.greenAccent),
-                  child: const Text("Save Preset",
+                  child: Text("Save Preset",
                       style: TextStyle(color: Colors.black)),
                 ),
               ]),
@@ -1450,10 +1210,10 @@ class _LayerModeState extends State<LayerMode> {
                   Expanded(
                     child: DropdownButton<String>(
                       value: currentPresetName,
-                      hint: const Text("Load Preset",
+                      hint: Text("Load Preset",
                           style: TextStyle(color: Colors.white)),
                       dropdownColor: Colors.grey[900],
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: Colors.white),
                       items: presets.keys
                           .map((name) =>
                               DropdownMenuItem(value: name, child: Text(name)))
@@ -1471,7 +1231,7 @@ class _LayerModeState extends State<LayerMode> {
                 onPressed: _clearLayers,
                 style:
                     ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                child: const Text("Clear Layers (Keep Bezels)",
+                child: Text("Clear Layers (Keep Bezels)",
                     style: TextStyle(color: Colors.white)),
               ),
             ),
@@ -1480,15 +1240,19 @@ class _LayerModeState extends State<LayerMode> {
                     padding: EdgeInsets.zero,
                     onReorder: (oldIdx, newIdx) {
                       _saveToHistory();
+
                       setState(() {
                         List<LayerConfig> displayList = List.from(layerConfigs)
                           ..sort((a, b) => b.order.compareTo(a.order));
+
                         if (newIdx > oldIdx) newIdx -= 1;
+
                         final item = displayList.removeAt(oldIdx);
+
                         displayList.insert(newIdx, item);
-                        for (int i = 0; i < displayList.length; i++) {
+
+                        for (int i = 0; i < displayList.length; i++)
                           displayList[i].order = displayList.length - 1 - i;
-                        }
                       });
                     },
                     children: (List.from(layerConfigs)
@@ -1503,13 +1267,16 @@ class _LayerModeState extends State<LayerMode> {
 
   Widget _layerTile(LayerConfig c) {
     int realIdx = layerConfigs.indexOf(c);
+
     bool isSel = selectedLayerIndex == realIdx;
+
     bool isTurningPoint = c.name == 'turning_point';
+
     return ListTile(
       key: ValueKey(c.name),
       dense: true,
       selected: isSel,
-      selectedTileColor: Colors.cyanAccent.withValues(alpha: 0.1),
+      selectedTileColor: Colors.cyanAccent.withOpacity(0.1),
       leading: Icon(
           c.isText
               ? Icons.text_fields
@@ -1525,11 +1292,16 @@ class _LayerModeState extends State<LayerMode> {
           : Row(mainAxisSize: MainAxisSize.min, children: [
               _iconBtn(Icons.copy, () {
                 _saveToHistory();
+
                 setState(() {
                   var nc = c.copy();
+
                   nc.order = layerConfigs.length;
+
                   layerConfigs.add(nc);
+
                   selectedLayerIndex = layerConfigs.length - 1;
+
                   showPropPanel = true;
                 });
               }),
@@ -1544,14 +1316,17 @@ class _LayerModeState extends State<LayerMode> {
               const SizedBox(width: 10),
               _iconBtn(Icons.delete, () {
                 _saveToHistory();
+
                 setState(() {
                   layerConfigs.remove(c);
+
                   selectedLayerIndex = 0;
                 });
               }, col: Colors.redAccent),
             ]),
       onTap: () => setState(() {
         selectedLayerIndex = realIdx;
+
         if (isTurningPoint) {
           showPropPanel = false;
         } else if (selectedLayerIndex == realIdx && showPropPanel) {
@@ -1570,10 +1345,14 @@ class _LayerModeState extends State<LayerMode> {
           constraints: const BoxConstraints(),
           icon: Icon(i, size: 14, color: col ?? Colors.white38),
           onPressed: fn));
+
   Widget _buildDraggablePropertiesPanel() {
     if (layerConfigs.isEmpty) return Container();
+
     LayerConfig config = layerConfigs[selectedLayerIndex];
+
     if (config.name == 'turning_point') return const SizedBox.shrink();
+
     return Positioned(
       left: propPanelPos.dx,
       top: propPanelPos.dy,
@@ -1584,7 +1363,7 @@ class _LayerModeState extends State<LayerMode> {
           height: MediaQuery.of(context).size.height * 0.7,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.95),
+              color: Colors.black.withOpacity(0.95),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.cyanAccent, width: 1)),
           child: SingleChildScrollView(
@@ -1609,17 +1388,18 @@ class _LayerModeState extends State<LayerMode> {
                 if (config.isText) ...[
                   const Text("TEXT CONTENT",
                       style: TextStyle(color: Colors.white60, fontSize: 10)),
-                  TextFormField(
-                    key: ValueKey('text-content-${config.name}'),
-                    initialValue: config.textValue ?? '',
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                    decoration: const InputDecoration(
-                        filled: true, fillColor: Colors.white10),
-                    onChanged: (v) {
-                      _saveToHistory();
-                      setState(() => config.textValue = v);
-                    },
-                  ),
+                  TextField(
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      decoration: const InputDecoration(
+                          filled: true, fillColor: Colors.white10),
+                      onChanged: (v) {
+                        _saveToHistory();
+
+                        setState(() => config.textValue = v);
+                      },
+                      controller: TextEditingController(text: config.textValue)
+                        ..selection = TextSelection.collapsed(
+                            offset: config.textValue!.length)),
                   const SizedBox(height: 10),
                   _fontDropdown(config),
                   _enhancedSlider("Font Size", config.fontSize, 10, 300, 1.0,
@@ -1694,8 +1474,7 @@ class _LayerModeState extends State<LayerMode> {
         SizedBox(
             width: 80,
             height: 25,
-            child: TextFormField(
-                initialValue: hex,
+            child: TextField(
                 style: const TextStyle(color: Colors.white, fontSize: 10),
                 decoration: const InputDecoration(
                     contentPadding: EdgeInsets.symmetric(horizontal: 5),
@@ -1703,8 +1482,10 @@ class _LayerModeState extends State<LayerMode> {
                     fillColor: Colors.white10),
                 onChanged: (v) {
                   _saveToHistory();
+
                   onHexChange(v);
-                })),
+                },
+                controller: TextEditingController(text: hex))),
       ]),
     );
   }
@@ -1724,8 +1505,10 @@ class _LayerModeState extends State<LayerMode> {
               .toList(),
           onChanged: (v) {
             _saveToHistory();
+
             setState(() => config.fontFamily = v!);
           }));
+
   Widget _buildDraggableControlPanel() => Positioned(
         left: controlPanelPos.dx,
         top: controlPanelPos.dy,
@@ -1736,7 +1519,7 @@ class _LayerModeState extends State<LayerMode> {
             height: MediaQuery.of(context).size.height * 0.7,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.85),
+                color: Colors.black.withOpacity(0.85),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.white12)),
             child: SingleChildScrollView(
@@ -1750,87 +1533,124 @@ class _LayerModeState extends State<LayerMode> {
                 _enhancedSlider("Global Scale", currentScale, 0.5, 2.5, 0.1,
                     (v) {
                   setState(() => currentScale = v);
+
                   _debounceSave();
                 }),
                 _enhancedSlider("Global Depth", depthZoomSens, 0.0, 1.0, 0.001,
                     (v) {
                   setState(() => depthZoomSens = v);
+
                   _debounceSave();
                 }),
                 _enhancedSlider("Global Shift", shiftSens, 0.0, 1.0, 0.001,
                     (v) {
                   setState(() => shiftSens = v);
+
                   _debounceSave();
                 }),
                 _enhancedSlider("Global Tilt", tiltSens, 0.0, 1.0, 0.001, (v) {
                   setState(() => tiltSens = v);
+
                   _debounceSave();
                 }),
                 _enhancedSlider(
                     "Tilt Sensitivity", tiltSensitivity, 0.0, 1.0, 0.001, (v) {
                   setState(() => tiltSensitivity = v);
+
                   _debounceSave();
                 }),
-                _toggleRow("Manual Control", manualMode, (v) {
-                  setState(() => manualMode = v);
-                }),
-                if (!widget.useGlobalTracking)
-                  _toggleRow("Show Tracker", showTracker, (v) {
-                    setState(() => showTracker = v);
-                    _postTrackerConfig();
-                  }),
                 _enhancedSlider("Dead Zone X", deadZoneX, 0.001, 0.1, 0.001,
                     (v) {
                   setState(() => deadZoneX = v);
+
                   _debounceSave();
                 }),
                 _enhancedSlider("Dead Zone Y", deadZoneY, 0.001, 0.1, 0.001,
                     (v) {
                   setState(() => deadZoneY = v);
+
                   _debounceSave();
                 }),
-                _enhancedSlider("Dead Zone Z", deadZoneZ, 0.0, 0.1, 0.001, (v) {
+                _enhancedSlider("Dead Zone Z", deadZoneZ, 0.0, 10.0, 0.1, (v) {
                   setState(() => deadZoneZ = v);
+
                   _debounceSave();
                 }),
                 _enhancedSlider("Dead Zone Yaw", deadZoneYaw, 0.0, 10.0, 0.1,
                     (v) {
                   setState(() => deadZoneYaw = v);
+
                   _debounceSave();
                 }),
                 _enhancedSlider(
                     "Dead Zone Pitch", deadZonePitch, 0.0, 10.0, 0.1, (v) {
                   setState(() => deadZonePitch = v);
+
                   _debounceSave();
                 }),
                 const Divider(color: Colors.white10),
-                if (manualMode) ...[
-                  _enhancedSlider("Head X", headX, -1.0, 1.0, 0.001, (v) {
-                    setState(() => headX = v);
-                  }),
-                  _enhancedSlider("Head Y", headY, -1.0, 1.0, 0.001, (v) {
-                    setState(() => headY = v);
-                  }),
-                  _enhancedSlider("Z Value", zValue, 0.1, 0.3, 0.001, (v) {
-                    setState(() => zValue = v);
-                  }),
-                  _enhancedSlider("Yaw", yaw, -60.0, 60.0, 0.1, (v) {
-                    setState(() => yaw = v);
-                  }),
-                  _enhancedSlider("Pitch", pitch, -40.0, 40.0, 0.1, (v) {
-                    setState(() => pitch = v);
-                  }),
-                ],
+                _enhancedSlider("Head X", headX, -1.0, 1.0, 0.001, (v) {
+                  double delta = v - headX;
+
+                  double absD = delta.abs();
+
+                  if (absD > deadZoneX) {
+                    setState(() => headX =
+                        headX + (absD - deadZoneX) * (delta > 0 ? 1 : -1));
+                  }
+                }),
+                _enhancedSlider("Head Y", headY, -1.0, 1.0, 0.001, (v) {
+                  double delta = v - headY;
+
+                  double absD = delta.abs();
+
+                  if (absD > deadZoneY) {
+                    setState(() => headY =
+                        headY + (absD - deadZoneY) * (delta > 0 ? 1 : -1));
+                  }
+                }),
+                _enhancedSlider("Z Value", zValue, 50.0, 150.0, 0.1, (v) {
+                  double delta = v - zValue;
+
+                  double absD = delta.abs();
+
+                  if (absD > deadZoneZ) {
+                    setState(() => zValue =
+                        zValue + (absD - deadZoneZ) * (delta > 0 ? 1 : -1));
+                  }
+                }),
+                _enhancedSlider("Yaw", yaw, -60.0, 60.0, 0.1, (v) {
+                  double delta = v - yaw;
+
+                  double absD = delta.abs();
+
+                  if (absD > deadZoneYaw) {
+                    setState(() => yaw =
+                        yaw + (absD - deadZoneYaw) * (delta > 0 ? 1 : -1));
+                  }
+                }),
+                _enhancedSlider("Pitch", pitch, -40.0, 40.0, 0.1, (v) {
+                  double delta = v - pitch;
+
+                  double absD = delta.abs();
+
+                  if (absD > deadZonePitch) {
+                    setState(() => pitch =
+                        pitch + (absD - deadZonePitch) * (delta > 0 ? 1 : -1));
+                  }
+                }),
               ]),
             ),
           ),
         ),
       );
+
   Widget _buildBottomRightControls() => Row(children: [
         _roundBtn(Icons.undo, _undo, undoStack.isNotEmpty),
         const SizedBox(width: 10),
         _roundBtn(Icons.redo, _redo, redoStack.isNotEmpty),
       ]);
+
   Widget _roundBtn(IconData i, VoidCallback fn, bool act) => Container(
       decoration: BoxDecoration(
           shape: BoxShape.circle,
@@ -1840,6 +1660,7 @@ class _LayerModeState extends State<LayerMode> {
           icon: Icon(i,
               size: 18, color: act ? Colors.cyanAccent : Colors.white24),
           onPressed: act ? fn : null));
+
   Widget _buildPanelToggles() => Positioned(
       top: 20,
       left: 20,
@@ -1850,6 +1671,7 @@ class _LayerModeState extends State<LayerMode> {
         _toggleBtn("PROPS", showPropPanel,
             () => setState(() => showPropPanel = !showPropPanel)),
       ]));
+
   Widget _toggleBtn(String t, bool s, VoidCallback fn) => GestureDetector(
       onTap: fn,
       child: Container(
@@ -1863,6 +1685,7 @@ class _LayerModeState extends State<LayerMode> {
                   color: s ? Colors.black : Colors.cyanAccent,
                   fontSize: 9,
                   fontWeight: FontWeight.bold))));
+
   Widget _buildBottomCenterToggle() => Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -1883,33 +1706,31 @@ class _LayerModeState extends State<LayerMode> {
                         color: Colors.white,
                         fontSize: 11,
                         fontWeight: FontWeight.bold)),
-                Switch(
-                  value: isEditMode,
-                  thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected)) {
-                      return Colors.cyanAccent;
-                    }
-                    return null;
-                  }),
-                  onChanged: (v) {
-                    setState(() {
-                      isEditMode = v;
-                      if (!isEditMode) {
-                        _exitEditMode();
-                      } else {
-                        _enterEditMode();
-                      }
-                    });
-                  },
-                )
+                Checkbox(
+                    value: isEditMode,
+                    activeColor: Colors.cyanAccent,
+                    onChanged: (v) {
+                      setState(() {
+                        isEditMode = v!;
+
+                        if (!isEditMode) {
+                          _exitEditMode();
+                        } else {
+                          _enterEditMode();
+                        }
+                      });
+                    })
               ])),
         ],
       );
+
   void _enterEditMode() {
     // Placeholder for entering edit mode
   }
+
   void _exitEditMode() {
     _saveAllConfigs();
+
     _saveControlSettings();
   }
 
@@ -1928,6 +1749,7 @@ class _LayerModeState extends State<LayerMode> {
                       color: Colors.black,
                       fontWeight: FontWeight.bold,
                       fontSize: 10)))));
+
   Widget _enhancedSlider(String l, double v, double min, double max,
           double step, ValueChanged<double> cb) =>
       Padding(
@@ -1937,11 +1759,14 @@ class _LayerModeState extends State<LayerMode> {
               Text(l, style: const TextStyle(color: Colors.white, fontSize: 9)),
               SizedBox(
                 width: 60,
-                child: TextFormField(
-                  initialValue: v.toStringAsFixed(3),
+                child: TextField(
+                  controller: TextEditingController(text: v.toStringAsFixed(3))
+                    ..selection = TextSelection.collapsed(
+                        offset: v.toStringAsFixed(3).length),
                   style: const TextStyle(color: Colors.cyanAccent, fontSize: 8),
-                  onFieldSubmitted: (s) {
+                  onSubmitted: (s) {
                     double newV = double.tryParse(s) ?? v;
+
                     cb(newV.clamp(min, max));
                   },
                 ),
@@ -1967,7 +1792,9 @@ class _LayerModeState extends State<LayerMode> {
                           divisions: ((max - min) / step).toInt(),
                           onChanged: (val) {
                             _saveToHistory();
+
                             cb(val);
+
                             _debounceSaveConfigs();
                           })),
                 ),
@@ -1978,23 +1805,22 @@ class _LayerModeState extends State<LayerMode> {
               ],
             )
           ]));
+
   Widget _toggleRow(String l, bool v, ValueChanged<bool> cb) =>
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Text(l, style: const TextStyle(color: Colors.white, fontSize: 10)),
         Switch(
             value: v,
-            thumbColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.selected)) {
-                return Colors.cyanAccent;
-              }
-              return null;
-            }),
+            activeColor: Colors.cyanAccent,
             onChanged: (val) {
               _saveToHistory();
+
               cb(val);
+
               _debounceSaveConfigs();
             })
       ]);
+
   Widget _buildClearToggle() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -2007,12 +1833,7 @@ class _LayerModeState extends State<LayerMode> {
             style: TextStyle(color: Colors.white, fontSize: 10)),
         Switch(
             value: isClearMode,
-            thumbColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.selected)) {
-                return Colors.cyanAccent;
-              }
-              return null;
-            }),
+            activeColor: Colors.cyanAccent,
             onChanged: (v) {
               setState(() {
                 isClearMode = v;
@@ -2022,8 +1843,20 @@ class _LayerModeState extends State<LayerMode> {
     );
   }
 
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+
+    urlController.dispose();
+
+    presetNameController.dispose();
+
+    super.dispose();
+  }
+
   void _debounceSaveConfigs() {
     _debounceTimer?.cancel();
+
     _debounceTimer = Timer(const Duration(milliseconds: 500), () {
       _saveControlSettings();
     });

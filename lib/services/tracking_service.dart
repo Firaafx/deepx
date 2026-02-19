@@ -486,21 +486,22 @@ class TrackingService {
     required int buttons,
   }) {
     try {
+      final String mouseType;
+      if (type == 'pointerdown') {
+        mouseType = 'mousedown';
+      } else if (type == 'pointerup' || type == 'pointercancel') {
+        mouseType = 'mouseup';
+      } else {
+        mouseType = 'mousemove';
+      }
       target.dispatchEvent(
-        html.PointerEvent(
-          type,
-          <String, dynamic>{
-            'bubbles': true,
-            'cancelable': true,
-            'clientX': x,
-            'clientY': y,
-            'buttons': buttons,
-            'button': 0,
-            'pointerId': 731,
-            'isPrimary': true,
-            'pointerType': 'mouse',
-            'composed': true,
-          },
+        html.MouseEvent(
+          mouseType,
+          canBubble: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          button: 0,
         ),
       );
     } catch (_) {}

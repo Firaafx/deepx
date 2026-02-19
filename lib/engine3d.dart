@@ -1,6 +1,7 @@
 // lib/engine3d.dart
 import 'dart:async';
 import 'dart:convert';
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 import 'dart:ui_web' as ui_web;
@@ -1959,6 +1960,29 @@ class _Engine3DPageState extends State<Engine3DPage> {
   @override
   void didUpdateWidget(covariant Engine3DPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final bool externalPayloadChanged = !const DeepCollectionEquality()
+        .equals(widget.initialPresetPayload, oldWidget.initialPresetPayload);
+    if (externalPayloadChanged) {
+      final adapted = _adaptPresetPayload(widget.initialPresetPayload);
+      if (adapted != null) {
+        _modeState['sceneState'] = adapted.scene;
+        final Map<String, dynamic> settings =
+            ((_modeState['settings'] as Map?)?.cast<String, dynamic>()) ??
+                <String, dynamic>{};
+        settings.addAll(adapted.controls);
+        _modeState['settings'] = settings;
+        _postToEngine(<String, dynamic>{
+          'type': 'hydrate_engine',
+          'settings': settings,
+          'presets': presets,
+          'sceneState': adapted.scene,
+          'useGlobal': widget.useGlobalTracking,
+        });
+        widget.onLivePayloadChanged?.call(_buildLivePayloadFromScene(
+          adapted.scene,
+        ));
+      }
+    }
     if (widget.externalHeadPose != null) {
       _applyExternalHeadPose(widget.externalHeadPose!);
       return;
