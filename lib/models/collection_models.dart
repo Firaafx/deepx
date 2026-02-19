@@ -45,6 +45,14 @@ class CollectionSummary {
     required this.updatedAt,
     required this.firstItem,
     required this.author,
+    this.likesCount = 0,
+    this.dislikesCount = 0,
+    this.commentsCount = 0,
+    this.savesCount = 0,
+    this.viewsCount = 0,
+    this.myReaction = 0,
+    this.isSavedByCurrentUser = false,
+    this.isWatchLater = false,
   });
 
   final String id;
@@ -62,6 +70,14 @@ class CollectionSummary {
   final DateTime updatedAt;
   final CollectionItemSnapshot? firstItem;
   final AppUserProfile? author;
+  final int likesCount;
+  final int dislikesCount;
+  final int commentsCount;
+  final int savesCount;
+  final int viewsCount;
+  final int myReaction;
+  final bool isSavedByCurrentUser;
+  final bool isWatchLater;
 }
 
 class CollectionDetail {

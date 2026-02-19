@@ -12,6 +12,7 @@ import '../models/preset_comment.dart';
 import '../models/profile_stats.dart';
 import '../models/render_preset.dart';
 import '../models/tracker_runtime_config.dart';
+import '../models/watch_later_item.dart';
 
 class AppRepository {
   AppRepository._();
@@ -570,6 +571,7 @@ class AppRepository {
 
     final Map<String, int> myReactionByPreset = <String, int>{};
     final Set<String> savedPresetIds = <String>{};
+    final Set<String> watchLaterPresetIds = <String>{};
     final Set<String> followingUserIds = <String>{};
 
     if (user != null) {
@@ -594,6 +596,17 @@ class AppRepository {
         savedPresetIds.add(map['preset_id'].toString());
       }
 
+      final List<dynamic> watchLaterRows = await _client
+          .from('watch_later_items')
+          .select('target_id')
+          .eq('user_id', user.id)
+          .eq('target_type', 'post')
+          .inFilter('target_id', presetIds.toList());
+      for (final dynamic row in watchLaterRows) {
+        final map = Map<String, dynamic>.from(row as Map);
+        watchLaterPresetIds.add(map['target_id']?.toString() ?? '');
+      }
+
       final List<dynamic> followingRows = await _client
           .from('follows')
           .select('following_id')
@@ -614,9 +627,11 @@ class AppRepository {
         dislikesCount: _toInt(stats['dislikes_count']),
         commentsCount: _toInt(stats['comments_count']),
         savesCount: _toInt(stats['saves_count']),
+        viewsCount: _toInt(stats['views_count']),
         myReaction: myReactionByPreset[preset.id] ?? 0,
         isSaved: savedPresetIds.contains(preset.id),
         isFollowingAuthor: followingUserIds.contains(preset.userId),
+        isWatchLater: watchLaterPresetIds.contains(preset.id),
       );
     }).toList();
   }
@@ -656,6 +671,23 @@ class AppRepository {
     for (final dynamic row in rows) {
       final item = Map<String, dynamic>.from(row as Map);
       map[item['preset_id'].toString()] = item;
+    }
+    return map;
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _fetchCollectionStatsByIds(
+    Set<String> ids,
+  ) async {
+    if (ids.isEmpty) return <String, Map<String, dynamic>>{};
+    final List<dynamic> rows = await _client
+        .from('collection_stats')
+        .select('*')
+        .inFilter('collection_id', ids.toList());
+    final Map<String, Map<String, dynamic>> map =
+        <String, Map<String, dynamic>>{};
+    for (final dynamic row in rows) {
+      final item = Map<String, dynamic>.from(row as Map);
+      map[item['collection_id']?.toString() ?? ''] = item;
     }
     return map;
   }
@@ -737,6 +769,55 @@ class AppRepository {
         .select('*')
         .single();
     return row['id']?.toString() ?? '';
+  }
+
+  Future<void> updatePresetDetail({
+    required String presetId,
+    String? title,
+    String? description,
+    List<String>? tags,
+    List<String>? mentionUserIds,
+    Map<String, dynamic>? payload,
+    String? mode,
+    String? visibility,
+  }) {
+    final Map<String, dynamic>? effectivePayload = payload == null
+        ? null
+        : <String, dynamic>{
+            ...payload,
+            if (mode != null && mode.trim().isNotEmpty) 'mode': mode.trim(),
+          };
+    return updatePresetPost(
+      presetId: presetId,
+      title: title,
+      description: description,
+      tags: tags,
+      mentionUserIds: mentionUserIds,
+      payload: effectivePayload,
+      visibility: visibility,
+    );
+  }
+
+  Future<void> updatePresetCard({
+    required String presetId,
+    required Map<String, dynamic> thumbnailPayload,
+    required String thumbnailMode,
+    String? title,
+    String? description,
+    List<String>? tags,
+    List<String>? mentionUserIds,
+    String? visibility,
+  }) {
+    return updatePresetPost(
+      presetId: presetId,
+      title: title,
+      description: description,
+      tags: tags,
+      mentionUserIds: mentionUserIds,
+      thumbnailPayload: thumbnailPayload,
+      thumbnailMode: thumbnailMode,
+      visibility: visibility,
+    );
   }
 
   Future<void> updatePresetPost({
@@ -920,6 +1001,111 @@ class AppRepository {
           .eq('user_id', user.id)
           .eq('preset_id', presetId);
     }
+  }
+
+  Future<void> toggleWatchLaterItem({
+    required String targetType,
+    required String targetId,
+    required bool watchLater,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    final String normalizedType =
+        targetType.toLowerCase() == 'collection' ? 'collection' : 'post';
+    if (watchLater) {
+      await _client.from('watch_later_items').upsert(
+        <String, dynamic>{
+          'user_id': user.id,
+          'target_type': normalizedType,
+          'target_id': targetId,
+        },
+        onConflict: 'user_id,target_type,target_id',
+      );
+    } else {
+      await _client
+          .from('watch_later_items')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('target_type', normalizedType)
+          .eq('target_id', targetId);
+    }
+  }
+
+  Future<List<WatchLaterItem>> fetchWatchLaterForCurrentUser({
+    int limit = 240,
+  }) async {
+    final user = currentUser;
+    if (user == null) return const <WatchLaterItem>[];
+    final List<dynamic> rows = await _client
+        .from('watch_later_items')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', ascending: false)
+        .limit(limit);
+    if (rows.isEmpty) return const <WatchLaterItem>[];
+
+    final List<String> postIds = <String>[];
+    final List<String> collectionIds = <String>[];
+    for (final dynamic raw in rows) {
+      final map = Map<String, dynamic>.from(raw as Map);
+      final String id = map['target_id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      if ((map['target_type']?.toString() ?? '') == 'collection') {
+        collectionIds.add(id);
+      } else {
+        postIds.add(id);
+      }
+    }
+
+    final Map<String, RenderPreset> postsById = postIds.isEmpty
+        ? <String, RenderPreset>{}
+        : await fetchPresetsByIds(postIds);
+    final Map<String, CollectionSummary> collectionsById =
+        <String, CollectionSummary>{};
+    if (collectionIds.isNotEmpty) {
+      final List<dynamic> collectionRows = await _client
+          .from('collections')
+          .select('*')
+          .inFilter('id', collectionIds);
+      final hydrated = await _hydrateCollectionSummaries(collectionRows);
+      for (final summary in hydrated) {
+        collectionsById[summary.id] = summary;
+      }
+    }
+
+    final List<WatchLaterItem> items = <WatchLaterItem>[];
+    for (final dynamic raw in rows) {
+      final map = Map<String, dynamic>.from(raw as Map);
+      final String id = map['id']?.toString() ?? '';
+      final String type = map['target_type']?.toString() ?? 'post';
+      final String targetId = map['target_id']?.toString() ?? '';
+      final DateTime createdAt =
+          DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+      if (targetId.isEmpty) continue;
+      if (type == 'collection') {
+        final summary = collectionsById[targetId];
+        if (summary == null) continue;
+        items.add(
+          WatchLaterItem.collection(
+            id: id,
+            createdAt: createdAt,
+            collection: summary,
+          ),
+        );
+      } else {
+        final post = postsById[targetId];
+        if (post == null) continue;
+        items.add(
+          WatchLaterItem.post(
+            id: id,
+            createdAt: createdAt,
+            post: post,
+          ),
+        );
+      }
+    }
+    return items;
   }
 
   Future<List<PresetComment>> fetchPresetComments(
@@ -1309,6 +1495,39 @@ class AppRepository {
         .order('position', ascending: true);
 
     final profile = await fetchProfileById(row['user_id'].toString());
+    final statsByCollection =
+        await _fetchCollectionStatsByIds(<String>{collectionId});
+    final stats = statsByCollection[collectionId] ?? const <String, dynamic>{};
+    bool isSavedByCurrentUser = false;
+    bool isWatchLater = false;
+    int myReaction = 0;
+    final user = currentUser;
+    if (user != null) {
+      final savedRow = await _client
+          .from('saved_collections')
+          .select('collection_id')
+          .eq('user_id', user.id)
+          .eq('collection_id', collectionId)
+          .maybeSingle();
+      isSavedByCurrentUser = savedRow != null;
+
+      final watchRow = await _client
+          .from('watch_later_items')
+          .select('target_id')
+          .eq('user_id', user.id)
+          .eq('target_type', 'collection')
+          .eq('target_id', collectionId)
+          .maybeSingle();
+      isWatchLater = watchRow != null;
+
+      final reactionRow = await _client
+          .from('collection_reactions')
+          .select('reaction')
+          .eq('user_id', user.id)
+          .eq('collection_id', collectionId)
+          .maybeSingle();
+      myReaction = _toInt(reactionRow?['reaction']);
+    }
     final items = itemRows
         .map((dynamic e) =>
             CollectionItemSnapshot.fromMap(Map<String, dynamic>.from(e as Map)))
@@ -1333,6 +1552,14 @@ class AppRepository {
             DateTime.fromMillisecondsSinceEpoch(0),
         firstItem: items.isEmpty ? null : items.first,
         author: profile,
+        likesCount: _toInt(stats['likes_count']),
+        dislikesCount: _toInt(stats['dislikes_count']),
+        commentsCount: _toInt(stats['comments_count']),
+        savesCount: _toInt(stats['saves_count']),
+        viewsCount: _toInt(stats['views_count']),
+        myReaction: myReaction,
+        isSavedByCurrentUser: isSavedByCurrentUser,
+        isWatchLater: isWatchLater,
       ),
       items: items,
     );
@@ -1374,17 +1601,24 @@ class AppRepository {
           .single();
       id = inserted['id'].toString();
     } else {
-      await _client.from('collections').update(
-        <String, dynamic>{
-          'name': name.trim().isEmpty ? 'Untitled collection' : name.trim(),
-          'description': description,
-          'tags': _normalizeTags(tags),
-          'mention_user_ids': _normalizeUuidList(mentionUserIds),
-          'thumbnail_payload': thumbnailPayload ?? items.first.snapshot,
-          'thumbnail_mode': thumbnailMode ?? items.first.mode,
-          'published': publish,
-        },
-      ).eq('id', id).eq('user_id', user.id);
+      final Map<String, dynamic> values = <String, dynamic>{
+        'name': name.trim().isEmpty ? 'Untitled collection' : name.trim(),
+        'description': description,
+        'tags': _normalizeTags(tags),
+        'mention_user_ids': _normalizeUuidList(mentionUserIds),
+        'published': publish,
+      };
+      if (thumbnailPayload != null) {
+        values['thumbnail_payload'] = thumbnailPayload;
+      }
+      if (thumbnailMode != null && thumbnailMode.trim().isNotEmpty) {
+        values['thumbnail_mode'] = thumbnailMode;
+      }
+      await _client
+          .from('collections')
+          .update(values)
+          .eq('id', id)
+          .eq('user_id', user.id);
 
       await _client.from('collection_items').delete().eq('collection_id', id);
     }
@@ -1403,6 +1637,50 @@ class AppRepository {
     }
     await _client.from('collection_items').insert(rows);
     return id;
+  }
+
+  Future<void> updateCollectionItemsDetail({
+    required String collectionId,
+    required String name,
+    String description = '',
+    List<String> tags = const <String>[],
+    List<String> mentionUserIds = const <String>[],
+    required bool publish,
+    required List<CollectionDraftItem> items,
+  }) async {
+    await saveCollectionWithItems(
+      collectionId: collectionId,
+      name: name,
+      description: description,
+      tags: tags,
+      mentionUserIds: mentionUserIds,
+      publish: publish,
+      items: items,
+    );
+  }
+
+  Future<void> updateCollectionCard({
+    required String collectionId,
+    required String name,
+    String description = '',
+    List<String> tags = const <String>[],
+    List<String> mentionUserIds = const <String>[],
+    required bool publish,
+    required List<CollectionDraftItem> items,
+    required Map<String, dynamic> thumbnailPayload,
+    required String thumbnailMode,
+  }) async {
+    await saveCollectionWithItems(
+      collectionId: collectionId,
+      name: name,
+      description: description,
+      tags: tags,
+      mentionUserIds: mentionUserIds,
+      publish: publish,
+      items: items,
+      thumbnailPayload: thumbnailPayload,
+      thumbnailMode: thumbnailMode,
+    );
   }
 
   Future<void> deleteCollection(String collectionId) async {
@@ -1428,11 +1706,116 @@ class AppRepository {
         .eq('user_id', user.id);
   }
 
+  Future<void> setCollectionReaction({
+    required String collectionId,
+    required int reaction,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    if (reaction != 1 && reaction != -1) {
+      await _client
+          .from('collection_reactions')
+          .delete()
+          .eq('collection_id', collectionId)
+          .eq('user_id', user.id);
+      return;
+    }
+    await _client.from('collection_reactions').upsert(
+      <String, dynamic>{
+        'collection_id': collectionId,
+        'user_id': user.id,
+        'reaction': reaction,
+      },
+      onConflict: 'collection_id,user_id',
+    );
+  }
+
+  Future<void> toggleSaveCollection(
+    String collectionId, {
+    required bool save,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    if (save) {
+      await _client.from('saved_collections').upsert(
+        <String, dynamic>{
+          'collection_id': collectionId,
+          'user_id': user.id,
+        },
+        onConflict: 'collection_id,user_id',
+      );
+    } else {
+      await _client
+          .from('saved_collections')
+          .delete()
+          .eq('collection_id', collectionId)
+          .eq('user_id', user.id);
+    }
+  }
+
+  Future<void> recordCollectionView(String collectionId) async {
+    await _client.rpc(
+      'record_collection_view',
+      params: <String, dynamic>{'p_collection_id': collectionId},
+    );
+  }
+
+  Future<List<PresetComment>> fetchCollectionComments(
+    String collectionId, {
+    int limit = 200,
+  }) async {
+    final List<dynamic> rows = await _client
+        .from('collection_comments')
+        .select('*')
+        .eq('collection_id', collectionId)
+        .order('created_at', ascending: true)
+        .limit(limit);
+
+    final Set<String> userIds = rows
+        .map((dynamic e) => (e as Map)['user_id']?.toString() ?? '')
+        .where((String e) => e.isNotEmpty)
+        .toSet();
+    final Map<String, AppUserProfile> profiles =
+        await _fetchProfilesByIds(userIds);
+
+    return rows.map((dynamic e) {
+      final map = Map<String, dynamic>.from(e as Map);
+      final userId = map['user_id']?.toString() ?? '';
+      return PresetComment(
+        id: map['id']?.toString() ?? '',
+        presetId: map['collection_id']?.toString() ?? '',
+        userId: userId,
+        content: map['content']?.toString() ?? '',
+        createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        author: profiles[userId],
+      );
+    }).toList();
+  }
+
+  Future<void> addCollectionComment({
+    required String collectionId,
+    required String content,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    final String text = content.trim();
+    if (text.isEmpty) return;
+    await _client.from('collection_comments').insert(
+      <String, dynamic>{
+        'collection_id': collectionId,
+        'user_id': user.id,
+        'content': text,
+      },
+    );
+  }
+
   Future<List<CollectionSummary>> _hydrateCollectionSummaries(
     List<dynamic> rows,
   ) async {
     if (rows.isEmpty) return const <CollectionSummary>[];
 
+    final user = currentUser;
     final collectionIds = rows
         .map((dynamic e) => (e as Map)['id']?.toString() ?? '')
         .where((String id) => id.isNotEmpty)
@@ -1443,6 +1826,45 @@ class AppRepository {
         .toSet();
 
     final profileById = await _fetchProfilesByIds(userIds);
+    final Map<String, Map<String, dynamic>> statsByCollectionId =
+        await _fetchCollectionStatsByIds(collectionIds.toSet());
+
+    final Set<String> savedCollectionIds = <String>{};
+    final Set<String> watchLaterCollectionIds = <String>{};
+    final Map<String, int> myReactionsByCollection = <String, int>{};
+    if (user != null) {
+      final List<dynamic> saveRows = await _client
+          .from('saved_collections')
+          .select('collection_id')
+          .eq('user_id', user.id)
+          .inFilter('collection_id', collectionIds);
+      for (final dynamic row in saveRows) {
+        savedCollectionIds
+            .add((row as Map)['collection_id']?.toString() ?? '');
+      }
+
+      final List<dynamic> watchRows = await _client
+          .from('watch_later_items')
+          .select('target_id')
+          .eq('user_id', user.id)
+          .eq('target_type', 'collection')
+          .inFilter('target_id', collectionIds);
+      for (final dynamic row in watchRows) {
+        watchLaterCollectionIds
+            .add((row as Map)['target_id']?.toString() ?? '');
+      }
+
+      final List<dynamic> reactionRows = await _client
+          .from('collection_reactions')
+          .select('collection_id,reaction')
+          .eq('user_id', user.id)
+          .inFilter('collection_id', collectionIds);
+      for (final dynamic row in reactionRows) {
+        final map = Map<String, dynamic>.from(row as Map);
+        myReactionsByCollection[map['collection_id']?.toString() ?? ''] =
+            _toInt(map['reaction']);
+      }
+    }
 
     final List<dynamic> itemRows = await _client
         .from('collection_items')
@@ -1465,6 +1887,7 @@ class AppRepository {
       final map = Map<String, dynamic>.from(raw as Map);
       final id = map['id']?.toString() ?? '';
       final items = itemsByCollection[id] ?? const <CollectionItemSnapshot>[];
+      final stats = statsByCollectionId[id] ?? const <String, dynamic>{};
       return CollectionSummary(
         id: id,
         shareId: map['share_id']?.toString() ?? '',
@@ -1483,6 +1906,14 @@ class AppRepository {
             DateTime.fromMillisecondsSinceEpoch(0),
         firstItem: items.isEmpty ? null : items.first,
         author: profileById[map['user_id']?.toString() ?? ''],
+        likesCount: _toInt(stats['likes_count']),
+        dislikesCount: _toInt(stats['dislikes_count']),
+        commentsCount: _toInt(stats['comments_count']),
+        savesCount: _toInt(stats['saves_count']),
+        viewsCount: _toInt(stats['views_count']),
+        myReaction: myReactionsByCollection[id] ?? 0,
+        isSavedByCurrentUser: savedCollectionIds.contains(id),
+        isWatchLater: watchLaterCollectionIds.contains(id),
       );
     }).toList();
   }

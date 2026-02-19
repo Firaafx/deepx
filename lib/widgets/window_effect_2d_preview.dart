@@ -38,6 +38,10 @@ class WindowEffect2DPreview extends StatelessWidget {
     return ValueListenableBuilder<TrackingFrame>(
       valueListenable: TrackingService.instance.frameNotifier,
       builder: (context, frame, _) {
+        final TrackingFrame effectiveFrame = _applyFrameForControls(
+          frame: frame,
+          controls: controls,
+        );
         return LayoutBuilder(
           builder: (context, constraints) {
             final Size size = constraints.biggest;
@@ -49,7 +53,7 @@ class WindowEffect2DPreview extends StatelessWidget {
                   !layer.isRect && layer.order > turningOrder;
               final Widget item = _buildLayer(
                 layer: layer,
-                frame: frame,
+                frame: effectiveFrame,
                 controls: controls,
                 turningOrder: turningOrder,
                 canvasSize: size,
@@ -97,6 +101,46 @@ class WindowEffect2DPreview extends StatelessWidget {
           },
         );
       },
+    );
+  }
+
+  TrackingFrame _applyFrameForControls({
+    required TrackingFrame frame,
+    required _PreviewControls controls,
+  }) {
+    if (controls.manualMode) {
+      return TrackingFrame(
+        headX: controls.manualHeadX,
+        headY: controls.manualHeadY,
+        headZ: controls.manualHeadZ,
+        yaw: controls.manualYaw,
+        pitch: controls.manualPitch,
+        cursorX: frame.cursorX,
+        cursorY: frame.cursorY,
+        wink: frame.wink,
+        pinch: frame.pinch,
+        hasHand: frame.hasHand,
+      );
+    }
+
+    double applyDeadZone(double value, double center, double zone) {
+      if (zone <= 0) return value;
+      final double delta = value - center;
+      if (delta.abs() <= zone) return center;
+      return center + (delta.abs() - zone) * delta.sign;
+    }
+
+    return TrackingFrame(
+      headX: applyDeadZone(frame.headX, 0, controls.deadZoneX),
+      headY: applyDeadZone(frame.headY, 0, controls.deadZoneY),
+      headZ: applyDeadZone(frame.headZ, 0.2, controls.deadZoneZ),
+      yaw: applyDeadZone(frame.yaw, 0, controls.deadZoneYaw),
+      pitch: applyDeadZone(frame.pitch, 0, controls.deadZonePitch),
+      cursorX: frame.cursorX,
+      cursorY: frame.cursorY,
+      wink: frame.wink,
+      pinch: frame.pinch,
+      hasHand: frame.hasHand,
     );
   }
 
@@ -519,6 +563,17 @@ class _PreviewControls {
     required this.anchorHeadX,
     required this.anchorHeadY,
     required this.selectedAspect,
+    required this.deadZoneX,
+    required this.deadZoneY,
+    required this.deadZoneZ,
+    required this.deadZoneYaw,
+    required this.deadZonePitch,
+    required this.manualMode,
+    required this.manualHeadX,
+    required this.manualHeadY,
+    required this.manualHeadZ,
+    required this.manualYaw,
+    required this.manualPitch,
   });
 
   final double currentScale;
@@ -531,6 +586,17 @@ class _PreviewControls {
   final double anchorHeadX;
   final double anchorHeadY;
   final String? selectedAspect;
+  final double deadZoneX;
+  final double deadZoneY;
+  final double deadZoneZ;
+  final double deadZoneYaw;
+  final double deadZonePitch;
+  final bool manualMode;
+  final double manualHeadX;
+  final double manualHeadY;
+  final double manualHeadZ;
+  final double manualYaw;
+  final double manualPitch;
 
   factory _PreviewControls.fromMap(Map<String, dynamic> map) {
     return _PreviewControls(
@@ -544,6 +610,17 @@ class _PreviewControls {
       anchorHeadX: _toDouble(map['anchorHeadX'], 0),
       anchorHeadY: _toDouble(map['anchorHeadY'], 0),
       selectedAspect: map['selectedAspect']?.toString(),
+      deadZoneX: _toDouble(map['deadZoneX'], 0),
+      deadZoneY: _toDouble(map['deadZoneY'], 0),
+      deadZoneZ: _toDouble(map['deadZoneZ'], 0),
+      deadZoneYaw: _toDouble(map['deadZoneYaw'], 0),
+      deadZonePitch: _toDouble(map['deadZonePitch'], 0),
+      manualMode: map['manualMode'] == true,
+      manualHeadX: _toDouble(map['manualHeadX'], 0),
+      manualHeadY: _toDouble(map['manualHeadY'], 0),
+      manualHeadZ: _toDouble(map['manualHeadZ'], 0.2),
+      manualYaw: _toDouble(map['manualYaw'], 0),
+      manualPitch: _toDouble(map['manualPitch'], 0),
     );
   }
 

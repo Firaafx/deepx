@@ -149,6 +149,8 @@ const inputSmooth = 0.7;
 let trackerDisposed = false;
 let lastHandProbeAt = 0;
 let handSuspendUntil = 0;
+let batteryPollInterval = null;
+let connectionPingInterval = null;
 
 function emitToParent(payload) {
     const message = activeChannel ? { ...payload, channel: activeChannel } : payload;
@@ -335,6 +337,14 @@ function disposeTrackerRuntime() {
             cameraSvc.stop();
         } catch (_) {}
     }
+    if (batteryPollInterval) {
+        clearInterval(batteryPollInterval);
+        batteryPollInterval = null;
+    }
+    if (connectionPingInterval) {
+        clearInterval(connectionPingInterval);
+        connectionPingInterval = null;
+    }
     if (conn && typeof conn.close === 'function') {
         try {
             conn.close();
@@ -493,7 +503,10 @@ async function init() {
                 }
             }
         };
-        setInterval(async () => {
+        if (batteryPollInterval) {
+            clearInterval(batteryPollInterval);
+        }
+        batteryPollInterval = setInterval(async () => {
             if ('getBattery' in navigator) {
                 const battery = await navigator.getBattery();
                 const currentLevel = battery.level * 100;
@@ -698,7 +711,10 @@ async function init() {
                         }, 1000);
                     });
                 });
-                setInterval(() => {
+                if (connectionPingInterval) {
+                    clearInterval(connectionPingInterval);
+                }
+                connectionPingInterval = setInterval(() => {
                     if (conn && conn.open) {
                         conn.send({type: 'ping', time: Date.now()});
                     }
@@ -714,6 +730,10 @@ async function init() {
                 if (peer) peer.destroy();
                 peer = null;
                 conn = null;
+                if (connectionPingInterval) {
+                    clearInterval(connectionPingInterval);
+                    connectionPingInterval = null;
+                }
                 if (document.getElementById('tracking-toggle').checked) {
                     document.getElementById('tracking-toggle').dispatchEvent(new Event('change'));
                 }
@@ -1210,7 +1230,6 @@ function setupOnResults() {
             }
             return;
         } else {
-            if (activeTracker !== 'face') return;
             oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
             if (!document.getElementById('tracking-toggle').checked) { cursor.style.display = 'none'; return; }
             cursor.style.display = (!headlessMode && runtimeShowCursor && document.getElementById('show-cursor').checked) ? 'block' : 'none';
@@ -1296,6 +1315,11 @@ function toggleUI() {
 }
 function frameUpdate() {
     if (trackerDisposed) return;
+    if (document.hidden) {
+        if (cursor) cursor.style.display = 'none';
+        requestAnimationFrame(frameUpdate);
+        return;
+    }
     frameCount++;
     const now = performance.now();
     dt = now - prevTime;
@@ -2169,6 +2193,22 @@ window.addEventListener('resize', () => {
     if (isIrisCalibrated) {
         isIrisCalibrated = false;
         alert('Screen resized. Please recalibrate for iris mode.');
+    }
+});
+document.addEventListener('visibilitychange', async () => {
+    if (trackerDisposed) return;
+    const trackingToggle = document.getElementById('tracking-toggle');
+    if (!trackingToggle) return;
+    if (document.hidden) {
+        if (cameraSvc && typeof cameraSvc.stop === 'function') {
+            try {
+                await cameraSvc.stop();
+            } catch (_) {}
+        }
+        return;
+    }
+    if (!isRemote && trackingToggle.checked) {
+        await updatePerformanceSettings();
     }
 });
 window.addEventListener('mousemove', (e) => {

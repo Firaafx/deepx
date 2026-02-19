@@ -1762,7 +1762,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
 ''';
     content = content
         .replaceAll('__CLEAN_VIEW__', widget.cleanView ? 'true' : 'false')
-        .replaceAll('__HIDE_PANEL__', widget.embeddedStudio ? 'true' : 'false')
+        .replaceAll('__HIDE_PANEL__', 'true')
         .replaceAll(
             '__STUDIO_SURFACE__', widget.studioSurface ? 'true' : 'false')
         .replaceAll('__AUDIO_ENABLED__', widget.disableAudio ? 'false' : 'true')

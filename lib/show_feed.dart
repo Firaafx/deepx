@@ -24,6 +24,7 @@ import 'models/preset_comment.dart';
 import 'models/profile_stats.dart';
 import 'models/render_preset.dart';
 import 'models/tracker_runtime_config.dart';
+import 'models/watch_later_item.dart';
 import 'services/app_repository.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
@@ -42,6 +43,11 @@ enum _ShellTab {
 enum _ComposerKind {
   single,
   collection,
+}
+
+enum _ComposerEditTarget {
+  detail,
+  card,
 }
 
 String _routeIdFromShareOrUuid({
@@ -347,7 +353,8 @@ class ShowFeedPage extends StatefulWidget {
 
 class _ShowFeedPageState extends State<ShowFeedPage> {
   static const double _headerHeight = 84;
-  static const double _feedTopPadding = _headerHeight;
+  static const double _headerTopOffset = 3;
+  static const double _feedTopPadding = _headerHeight + _headerTopOffset;
   static const double _tabContentTopPadding = 48;
 
   static const List<_NavItem> _primaryNav = <_NavItem>[
@@ -379,8 +386,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   bool _navExpanded = false;
   bool _realNavHover = false;
   bool _trackerNavHover = false;
-  DateTime _lastTrackerHoverInsideAt =
-      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true).toLocal();
   Timer? _trackerNavDebounce;
   VoidCallback? _trackerNavListener;
   AppUserProfile? _currentProfile;
@@ -678,7 +683,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
         local.dx <= box.size.width &&
         local.dy <= box.size.height;
     if (insideStrict) {
-      _lastTrackerHoverInsideAt = DateTime.now();
       _trackerNavDebounce?.cancel();
       _setTrackerNavHover(true);
       return;
@@ -914,7 +918,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                     ),
                   ),
                   Positioned(
-                    top: 0,
+                    top: _headerTopOffset,
                     left: 0,
                     right: 0,
                     child: ClipRect(
@@ -1222,6 +1226,8 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
           mode: post.preset.mode,
           payload: post.preset.payload,
           existingPreset: post.preset,
+          editTarget: _ComposerEditTarget.card,
+          startBlankCard: true,
         ),
       ),
     );
@@ -1347,7 +1353,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
               crossAxisCount: crossAxisCount,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: 16 / 9,
+              childAspectRatio: 1.18,
             ),
             itemBuilder: (context, index) {
               final post = _posts[index];
@@ -1514,6 +1520,10 @@ class _CollectionTabState extends State<_CollectionTab> {
           tags: summary.tags,
           mentionUserIds: summary.mentionUserIds,
           published: summary.published,
+          initialCardPayload: summary.thumbnailPayload,
+          initialCardMode: summary.thumbnailMode,
+          editTarget: _ComposerEditTarget.card,
+          startBlankCard: true,
           items: detail.items
               .map(
                 (item) => CollectionDraftItem(
@@ -1590,7 +1600,7 @@ class _CollectionTabState extends State<_CollectionTab> {
               crossAxisCount: crossAxisCount,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: 16 / 9,
+              childAspectRatio: 1.18,
             ),
             itemBuilder: (context, index) {
               final summary = _collections[index];
@@ -1632,8 +1642,8 @@ class _CollectionFeedTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final item = summary.firstItem;
     final BorderRadius cardRadius = BorderRadius.circular(16);
+    final item = summary.firstItem;
     final String previewMode = summary.thumbnailMode ?? item?.mode ?? '2d';
     final Map<String, dynamic> previewPayload = summary.thumbnailPayload.isNotEmpty
         ? summary.thumbnailPayload
@@ -1654,39 +1664,22 @@ class _CollectionFeedTile extends StatelessWidget {
             payload: previewPayload,
             borderRadius: cardRadius,
           );
-
-    Widget deckPlate(
-        {required double dx, required double dy, required double a}) {
-      return Positioned(
-        left: dx,
-        right: dx,
-        top: dy,
-        bottom: dy,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerHighest.withValues(alpha: a),
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-      );
-    }
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: cardRadius,
         onTap: onTap,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            deckPlate(dx: 12, dy: 8, a: 0.35),
-            deckPlate(dx: 6, dy: 4, a: 0.5),
-            Positioned.fill(child: IgnorePointer(child: preview)),
-            Positioned.fill(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
               child: ClipRRect(
                 borderRadius: cardRadius,
                 child: Stack(
+                  fit: StackFit.expand,
                   children: [
+                    IgnorePointer(child: preview),
                     if (isMine)
                       Positioned(
                         top: 8,
@@ -1696,9 +1689,7 @@ class _CollectionFeedTile extends StatelessWidget {
                           color: cs.surfaceContainerHighest,
                           onSelected: (value) {
                             if (value == 'update') onUpdate?.call();
-                            if (value == 'visibility') {
-                              onToggleVisibility?.call();
-                            }
+                            if (value == 'visibility') onToggleVisibility?.call();
                             if (value == 'delete') onDelete?.call();
                           },
                           itemBuilder: (context) => [
@@ -1709,9 +1700,7 @@ class _CollectionFeedTile extends StatelessWidget {
                             PopupMenuItem<String>(
                               value: 'visibility',
                               child: Text(
-                                summary.published
-                                    ? 'Make Private'
-                                    : 'Make Public',
+                                summary.published ? 'Make Private' : 'Make Public',
                               ),
                             ),
                             const PopupMenuItem<String>(
@@ -1719,86 +1708,53 @@ class _CollectionFeedTile extends StatelessWidget {
                               child: Text('Delete'),
                             ),
                           ],
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(999),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                              child: Container(
-                                padding: const EdgeInsets.all(6),
-                                color: Colors.black.withValues(alpha: 0.35),
-                                child: const Icon(
-                                  Icons.more_vert,
-                                  color: Colors.white,
-                                  size: 18,
-                                ),
-                              ),
+                          icon: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.more_vert,
+                              color: Colors.white,
+                              size: 18,
                             ),
                           ),
                         ),
                       ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: IgnorePointer(
-                        child: Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.bottomCenter,
-                              end: Alignment.topCenter,
-                              colors: [
-                                Colors.black.withValues(alpha: 0.78),
-                                Colors.transparent,
-                              ],
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                summary.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: cs.onSurface,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                summary.author?.displayName ??
-                                    'Unknown creator',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: cs.onSurface.withValues(alpha: 0.82),
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(Icons.layers,
-                                      size: 14, color: Colors.white70),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    '${summary.itemsCount} items',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
                   ],
                 ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              summary.name.isNotEmpty ? summary.name : 'Untitled collection',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              summary.author?.displayName ?? 'Unknown creator',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: cs.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.updatedAt)} · ${summary.itemsCount} items',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: cs.onSurfaceVariant,
+                fontSize: 11,
               ),
             ),
           ],
@@ -1841,21 +1797,22 @@ class _FeedTile extends StatelessWidget {
     );
 
     return Material(
-      color: cs.surfaceContainerLow,
+      color: Colors.transparent,
       borderRadius: cardRadius,
-      clipBehavior: Clip.none,
       child: InkWell(
         onTap: onTap,
         borderRadius: cardRadius,
-        child: Stack(
-          clipBehavior: Clip.none,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Positioned.fill(child: IgnorePointer(child: preview)),
-            Positioned.fill(
+            AspectRatio(
+              aspectRatio: 16 / 9,
               child: ClipRRect(
                 borderRadius: cardRadius,
                 child: Stack(
+                  fit: StackFit.expand,
                   children: [
+                    IgnorePointer(child: preview),
                     if (isMine)
                       Positioned(
                         top: 8,
@@ -1865,9 +1822,7 @@ class _FeedTile extends StatelessWidget {
                           color: cs.surfaceContainerHighest,
                           onSelected: (value) {
                             if (value == 'edit') onEdit?.call();
-                            if (value == 'visibility') {
-                              onToggleVisibility?.call();
-                            }
+                            if (value == 'visibility') onToggleVisibility?.call();
                             if (value == 'delete') onDelete?.call();
                           },
                           itemBuilder: (context) => [
@@ -1878,9 +1833,7 @@ class _FeedTile extends StatelessWidget {
                             PopupMenuItem<String>(
                               value: 'visibility',
                               child: Text(
-                                post.preset.isPublic
-                                    ? 'Make Private'
-                                    : 'Make Public',
+                                post.preset.isPublic ? 'Make Private' : 'Make Public',
                               ),
                             ),
                             const PopupMenuItem<String>(
@@ -1888,102 +1841,58 @@ class _FeedTile extends StatelessWidget {
                               child: Text('Delete'),
                             ),
                           ],
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(999),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                              child: Container(
-                                padding: const EdgeInsets.all(6),
-                                color: Colors.black.withValues(alpha: 0.35),
-                                child: const Icon(
-                                  Icons.more_vert,
-                                  color: Colors.white,
-                                  size: 18,
-                                ),
-                              ),
+                          icon: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.more_vert,
+                              color: Colors.white,
+                              size: 18,
                             ),
                           ),
                         ),
                       ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.bottomCenter,
-                            end: Alignment.topCenter,
-                            colors: [
-                              Colors.black.withValues(alpha: 0.78),
-                              Colors.transparent
-                            ],
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              post.author?.displayName ?? 'Unknown creator',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: cs.onSurface,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              post.preset.title.isNotEmpty
-                                  ? post.preset.title
-                                  : post.preset.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: cs.onSurface.withValues(alpha: 0.8),
-                                fontSize: 12,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Wrap(
-                              spacing: 8,
-                              children: [
-                                _miniStat(Icons.thumb_up_alt_outlined,
-                                    post.likesCount),
-                                _miniStat(Icons.thumb_down_alt_outlined,
-                                    post.dislikesCount),
-                                _miniStat(Icons.mode_comment_outlined,
-                                    post.commentsCount),
-                                _miniStat(
-                                    Icons.bookmark_border, post.savesCount),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ],
                 ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              post.preset.title.isNotEmpty ? post.preset.title : post.preset.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              post.author?.displayName ?? 'Unknown creator',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: cs.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${_friendlyCount(post.viewsCount)} views · ${_friendlyTime(post.preset.updatedAt)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: cs.onSurfaceVariant,
+                fontSize: 11,
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _miniStat(IconData icon, int value) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: Colors.white70),
-        const SizedBox(width: 4),
-        Text(
-          '$value',
-          style: const TextStyle(color: Colors.white70, fontSize: 11),
-        ),
-      ],
     );
   }
 }
@@ -2291,6 +2200,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         myReaction: _post.myReaction,
         isSaved: _post.isSaved,
         isFollowingAuthor: _post.isFollowingAuthor,
+        viewsCount: _post.viewsCount,
+        isWatchLater: _post.isWatchLater,
       );
     });
   }
@@ -2320,6 +2231,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         myReaction: newReaction,
         isSaved: _post.isSaved,
         isFollowingAuthor: _post.isFollowingAuthor,
+        viewsCount: _post.viewsCount,
+        isWatchLater: _post.isWatchLater,
       );
     });
   }
@@ -2342,6 +2255,34 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         myReaction: _post.myReaction,
         isSaved: shouldSave,
         isFollowingAuthor: _post.isFollowingAuthor,
+        viewsCount: _post.viewsCount,
+        isWatchLater: _post.isWatchLater,
+      );
+    });
+  }
+
+  Future<void> _toggleWatchLater() async {
+    if (!await _requireAuthAction()) return;
+    final bool shouldWatchLater = !_post.isWatchLater;
+    await _repository.toggleWatchLaterItem(
+      targetType: 'post',
+      targetId: _post.preset.id,
+      watchLater: shouldWatchLater,
+    );
+    if (!mounted) return;
+    setState(() {
+      _post = FeedPost(
+        preset: _post.preset,
+        author: _post.author,
+        likesCount: _post.likesCount,
+        dislikesCount: _post.dislikesCount,
+        commentsCount: _post.commentsCount,
+        savesCount: _post.savesCount,
+        myReaction: _post.myReaction,
+        isSaved: _post.isSaved,
+        isFollowingAuthor: _post.isFollowingAuthor,
+        viewsCount: _post.viewsCount,
+        isWatchLater: shouldWatchLater,
       );
     });
   }
@@ -2365,6 +2306,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         myReaction: _post.myReaction,
         isSaved: _post.isSaved,
         isFollowingAuthor: follow,
+        viewsCount: _post.viewsCount,
+        isWatchLater: _post.isWatchLater,
       );
     });
   }
@@ -2549,6 +2492,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
           mode: _post.preset.mode,
           payload: _post.preset.payload,
           existingPreset: _post.preset,
+          editTarget: _ComposerEditTarget.detail,
+          startBlankCard: false,
         ),
       ),
     );
@@ -2838,6 +2783,15 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                             activeColor: cs.primary,
                             label: '',
                             onTap: _openShareSheet,
+                          ),
+                          _engagementButton(
+                            icon: _post.isWatchLater
+                                ? Icons.watch_later
+                                : Icons.watch_later_outlined,
+                            active: _post.isWatchLater,
+                            activeColor: Colors.tealAccent,
+                            label: '',
+                            onTap: _toggleWatchLater,
                           ),
                           _engagementButton(
                             icon: _post.isSaved
@@ -3813,6 +3767,14 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     _studioSetEntityListForType(scene, type, list);
     final order = _studioOrdered3DTokens()..add('$type:$id');
     scene['renderOrder'] = order.toSet().toList();
+    scene.putIfAbsent('sunIntensity', () => 2.0);
+    scene.putIfAbsent('ambLight', () => 0.5);
+    scene.putIfAbsent('bloomIntensity', () => 1.0);
+    scene.putIfAbsent('shadowQuality', () => '512');
+    scene.putIfAbsent('shadowSoftness', () => 1.0);
+    scene.putIfAbsent('envRot', () => 0.0);
+    scene.putIfAbsent('initPos', () => <double>[0, 2, 10]);
+    scene.putIfAbsent('initRot', () => <double>[0, 0, 0]);
     payload['scene'] = scene;
     _studioSelected3dToken = '$type:$id';
     _applyStudioPayload(payload);
@@ -3880,6 +3842,148 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     _studioSetEntityListForType(scene, type, list);
     payload['scene'] = scene;
     _applyStudioPayload(payload);
+  }
+
+  Map<String, dynamic> _studio3DControls() {
+    final dynamic payload = _studioLivePayload;
+    if (payload is! Map) return <String, dynamic>{};
+    final dynamic raw = payload['controls'];
+    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return <String, dynamic>{};
+  }
+
+  void _studioSet3DControlField(String field, dynamic value) {
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final controls = _studio3DControls();
+    controls[field] = value;
+    payload['controls'] = controls;
+    _applyStudioPayload(payload);
+  }
+
+  void _studioSet3DSceneField(String field, dynamic value) {
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio3DScene();
+    scene[field] = value;
+    payload['scene'] = scene;
+    _applyStudioPayload(payload);
+  }
+
+  void _studioSet3DEntityField({
+    required String token,
+    required String field,
+    required dynamic value,
+  }) {
+    final parts = token.split(':');
+    if (parts.length != 2) return;
+    final type = parts.first;
+    final id = parts.last;
+    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
+    final scene = _studio3DScene();
+    final list = _studioEntityListForType(scene, type);
+    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
+    if (index < 0) return;
+    list[index] = Map<String, dynamic>.from(list[index])..[field] = value;
+    _studioSetEntityListForType(scene, type, list);
+    payload['scene'] = scene;
+    _applyStudioPayload(payload);
+  }
+
+  double _studioVectorComponent(dynamic raw, int index, double fallback) {
+    if (raw is List && index >= 0 && index < raw.length) {
+      return _toDouble(raw[index], fallback);
+    }
+    if (raw is num) return raw.toDouble();
+    return fallback;
+  }
+
+  void _studioSet3DEntityVectorComponent({
+    required String token,
+    required String field,
+    required int index,
+    required double value,
+  }) {
+    final scene = _studio3DScene();
+    final entity = _studioEntityByToken(scene, token);
+    if (entity == null) return;
+    final dynamic raw = entity[field];
+    final List<double> next = <double>[0, 0, 0];
+    if (raw is List) {
+      for (int i = 0; i < raw.length && i < next.length; i++) {
+        next[i] = _toDouble(raw[i], 0);
+      }
+    } else if (field == 'scale' && raw is num) {
+      final double uniform = raw.toDouble();
+      for (int i = 0; i < next.length; i++) {
+        next[i] = uniform;
+      }
+    }
+    if (index >= 0 && index < next.length) {
+      next[index] = value;
+    }
+    _studioSet3DEntityField(
+      token: token,
+      field: field,
+      value: next,
+    );
+  }
+
+  void _studioSet3DSceneVectorComponent({
+    required String field,
+    required int index,
+    required double value,
+    List<double> fallback = const <double>[0, 0, 0],
+  }) {
+    final scene = _studio3DScene();
+    final dynamic raw = scene[field];
+    final List<double> next = <double>[
+      fallback.length > 0 ? fallback[0] : 0,
+      fallback.length > 1 ? fallback[1] : 0,
+      fallback.length > 2 ? fallback[2] : 0,
+    ];
+    if (raw is List) {
+      for (int i = 0; i < raw.length && i < next.length; i++) {
+        next[i] = _toDouble(raw[i], next[i]);
+      }
+    }
+    if (index >= 0 && index < next.length) {
+      next[index] = value;
+    }
+    _studioSet3DSceneField(field, next);
+  }
+
+  Map<String, dynamic>? _studioEntityByToken(
+    Map<String, dynamic> scene,
+    String token,
+  ) {
+    final parts = token.split(':');
+    if (parts.length != 2) return null;
+    final type = parts.first;
+    final id = parts.last;
+    final list = _studioEntityListForType(scene, type);
+    for (final item in list) {
+      if ((item['id'] ?? '').toString() == id) {
+        return Map<String, dynamic>.from(item);
+      }
+    }
+    return null;
+  }
+
+  String _studioEntityLabel(String token, Map<String, dynamic> scene) {
+    final parts = token.split(':');
+    if (parts.length != 2) return token;
+    final String type = parts.first;
+    final String id = parts.last;
+    final Map<String, dynamic>? entity = _studioEntityByToken(scene, token);
+    final String named =
+        (entity?['name'] ?? entity?['id'] ?? '').toString().trim();
+    if (named.isNotEmpty) return named;
+    final String fallback = type == 'model'
+        ? 'Model'
+        : type == 'light'
+            ? 'Light'
+            : 'Audio';
+    return '$fallback $id';
   }
 
   Widget _buildStudioControlsPanel(BuildContext context) {
@@ -4169,6 +4273,48 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       onChanged: (v) =>
                           _studioSet2DControlField('manualMode', v),
                     ),
+                    if (controls['manualMode'] == true) ...[
+                      _studioSlider(
+                        label: 'Manual Head X',
+                        min: -1,
+                        max: 1,
+                        value: _toDouble(controls['manualHeadX'], 0),
+                        onChanged: (v) =>
+                            _studioSet2DControlField('manualHeadX', v),
+                      ),
+                      _studioSlider(
+                        label: 'Manual Head Y',
+                        min: -1,
+                        max: 1,
+                        value: _toDouble(controls['manualHeadY'], 0),
+                        onChanged: (v) =>
+                            _studioSet2DControlField('manualHeadY', v),
+                      ),
+                      _studioSlider(
+                        label: 'Manual Head Z',
+                        min: 0.05,
+                        max: 2.0,
+                        value: _toDouble(controls['manualHeadZ'], 0.2),
+                        onChanged: (v) =>
+                            _studioSet2DControlField('manualHeadZ', v),
+                      ),
+                      _studioSlider(
+                        label: 'Manual Yaw',
+                        min: -60,
+                        max: 60,
+                        value: _toDouble(controls['manualYaw'], 0),
+                        onChanged: (v) =>
+                            _studioSet2DControlField('manualYaw', v),
+                      ),
+                      _studioSlider(
+                        label: 'Manual Pitch',
+                        min: -40,
+                        max: 40,
+                        value: _toDouble(controls['manualPitch'], 0),
+                        onChanged: (v) =>
+                            _studioSet2DControlField('manualPitch', v),
+                      ),
+                    ],
                     DropdownButtonFormField<String>(
                       value: (() {
                         final String selectedAspect =
@@ -4240,6 +4386,42 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     if (_studioSelected3dToken == null && tokens.isNotEmpty) {
       _studioSelected3dToken = tokens.first;
     }
+    final controls = _studio3DControls();
+    final String? selectedToken = _studioSelected3dToken != null &&
+            tokens.contains(_studioSelected3dToken)
+        ? _studioSelected3dToken
+        : (tokens.isEmpty ? null : tokens.first);
+    final Map<String, dynamic>? selectedEntity =
+        selectedToken == null ? null : _studioEntityByToken(scene, selectedToken);
+    final String selectedType = selectedToken?.split(':').first ?? '';
+
+    bool asBool(dynamic value, [bool fallback = false]) {
+      if (value is bool) return value;
+      final String raw = value?.toString().toLowerCase() ?? '';
+      if (raw == 'true') return true;
+      if (raw == 'false') return false;
+      return fallback;
+    }
+
+    final bool manualMode =
+        asBool(controls['manual-mode']) || asBool(controls['manualMode']);
+    final List<double> initPos = <double>[
+      _studioVectorComponent(scene['initPos'], 0, 0),
+      _studioVectorComponent(scene['initPos'], 1, 2),
+      _studioVectorComponent(scene['initPos'], 2, 10),
+    ];
+    final List<double> initRot = <double>[
+      _studioVectorComponent(scene['initRot'], 0, 0),
+      _studioVectorComponent(scene['initRot'], 1, 0),
+      _studioVectorComponent(scene['initRot'], 2, 0),
+    ];
+    final String shadowQuality = () {
+      const valid = <String>{'256', '512', '1024', '2048'};
+      final raw =
+          (scene['shadowQuality'] ?? controls['shadowQuality'] ?? '512').toString();
+      return valid.contains(raw) ? raw : '512';
+    }();
+
     return Container(
       width: 320,
       decoration: BoxDecoration(
@@ -4251,8 +4433,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('3D Entities',
-              style: TextStyle(fontWeight: FontWeight.w700)),
+          const Text('3D Controls', style: TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -4277,9 +4458,18 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           ),
           const SizedBox(height: 8),
           if (tokens.isEmpty)
-            const Expanded(child: Center(child: Text('No entities')))
+            const SizedBox(
+              height: 84,
+              child: Center(child: Text('No entities')),
+            )
           else
-            Expanded(
+            Container(
+              constraints: const BoxConstraints(maxHeight: 220),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.14)),
+              ),
               child: ReorderableListView.builder(
                 itemCount: tokens.length,
                 onReorder: _studioReorder3DEntity,
@@ -4287,63 +4477,652 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   final token = tokens[index];
                   final parts = token.split(':');
                   final type = parts.first;
-                  final id = parts.length > 1 ? parts.last : token;
-                  final list = _studioEntityListForType(scene, type);
-                  final entity = list.firstWhereOrNull(
-                    (e) => (e['id'] ?? '').toString() == id,
-                  );
+                  final entity = _studioEntityByToken(scene, token);
                   final layer = (entity?['windowLayer'] ?? 'inside').toString();
-                  final label =
-                      (entity?['name'] ?? entity?['id'] ?? token).toString();
-                  return ListTile(
+                  return InkWell(
                     key: ValueKey<String>('studio-3d-$token'),
-                    selected: _studioSelected3dToken == token,
-                    selectedTileColor: cs.primary.withValues(alpha: 0.16),
-                    title: Text(label,
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(type.toUpperCase()),
-                    trailing: SizedBox(
-                      width: 116,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
+                    onTap: () => setState(() => _studioSelected3dToken = token),
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: selectedToken == token
+                            ? cs.primary.withValues(alpha: 0.16)
+                            : Colors.transparent,
+                        border: Border(
+                          bottom: BorderSide(
+                            color: cs.outline.withValues(alpha: 0.1),
+                          ),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          IconButton(
-                            onPressed: () => _studioDuplicate3DEntity(token),
-                            icon: const Icon(Icons.copy_outlined, size: 18),
-                          ),
-                          IconButton(
-                            onPressed: () => _studioDelete3DEntity(token),
-                            icon: const Icon(Icons.delete_outline, size: 18),
-                          ),
-                          PopupMenuButton<String>(
-                            tooltip: 'Window Layer',
-                            onSelected: (value) =>
-                                _studioSet3DWindowLayer(token, value),
-                            itemBuilder: (context) => const [
-                              PopupMenuItem<String>(
-                                value: 'inside',
-                                child: Text('Inside'),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _studioEntityLabel(token, scene),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                              PopupMenuItem<String>(
-                                value: 'outside',
-                                child: Text('Outside'),
+                              Text(type.toUpperCase()),
+                              IconButton(
+                                onPressed: () => _studioDuplicate3DEntity(token),
+                                icon: const Icon(Icons.copy_outlined, size: 18),
+                              ),
+                              IconButton(
+                                onPressed: () => _studioDelete3DEntity(token),
+                                icon: const Icon(Icons.delete_outline, size: 18),
                               ),
                             ],
-                            icon: Icon(
-                              layer == 'outside'
-                                  ? Icons.open_in_full
-                                  : Icons.filter_center_focus,
-                              size: 18,
-                            ),
+                          ),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment<String>(
+                                value: 'inside',
+                                label: Text('Inside'),
+                              ),
+                              ButtonSegment<String>(
+                                value: 'outside',
+                                label: Text('Outside'),
+                              ),
+                            ],
+                            selected: <String>{layer},
+                            onSelectionChanged: (values) =>
+                                _studioSet3DWindowLayer(token, values.first),
                           ),
                         ],
                       ),
                     ),
-                    onTap: () => setState(() => _studioSelected3dToken = token),
                   );
                 },
               ),
             ),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (selectedEntity != null && selectedToken != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Selected: ${_studioEntityLabel(selectedToken, scene)}',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    if (selectedType == 'model')
+                      TextFormField(
+                        key: ValueKey<String>(
+                          'studio-model-name-$selectedToken-${selectedEntity['name'] ?? ''}',
+                        ),
+                        initialValue: (selectedEntity['name'] ?? '').toString(),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'name',
+                          value: value.trim(),
+                        ),
+                        decoration: const InputDecoration(labelText: 'Model Name'),
+                      ),
+                    if (selectedType == 'model' || selectedType == 'audio') ...[
+                      const SizedBox(height: 6),
+                      TextFormField(
+                        key: ValueKey<String>(
+                          'studio-entity-url-$selectedToken-${selectedEntity['url'] ?? ''}',
+                        ),
+                        initialValue: (selectedEntity['url'] ?? '').toString(),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'url',
+                          value: value.trim(),
+                        ),
+                        decoration: InputDecoration(
+                          labelText:
+                              selectedType == 'model' ? 'Model URL' : 'Audio URL',
+                        ),
+                      ),
+                    ],
+                    if (selectedType == 'model') ...[
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Visible'),
+                        value: asBool(selectedEntity['visible'], true),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'visible',
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos X',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 0, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 0,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos Y',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 1, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 1,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos Z',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 2, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 2,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Rot X',
+                        min: -6.28,
+                        max: 6.28,
+                        value: _studioVectorComponent(selectedEntity['rotation'], 0, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'rotation',
+                          index: 0,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Rot Y',
+                        min: -6.28,
+                        max: 6.28,
+                        value: _studioVectorComponent(selectedEntity['rotation'], 1, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'rotation',
+                          index: 1,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Rot Z',
+                        min: -6.28,
+                        max: 6.28,
+                        value: _studioVectorComponent(selectedEntity['rotation'], 2, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'rotation',
+                          index: 2,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Scale X',
+                        min: 0.01,
+                        max: 10,
+                        value: _studioVectorComponent(selectedEntity['scale'], 0, 1),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'scale',
+                          index: 0,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Scale Y',
+                        min: 0.01,
+                        max: 10,
+                        value: _studioVectorComponent(selectedEntity['scale'], 1, 1),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'scale',
+                          index: 1,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Scale Z',
+                        min: 0.01,
+                        max: 10,
+                        value: _studioVectorComponent(selectedEntity['scale'], 2, 1),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'scale',
+                          index: 2,
+                          value: value,
+                        ),
+                      ),
+                    ] else if (selectedType == 'light') ...[
+                      TextFormField(
+                        key: ValueKey<String>(
+                          'studio-light-color-$selectedToken-${selectedEntity['color'] ?? ''}',
+                        ),
+                        initialValue: (selectedEntity['color'] ?? 'ffffff').toString(),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'color',
+                          value: value.replaceAll('#', '').trim(),
+                        ),
+                        decoration: const InputDecoration(labelText: 'Color (hex)'),
+                      ),
+                      _studioSlider(
+                        label: 'Intensity',
+                        min: 0,
+                        max: 50,
+                        value: _toDouble(selectedEntity['intensity'], 10),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'intensity',
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos X',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 0, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 0,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos Y',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 1, 5),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 1,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos Z',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 2, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 2,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Helper Scale',
+                        min: 0.1,
+                        max: 10,
+                        value: _toDouble(selectedEntity['scale'], 1),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'scale',
+                          value: value,
+                        ),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Ghost'),
+                        value: asBool(selectedEntity['ghost']),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'ghost',
+                          value: value,
+                        ),
+                      ),
+                    ] else if (selectedType == 'audio') ...[
+                      _studioSlider(
+                        label: 'Volume',
+                        min: 0,
+                        max: 2,
+                        value: _toDouble(selectedEntity['volume'], 1),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'volume',
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos X',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 0, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 0,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos Y',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 1, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 1,
+                          value: value,
+                        ),
+                      ),
+                      _studioSlider(
+                        label: 'Pos Z',
+                        min: -30,
+                        max: 30,
+                        value: _studioVectorComponent(selectedEntity['position'], 2, 0),
+                        onChanged: (value) => _studioSet3DEntityVectorComponent(
+                          token: selectedToken,
+                          field: 'position',
+                          index: 2,
+                          value: value,
+                        ),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Ghost'),
+                        value: asBool(selectedEntity['ghost']),
+                        onChanged: (value) => _studioSet3DEntityField(
+                          token: selectedToken,
+                          field: 'ghost',
+                          value: value,
+                        ),
+                      ),
+                    ],
+                  ],
+                  const SizedBox(height: 8),
+                  const Text('World & FX', style: TextStyle(fontWeight: FontWeight.w700)),
+                  _studioSlider(
+                    label: 'Sun',
+                    min: 0,
+                    max: 10,
+                    value: _toDouble(scene['sunIntensity'], 2.0),
+                    onChanged: (value) => _studioSet3DSceneField('sunIntensity', value),
+                  ),
+                  _studioSlider(
+                    label: 'Ambient',
+                    min: 0,
+                    max: 2,
+                    value: _toDouble(scene['ambLight'], 0.5),
+                    onChanged: (value) => _studioSet3DSceneField('ambLight', value),
+                  ),
+                  _studioSlider(
+                    label: 'Bloom',
+                    min: 0,
+                    max: 4,
+                    value: _toDouble(scene['bloomIntensity'], 1.0),
+                    onChanged: (value) =>
+                        _studioSet3DSceneField('bloomIntensity', value),
+                  ),
+                  DropdownButtonFormField<String>(
+                    value: shadowQuality,
+                    decoration: const InputDecoration(labelText: 'Shadow Quality'),
+                    items: const <String>['256', '512', '1024', '2048']
+                        .map((value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(value),
+                            ))
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      _studioSet3DSceneField('shadowQuality', value);
+                    },
+                  ),
+                  _studioSlider(
+                    label: 'Shadow Softness',
+                    min: 0,
+                    max: 5,
+                    value: _toDouble(scene['shadowSoftness'], 1.0),
+                    onChanged: (value) =>
+                        _studioSet3DSceneField('shadowSoftness', value),
+                  ),
+                  TextFormField(
+                    key: ValueKey<String>('studio-sky-url-${scene['skyUrl'] ?? ''}'),
+                    initialValue: (scene['skyUrl'] ?? '').toString(),
+                    onChanged: (value) =>
+                        _studioSet3DSceneField('skyUrl', value.trim()),
+                    decoration: const InputDecoration(labelText: 'Sky URL'),
+                  ),
+                  const SizedBox(height: 6),
+                  TextFormField(
+                    key: ValueKey<String>('studio-env-url-${scene['envUrl'] ?? ''}'),
+                    initialValue: (scene['envUrl'] ?? '').toString(),
+                    onChanged: (value) =>
+                        _studioSet3DSceneField('envUrl', value.trim()),
+                    decoration: const InputDecoration(labelText: 'Env URL'),
+                  ),
+                  _studioSlider(
+                    label: 'Env Rot',
+                    min: -6.28,
+                    max: 6.28,
+                    value: _toDouble(scene['envRot'], 0),
+                    onChanged: (value) => _studioSet3DSceneField('envRot', value),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Initial Camera',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  _studioSlider(
+                    label: 'Init Pos X',
+                    min: -30,
+                    max: 30,
+                    value: initPos[0],
+                    onChanged: (value) => _studioSet3DSceneVectorComponent(
+                      field: 'initPos',
+                      index: 0,
+                      value: value,
+                      fallback: initPos,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Init Pos Y',
+                    min: -30,
+                    max: 30,
+                    value: initPos[1],
+                    onChanged: (value) => _studioSet3DSceneVectorComponent(
+                      field: 'initPos',
+                      index: 1,
+                      value: value,
+                      fallback: initPos,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Init Pos Z',
+                    min: -30,
+                    max: 30,
+                    value: initPos[2],
+                    onChanged: (value) => _studioSet3DSceneVectorComponent(
+                      field: 'initPos',
+                      index: 2,
+                      value: value,
+                      fallback: initPos,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Init Rot X',
+                    min: -6.28,
+                    max: 6.28,
+                    value: initRot[0],
+                    onChanged: (value) => _studioSet3DSceneVectorComponent(
+                      field: 'initRot',
+                      index: 0,
+                      value: value,
+                      fallback: initRot,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Init Rot Y',
+                    min: -6.28,
+                    max: 6.28,
+                    value: initRot[1],
+                    onChanged: (value) => _studioSet3DSceneVectorComponent(
+                      field: 'initRot',
+                      index: 1,
+                      value: value,
+                      fallback: initRot,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Init Rot Z',
+                    min: -6.28,
+                    max: 6.28,
+                    value: initRot[2],
+                    onChanged: (value) => _studioSet3DSceneVectorComponent(
+                      field: 'initRot',
+                      index: 2,
+                      value: value,
+                      fallback: initRot,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Tracking', style: TextStyle(fontWeight: FontWeight.w700)),
+                  DropdownButtonFormField<String>(
+                    value: () {
+                      const modes = <String>{'orbit', 'fps', 'free'};
+                      final String raw =
+                          (controls['camera-mode'] ?? 'orbit').toString().toLowerCase();
+                      return modes.contains(raw) ? raw : 'orbit';
+                    }(),
+                    decoration: const InputDecoration(labelText: 'Camera Mode'),
+                    items: const [
+                      DropdownMenuItem<String>(value: 'orbit', child: Text('Orbit')),
+                      DropdownMenuItem<String>(value: 'fps', child: Text('FPS')),
+                      DropdownMenuItem<String>(value: 'free', child: Text('Free')),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      _studioSet3DControlField('camera-mode', value);
+                    },
+                  ),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Manual Mode'),
+                    value: manualMode,
+                    onChanged: (value) =>
+                        _studioSet3DControlField('manual-mode', value),
+                  ),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Tracker UI'),
+                    value: asBool(controls['show-tracker']),
+                    onChanged: (value) =>
+                        _studioSet3DControlField('show-tracker', value),
+                  ),
+                  _studioSlider(
+                    label: 'Dead Zone X',
+                    min: 0,
+                    max: 0.1,
+                    value: _toDouble(controls['dz-x'], 0),
+                    onChanged: (value) =>
+                        _studioSet3DControlField('dz-x', value),
+                  ),
+                  _studioSlider(
+                    label: 'Dead Zone Y',
+                    min: 0,
+                    max: 0.1,
+                    value: _toDouble(controls['dz-y'], 0),
+                    onChanged: (value) =>
+                        _studioSet3DControlField('dz-y', value),
+                  ),
+                  _studioSlider(
+                    label: 'Dead Zone Z',
+                    min: 0,
+                    max: 0.1,
+                    value: _toDouble(controls['dz-z'], 0),
+                    onChanged: (value) =>
+                        _studioSet3DControlField('dz-z', value),
+                  ),
+                  _studioSlider(
+                    label: 'Dead Zone Yaw',
+                    min: 0,
+                    max: 10,
+                    value: _toDouble(controls['dz-yaw'], 0),
+                    onChanged: (value) =>
+                        _studioSet3DControlField('dz-yaw', value),
+                  ),
+                  _studioSlider(
+                    label: 'Dead Zone Pitch',
+                    min: 0,
+                    max: 10,
+                    value: _toDouble(controls['dz-pitch'], 0),
+                    onChanged: (value) =>
+                        _studioSet3DControlField('dz-pitch', value),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      final frame = TrackingService.instance.frameNotifier.value;
+                      _studioSet3DControlField('head-x', frame.headX);
+                      _studioSet3DControlField('head-y', frame.headY);
+                      _studioSet3DControlField('z-value', frame.headZ);
+                      _studioSet3DControlField('yaw', frame.yaw);
+                      _studioSet3DControlField('pitch', frame.pitch);
+                    },
+                    icon: const Icon(Icons.gps_fixed, size: 16),
+                    label: const Text('Recenter Manual Anchor'),
+                  ),
+                  if (manualMode) ...[
+                    _studioSlider(
+                      label: 'Manual Head X',
+                      min: -1,
+                      max: 1,
+                      value: _toDouble(controls['head-x'], 0),
+                      onChanged: (value) =>
+                          _studioSet3DControlField('head-x', value),
+                    ),
+                    _studioSlider(
+                      label: 'Manual Head Y',
+                      min: -1,
+                      max: 1,
+                      value: _toDouble(controls['head-y'], 0),
+                      onChanged: (value) =>
+                          _studioSet3DControlField('head-y', value),
+                    ),
+                    _studioSlider(
+                      label: 'Manual Z',
+                      min: 0.05,
+                      max: 2,
+                      value: _toDouble(controls['z-value'], 0.2),
+                      onChanged: (value) =>
+                          _studioSet3DControlField('z-value', value),
+                    ),
+                    _studioSlider(
+                      label: 'Manual Yaw',
+                      min: -60,
+                      max: 60,
+                      value: _toDouble(controls['yaw'], 0),
+                      onChanged: (value) =>
+                          _studioSet3DControlField('yaw', value),
+                    ),
+                    _studioSlider(
+                      label: 'Manual Pitch',
+                      min: -40,
+                      max: 40,
+                      value: _toDouble(controls['pitch'], 0),
+                      onChanged: (value) =>
+                          _studioSet3DControlField('pitch', value),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -4863,11 +5642,16 @@ class _CollectionDetailPage extends StatefulWidget {
 class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   final AppRepository _repository = AppRepository.instance;
   final SwipableStackController _stackController = SwipableStackController();
+  final TextEditingController _collectionCommentController =
+      TextEditingController();
+  final FocusNode _swipeFocusNode =
+      FocusNode(debugLabel: 'collection-detail-swipe-focus');
 
   bool _loading = true;
   String? _error;
   CollectionDetail? _detail;
   int _index = 0;
+  List<PresetComment> _collectionComments = const <PresetComment>[];
 
   bool get _mine {
     final String? me = _repository.currentUser?.id;
@@ -4887,6 +5671,8 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
 
   @override
   void dispose() {
+    _collectionCommentController.dispose();
+    _swipeFocusNode.dispose();
     _stackController
       ..removeListener(_onStackChanged)
       ..dispose();
@@ -4902,6 +5688,77 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       final int max = _detail!.items.length - 1;
       _index = next < 0 ? 0 : (next > max ? max : next);
     });
+  }
+
+  Future<bool> _requireAuthAction() async {
+    if (_repository.currentUser != null) return true;
+    if (!mounted) return false;
+    final bool shouldSignIn = await _showSignInRequiredSheet(
+      context,
+      message: 'This action requires sign in.',
+    );
+    if (!mounted || !shouldSignIn) return false;
+    Navigator.pushNamed(context, '/auth');
+    return false;
+  }
+
+  CollectionSummary _copySummary(
+    CollectionSummary summary, {
+    int? likesCount,
+    int? dislikesCount,
+    int? commentsCount,
+    int? savesCount,
+    int? viewsCount,
+    int? myReaction,
+    bool? isSavedByCurrentUser,
+    bool? isWatchLater,
+  }) {
+    return CollectionSummary(
+      id: summary.id,
+      shareId: summary.shareId,
+      userId: summary.userId,
+      name: summary.name,
+      description: summary.description,
+      tags: summary.tags,
+      mentionUserIds: summary.mentionUserIds,
+      published: summary.published,
+      thumbnailPayload: summary.thumbnailPayload,
+      thumbnailMode: summary.thumbnailMode,
+      itemsCount: summary.itemsCount,
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt,
+      firstItem: summary.firstItem,
+      author: summary.author,
+      likesCount: likesCount ?? summary.likesCount,
+      dislikesCount: dislikesCount ?? summary.dislikesCount,
+      commentsCount: commentsCount ?? summary.commentsCount,
+      savesCount: savesCount ?? summary.savesCount,
+      viewsCount: viewsCount ?? summary.viewsCount,
+      myReaction: myReaction ?? summary.myReaction,
+      isSavedByCurrentUser:
+          isSavedByCurrentUser ?? summary.isSavedByCurrentUser,
+      isWatchLater: isWatchLater ?? summary.isWatchLater,
+    );
+  }
+
+  void _updateSummary(CollectionSummary Function(CollectionSummary) map) {
+    final detail = _detail;
+    if (detail == null) return;
+    setState(() {
+      _detail = CollectionDetail(summary: map(detail.summary), items: detail.items);
+    });
+  }
+
+  void _swipeByDirection(SwipeDirection direction) {
+    final detail = _detail;
+    if (detail == null || detail.items.isEmpty) return;
+    _stackController.next(swipeDirection: direction);
+  }
+
+  void _rewindSwipe() {
+    if (_stackController.canRewind) {
+      _stackController.rewind();
+    }
   }
 
   Future<void> _load() async {
@@ -4923,6 +5780,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         _detail = detail;
         _loading = false;
       });
+      unawaited(_repository.recordCollectionView(detail.summary.id));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -4930,6 +5788,187 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         _error = e.toString();
       });
     }
+  }
+
+  Future<void> _toggleCollectionReaction(int value) async {
+    if (!await _requireAuthAction()) return;
+    final summary = _detail?.summary;
+    if (summary == null) return;
+    final int newReaction = summary.myReaction == value ? 0 : value;
+    await _repository.setCollectionReaction(
+      collectionId: summary.id,
+      reaction: newReaction,
+    );
+
+    int likes = summary.likesCount;
+    int dislikes = summary.dislikesCount;
+    if (summary.myReaction == 1) likes = (likes - 1).clamp(0, 999999999);
+    if (summary.myReaction == -1) dislikes = (dislikes - 1).clamp(0, 999999999);
+    if (newReaction == 1) likes += 1;
+    if (newReaction == -1) dislikes += 1;
+    _updateSummary(
+      (current) => _copySummary(
+        current,
+        likesCount: likes,
+        dislikesCount: dislikes,
+        myReaction: newReaction,
+      ),
+    );
+  }
+
+  Future<void> _toggleCollectionSave() async {
+    if (!await _requireAuthAction()) return;
+    final summary = _detail?.summary;
+    if (summary == null) return;
+    final bool save = !summary.isSavedByCurrentUser;
+    await _repository.toggleSaveCollection(summary.id, save: save);
+    _updateSummary(
+      (current) => _copySummary(
+        current,
+        isSavedByCurrentUser: save,
+        savesCount:
+            save ? current.savesCount + 1 : (current.savesCount - 1).clamp(0, 999999999),
+      ),
+    );
+  }
+
+  Future<void> _toggleCollectionWatchLater() async {
+    if (!await _requireAuthAction()) return;
+    final summary = _detail?.summary;
+    if (summary == null) return;
+    final bool watchLater = !summary.isWatchLater;
+    await _repository.toggleWatchLaterItem(
+      targetType: 'collection',
+      targetId: summary.id,
+      watchLater: watchLater,
+    );
+    _updateSummary(
+      (current) => _copySummary(
+        current,
+        isWatchLater: watchLater,
+      ),
+    );
+  }
+
+  Future<void> _loadCollectionComments() async {
+    final summary = _detail?.summary;
+    if (summary == null) return;
+    final comments = await _repository.fetchCollectionComments(summary.id);
+    if (!mounted) return;
+    setState(() {
+      _collectionComments = comments;
+    });
+    _updateSummary(
+      (current) => _copySummary(current, commentsCount: comments.length),
+    );
+  }
+
+  Future<void> _openCollectionCommentsSheet() async {
+    await _loadCollectionComments();
+    if (!mounted) return;
+    List<PresetComment> sheetComments = List<PresetComment>.from(_collectionComments);
+    bool sending = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        final cs = Theme.of(context).colorScheme;
+        return StatefulBuilder(
+          builder: (context, setModalState) => SafeArea(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                12,
+                0,
+                12,
+                MediaQuery.of(context).viewInsets.bottom + 12,
+              ),
+              child: SizedBox(
+                height: MediaQuery.of(context).size.height * 0.65,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: sheetComments.isEmpty
+                          ? Center(
+                              child: Text(
+                                'No comments yet',
+                                style: TextStyle(color: cs.onSurfaceVariant),
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: sheetComments.length,
+                              itemBuilder: (context, index) {
+                                final comment = sheetComments[index];
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(comment.author?.displayName ?? 'User'),
+                                  subtitle: Text(comment.content),
+                                  trailing: Text(
+                                    _friendlyTime(comment.createdAt),
+                                    style: TextStyle(
+                                      color: cs.onSurfaceVariant,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _collectionCommentController,
+                            decoration: const InputDecoration(
+                              hintText: 'Write a comment...',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: sending
+                              ? null
+                              : () async {
+                                  if (!await _requireAuthAction()) return;
+                                  final summary = _detail?.summary;
+                                  if (summary == null) return;
+                                  final String text =
+                                      _collectionCommentController.text.trim();
+                                  if (text.isEmpty) return;
+                                  setModalState(() => sending = true);
+                                  await _repository.addCollectionComment(
+                                    collectionId: summary.id,
+                                    content: text,
+                                  );
+                                  _collectionCommentController.clear();
+                                  final comments = await _repository
+                                      .fetchCollectionComments(summary.id);
+                                  if (!mounted) return;
+                                  setState(() => _collectionComments = comments);
+                                  _updateSummary(
+                                    (current) => _copySummary(
+                                      current,
+                                      commentsCount: comments.length,
+                                    ),
+                                  );
+                                  setModalState(() {
+                                    sending = false;
+                                    sheetComments = comments;
+                                  });
+                                },
+                          child: Text(sending ? '...' : 'Send'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _toggleVisibility() async {
@@ -4972,6 +6011,10 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               tags: detail.summary.tags,
               mentionUserIds: detail.summary.mentionUserIds,
               published: detail.summary.published,
+              initialCardPayload: detail.summary.thumbnailPayload,
+              initialCardMode: detail.summary.thumbnailMode,
+              editTarget: _ComposerEditTarget.detail,
+              startBlankCard: false,
               items: detail.items
                   .map(
                     (item) => CollectionDraftItem(
@@ -5160,6 +6203,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     return Stack(
       fit: StackFit.expand,
       children: [
+        const Positioned.fill(
+          child: ColoredBox(color: Colors.transparent),
+        ),
         IgnorePointer(
           child: PresetViewer(
             mode: item.mode,
@@ -5168,35 +6214,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             embedded: true,
             disableAudio: true,
             pointerPassthrough: true,
-          ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: IgnorePointer(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.76),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-              child: Text(
-                item.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
           ),
         ),
       ],
@@ -5210,141 +6227,309 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: Builder(
-                builder: (context) {
-                  if (_loading) {
-                    return const _TopEdgeLoadingPane(
-                      label: 'Loading collection...',
+      body: KeyboardListener(
+        focusNode: _swipeFocusNode,
+        autofocus: true,
+        onKeyEvent: (event) {
+          if (event is! KeyDownEvent) return;
+          if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+            _swipeByDirection(SwipeDirection.left);
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+            _swipeByDirection(SwipeDirection.right);
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+            _swipeByDirection(SwipeDirection.up);
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+            _swipeByDirection(SwipeDirection.down);
+          } else if (event.logicalKey == LogicalKeyboardKey.keyR) {
+            _rewindSwipe();
+          }
+        },
+        child: SafeArea(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Builder(
+                  builder: (context) {
+                    if (_loading) {
+                      return const _TopEdgeLoadingPane(
+                        label: 'Loading collection...',
+                      );
+                    }
+                    if (_error != null) {
+                      return Center(
+                        child: Text(
+                          _error!,
+                          style: TextStyle(color: cs.error),
+                          textAlign: TextAlign.center,
+                        ),
+                      );
+                    }
+                    final detail = _detail;
+                    if (detail == null || detail.items.isEmpty) {
+                      return Center(
+                        child: Text(
+                          'Collection is empty.',
+                          style: TextStyle(color: cs.onSurfaceVariant),
+                        ),
+                      );
+                    }
+                    return SwipableStack(
+                      controller: _stackController,
+                      itemCount: detail.items.length,
+                      allowVerticalSwipe: true,
+                      onSwipeCompleted: (index, _) {
+                        setState(() {
+                          final int next = index + 1;
+                          final int max = detail.items.length - 1;
+                          _index = next < 0 ? 0 : (next > max ? max : next);
+                        });
+                      },
+                      builder: (context, props) {
+                        if (props.index >= detail.items.length) {
+                          return const SizedBox.shrink();
+                        }
+                        return _buildCard(detail.items[props.index]);
+                      },
                     );
-                  }
-                  if (_error != null) {
-                    return Center(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: cs.error),
-                        textAlign: TextAlign.center,
-                      ),
-                    );
-                  }
-                  final detail = _detail;
-                  if (detail == null || detail.items.isEmpty) {
-                    return Center(
-                      child: Text(
-                        'Collection is empty.',
-                        style: TextStyle(color: cs.onSurfaceVariant),
-                      ),
-                    );
-                  }
-                  return SwipableStack(
-                    controller: _stackController,
-                    itemCount: detail.items.length,
-                    allowVerticalSwipe: true,
-                    onSwipeCompleted: (index, _) {
-                      setState(() {
-                        final int next = index + 1;
-                        final int max = detail.items.length - 1;
-                        _index = next < 0 ? 0 : (next > max ? max : next);
-                      });
-                    },
-                    builder: (context, props) {
-                      if (props.index >= detail.items.length) {
-                        return const SizedBox.shrink();
-                      }
-                      return _buildCard(detail.items[props.index]);
-                    },
-                  );
-                },
+                  },
+                ),
               ),
-            ),
-            Positioned(
-              top: 10,
-              left: 12,
-              right: 12,
-              child: Row(
-                children: [
-                  IconButton.filledTonal(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: IgnorePointer(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            summary?.name ?? 'Collection',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: cs.onSurface,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 18,
+              Positioned(
+                top: 10,
+                left: 12,
+                right: 12,
+                child: Row(
+                  children: [
+                    IconButton.filledTonal(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: IgnorePointer(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              summary?.name ?? 'Collection',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: cs.onSurface,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 18,
+                              ),
+                            ),
+                            Text(
+                              summary?.author?.displayName ?? 'Unknown creator',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: cs.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (_detail != null && _detail!.items.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: IgnorePointer(
+                          child: Text(
+                            '${_index + 1}/${_detail!.items.length}',
+                            style: TextStyle(color: cs.onSurfaceVariant),
+                          ),
+                        ),
+                      ),
+                    IconButton(
+                      tooltip: 'Share collection',
+                      onPressed: _openCollectionShareSheet,
+                      icon: Icon(Icons.share_outlined, color: cs.onSurfaceVariant),
+                    ),
+                    if (_mine)
+                      PopupMenuButton<String>(
+                        color: cs.surfaceContainerHighest,
+                        onSelected: (value) {
+                          if (value == 'update') _updateCollection();
+                          if (value == 'visibility') _toggleVisibility();
+                          if (value == 'delete') _deleteCollection();
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem<String>(
+                            value: 'update',
+                            child: Text('Update'),
+                          ),
+                          PopupMenuItem<String>(
+                            value: 'visibility',
+                            child: Text(
+                              (_detail?.summary.published ?? false)
+                                  ? 'Make Private'
+                                  : 'Make Public',
                             ),
                           ),
-                          Text(
-                            summary?.author?.displayName ?? 'Unknown creator',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: cs.onSurfaceVariant),
+                          const PopupMenuItem<String>(
+                            value: 'delete',
+                            child: Text('Delete'),
+                          ),
+                        ],
+                        child: Icon(
+                          Icons.more_vert,
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (!_loading && _error == null && _detail?.items.isNotEmpty == true)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 88,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Swipe left',
+                            onPressed: () => _swipeByDirection(SwipeDirection.left),
+                            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                          ),
+                          IconButton(
+                            tooltip: 'Swipe up',
+                            onPressed: () => _swipeByDirection(SwipeDirection.up),
+                            icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                          ),
+                          IconButton(
+                            tooltip: 'Revert swipe',
+                            onPressed: _stackController.canRewind ? _rewindSwipe : null,
+                            icon: const Icon(Icons.undo_rounded),
+                          ),
+                          IconButton(
+                            tooltip: 'Swipe down',
+                            onPressed: () => _swipeByDirection(SwipeDirection.down),
+                            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                          ),
+                          IconButton(
+                            tooltip: 'Swipe right',
+                            onPressed:
+                                () => _swipeByDirection(SwipeDirection.right),
+                            icon: const Icon(Icons.arrow_forward_ios_rounded),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  if (_detail != null && _detail!.items.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: IgnorePointer(
-                        child: Text(
-                          '${_index + 1}/${_detail!.items.length}',
-                          style: TextStyle(color: cs.onSurfaceVariant),
-                        ),
+                ),
+              if (summary != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 20,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(999),
                       ),
-                    ),
-                  IconButton(
-                    tooltip: 'Share collection',
-                    onPressed: _openCollectionShareSheet,
-                    icon: Icon(Icons.share_outlined, color: cs.onSurfaceVariant),
-                  ),
-                  if (_mine)
-                    PopupMenuButton<String>(
-                      color: cs.surfaceContainerHighest,
-                      onSelected: (value) {
-                        if (value == 'update') _updateCollection();
-                        if (value == 'visibility') _toggleVisibility();
-                        if (value == 'delete') _deleteCollection();
-                      },
-                      itemBuilder: (context) => [
-                        const PopupMenuItem<String>(
-                          value: 'update',
-                          child: Text('Update'),
-                        ),
-                        PopupMenuItem<String>(
-                          value: 'visibility',
-                          child: Text(
-                            (_detail?.summary.published ?? false)
-                                ? 'Make Private'
-                                : 'Make Public',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _collectionEngagementButton(
+                            icon: summary.myReaction == 1
+                                ? Icons.thumb_up_alt
+                                : Icons.thumb_up_alt_outlined,
+                            active: summary.myReaction == 1,
+                            activeColor: cs.primary,
+                            label: summary.likesCount.toString(),
+                            onTap: () => _toggleCollectionReaction(1),
                           ),
-                        ),
-                        const PopupMenuItem<String>(
-                          value: 'delete',
-                          child: Text('Delete'),
-                        ),
-                      ],
-                      child: Icon(
-                        Icons.more_vert,
-                        color: cs.onSurfaceVariant,
+                          _collectionEngagementButton(
+                            icon: summary.myReaction == -1
+                                ? Icons.thumb_down_alt
+                                : Icons.thumb_down_alt_outlined,
+                            active: summary.myReaction == -1,
+                            activeColor: Colors.redAccent,
+                            label: summary.dislikesCount.toString(),
+                            onTap: () => _toggleCollectionReaction(-1),
+                          ),
+                          _collectionEngagementButton(
+                            icon: Icons.mode_comment_outlined,
+                            active: false,
+                            activeColor: cs.primary,
+                            label: summary.commentsCount.toString(),
+                            onTap: _openCollectionCommentsSheet,
+                          ),
+                          _collectionEngagementButton(
+                            icon: summary.isSavedByCurrentUser
+                                ? Icons.bookmark
+                                : Icons.bookmark_border,
+                            active: summary.isSavedByCurrentUser,
+                            activeColor: Colors.amberAccent,
+                            label: summary.savesCount.toString(),
+                            onTap: _toggleCollectionSave,
+                          ),
+                          _collectionEngagementButton(
+                            icon: summary.isWatchLater
+                                ? Icons.watch_later
+                                : Icons.watch_later_outlined,
+                            active: summary.isWatchLater,
+                            activeColor: Colors.tealAccent,
+                            label: '',
+                            onTap: _toggleCollectionWatchLater,
+                          ),
+                          _collectionEngagementButton(
+                            icon: Icons.send_outlined,
+                            active: false,
+                            activeColor: cs.primary,
+                            label: '',
+                            onTap: _openCollectionShareSheet,
+                          ),
+                        ],
                       ),
                     ),
-                ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _collectionEngagementButton({
+    required IconData icon,
+    required bool active,
+    required Color activeColor,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final Color color = active ? activeColor : Colors.white;
+    return InkWell(
+      borderRadius: BorderRadius.circular(30),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: color),
+            if (label.isNotEmpty) ...[
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -5379,6 +6564,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   List<RenderPreset> _saved = const <RenderPreset>[];
   List<RenderPreset> _posts = const <RenderPreset>[];
   List<RenderPreset> _history = const <RenderPreset>[];
+  List<WatchLaterItem> _watchLater = const <WatchLaterItem>[];
 
   @override
   void initState() {
@@ -5396,6 +6582,7 @@ class _ProfileTabState extends State<_ProfileTab> {
     final saved = await _repository.fetchSavedPresetsForCurrentUser();
     final posts = await _repository.fetchUserPosts(user.id);
     final history = await _repository.fetchHistoryPresetsForCurrentUser();
+    final watchLater = await _repository.fetchWatchLaterForCurrentUser();
 
     if (!mounted) return;
     setState(() {
@@ -5404,6 +6591,7 @@ class _ProfileTabState extends State<_ProfileTab> {
       _saved = saved;
       _posts = posts;
       _history = history;
+      _watchLater = watchLater;
       _loading = false;
     });
   }
@@ -5412,6 +6600,11 @@ class _ProfileTabState extends State<_ProfileTab> {
     await _repository.recordPresetView(preset.id);
     if (!mounted) return;
     await Navigator.pushNamed(context, buildPostRoutePathForPreset(preset));
+    await _load();
+  }
+
+  Future<void> _openCollection(CollectionSummary summary) async {
+    await Navigator.pushNamed(context, buildCollectionRoutePathForSummary(summary));
     await _load();
   }
 
@@ -5476,7 +6669,7 @@ class _ProfileTabState extends State<_ProfileTab> {
     return Padding(
       padding: EdgeInsets.only(top: widget.topInset),
       child: DefaultTabController(
-        length: 3,
+        length: 4,
         child: Column(
           children: [
             Container(
@@ -5576,6 +6769,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               unselectedLabelColor: cs.onSurfaceVariant,
               tabs: const [
                 Tab(text: 'Saved Collection'),
+                Tab(text: 'Watch Later'),
                 Tab(text: 'My Posts'),
                 Tab(text: 'History'),
               ],
@@ -5587,6 +6781,11 @@ class _ProfileTabState extends State<_ProfileTab> {
                     presets: _saved,
                     emptyMessage: 'Nothing saved yet.',
                     onTap: _openPost,
+                  ),
+                  _WatchLaterListView(
+                    items: _watchLater,
+                    onOpenPost: _openPost,
+                    onOpenCollection: _openCollection,
                   ),
                   _PresetListView(
                     presets: _posts,
@@ -5663,6 +6862,66 @@ class _PresetListView extends StatelessWidget {
           ),
           trailing: Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
           onTap: () => onTap(preset),
+        );
+      },
+    );
+  }
+}
+
+class _WatchLaterListView extends StatelessWidget {
+  const _WatchLaterListView({
+    required this.items,
+    required this.onOpenPost,
+    required this.onOpenCollection,
+  });
+
+  final List<WatchLaterItem> items;
+  final Future<void> Function(RenderPreset preset) onOpenPost;
+  final Future<void> Function(CollectionSummary summary) onOpenCollection;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    if (items.isEmpty) {
+      return Center(
+        child: Text(
+          'Watch Later is empty.',
+          style: TextStyle(color: cs.onSurfaceVariant),
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.all(12),
+      itemCount: items.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final item = items[index];
+        final bool isCollection = item.type == WatchLaterTargetType.collection;
+        final String title = isCollection
+            ? (item.collection?.name ?? 'Collection')
+            : (item.post?.title.isNotEmpty == true
+                ? item.post!.title
+                : (item.post?.name ?? 'Post'));
+        final String subtitle = isCollection
+            ? 'Collection · ${_friendlyTime(item.createdAt)}'
+            : '${item.post?.mode.toUpperCase() ?? 'POST'} · ${_friendlyTime(item.createdAt)}';
+        return ListTile(
+          tileColor: cs.surfaceContainerLow,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          leading: Icon(
+            isCollection ? Icons.collections_bookmark_outlined : Icons.play_circle_outline,
+            color: cs.onSurfaceVariant,
+          ),
+          title: Text(title, style: TextStyle(color: cs.onSurface)),
+          subtitle: Text(subtitle, style: TextStyle(color: cs.onSurfaceVariant)),
+          trailing: Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+          onTap: () {
+            if (isCollection && item.collection != null) {
+              onOpenCollection(item.collection!);
+            } else if (!isCollection && item.post != null) {
+              onOpenPost(item.post!);
+            }
+          },
         );
       },
     );
@@ -6721,6 +7980,8 @@ class _PostCardComposerPage extends StatefulWidget {
     required this.mode,
     required this.payload,
     this.existingPreset,
+    this.editTarget = _ComposerEditTarget.card,
+    this.startBlankCard = true,
   })  : kind = _ComposerKind.single,
         collectionId = null,
         collectionName = '',
@@ -6728,7 +7989,9 @@ class _PostCardComposerPage extends StatefulWidget {
         items = const <CollectionDraftItem>[],
         published = true,
         tags = const <String>[],
-        mentionUserIds = const <String>[];
+        mentionUserIds = const <String>[],
+        initialCardPayload = const <String, dynamic>{},
+        initialCardMode = null;
 
   const _PostCardComposerPage.collection({
     this.collectionId,
@@ -6738,6 +8001,10 @@ class _PostCardComposerPage extends StatefulWidget {
     required this.mentionUserIds,
     required this.published,
     required this.items,
+    this.initialCardPayload = const <String, dynamic>{},
+    this.initialCardMode,
+    this.editTarget = _ComposerEditTarget.card,
+    this.startBlankCard = true,
   })  : kind = _ComposerKind.collection,
         existingPreset = null,
         name = '',
@@ -6757,6 +8024,10 @@ class _PostCardComposerPage extends StatefulWidget {
   final List<String> mentionUserIds;
   final bool published;
   final List<CollectionDraftItem> items;
+  final Map<String, dynamic> initialCardPayload;
+  final String? initialCardMode;
+  final _ComposerEditTarget editTarget;
+  final bool startBlankCard;
 
   bool get isEdit {
     if (kind == _ComposerKind.single) return existingPreset != null;
@@ -6814,50 +8085,198 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   bool _showPublishStep = false;
   int _thumbnailIndex = 0;
   String? _selected2dLayerKey;
+  String? _selected3dToken;
   late String _thumbnailMode;
   late Map<String, dynamic> _thumbnailPayload;
+  List<CollectionDraftItem> _editableCollectionItems = <CollectionDraftItem>[];
+  Map<String, dynamic>? _pullSourcePayload;
+  String? _pullSourceMode;
+
+  bool get _isCardEditor => widget.editTarget == _ComposerEditTarget.card;
+  bool get _isDetailEditor => widget.editTarget == _ComposerEditTarget.detail;
+
+  Map<String, dynamic> _default2DControls() {
+    return <String, dynamic>{
+      'scale': 1.2,
+      'depth': 0.1,
+      'shift': 0.025,
+      'tilt': 0.0,
+      'tiltSensitivity': 1.0,
+      'sensitivity': 1.0,
+      'deadZoneX': 0.0,
+      'deadZoneY': 0.0,
+      'deadZoneZ': 0.0,
+      'deadZoneYaw': 0.0,
+      'deadZonePitch': 0.0,
+      'manualMode': false,
+      'manualHeadX': 0.0,
+      'manualHeadY': 0.0,
+      'manualHeadZ': 0.2,
+      'manualYaw': 0.0,
+      'manualPitch': 0.0,
+      'zBase': 0.2,
+      'anchorHeadX': 0.0,
+      'anchorHeadY': 0.0,
+      'selectedAspect': '16:9 (width:height)',
+    };
+  }
+
+  Map<String, dynamic> _blankPayloadForMode(String mode) {
+    if (mode == '3d') {
+      return PresetPayloadV2(
+        mode: '3d',
+        scene: <String, dynamic>{
+          'models': <Map<String, dynamic>>[],
+          'lights': <Map<String, dynamic>>[],
+          'audios': <Map<String, dynamic>>[],
+          'renderOrder': <String>[],
+        },
+        controls: <String, dynamic>{
+          'manual-mode': false,
+          'show-tracker': false,
+          'camera-mode': 'orbit',
+          'dz-x': 0.0,
+          'dz-y': 0.0,
+          'dz-z': 0.0,
+          'dz-yaw': 0.0,
+          'dz-pitch': 0.0,
+        },
+        meta: const <String, dynamic>{'editor': 'composer'},
+      ).toMap();
+    }
+    return PresetPayloadV2(
+      mode: '2d',
+      scene: <String, dynamic>{
+        'top_bezel': <String, dynamic>{
+          'isRect': true,
+          'bezelType': 'top',
+          'order': -1000.0,
+          'isVisible': true,
+          'isLocked': true,
+        },
+        'bottom_bezel': <String, dynamic>{
+          'isRect': true,
+          'bezelType': 'bottom',
+          'order': 1000.0,
+          'isVisible': true,
+          'isLocked': true,
+        },
+        'turning_point': <String, dynamic>{
+          'x': 0.0,
+          'y': 0.0,
+          'scale': 1.0,
+          'order': 0.0,
+          'isVisible': false,
+          'isLocked': true,
+          'isText': false,
+          'canShift': false,
+          'canZoom': false,
+          'canTilt': false,
+          'minScale': 0.1,
+          'maxScale': 5.0,
+          'minX': -3000.0,
+          'maxX': 3000.0,
+          'minY': -3000.0,
+          'maxY': 3000.0,
+          'shiftSensMult': 1.0,
+          'zoomSensMult': 1.0,
+          'url': '',
+        },
+      },
+      controls: _default2DControls(),
+      meta: const <String, dynamic>{'editor': 'composer'},
+    ).toMap();
+  }
 
   @override
   void initState() {
     super.initState();
     if (widget.kind == _ComposerKind.single) {
+      final RenderPreset? existing = widget.existingPreset;
+      final String sourceMode = existing?.mode ?? widget.mode;
+      final Map<String, dynamic> sourcePayload = existing?.payload ?? widget.payload;
       _titleController = TextEditingController(
-        text: widget.existingPreset?.title.isNotEmpty == true
-            ? widget.existingPreset!.title
+        text: existing?.title.isNotEmpty == true
+            ? existing!.title
             : widget.name,
       );
       _descriptionController =
-          TextEditingController(text: widget.existingPreset?.description ?? '');
+          TextEditingController(text: existing?.description ?? '');
       _tagsController = TextEditingController(
-        text:
-            (widget.existingPreset?.tags ?? const <String>[]).join(' ').trim(),
+        text: (existing?.tags ?? const <String>[]).join(' ').trim(),
       );
-      _isPublic = widget.existingPreset?.isPublic ?? true;
-      _thumbnailMode = widget.existingPreset?.thumbnailMode ?? widget.mode;
-      _thumbnailPayload =
-          widget.existingPreset?.thumbnailPayload.isNotEmpty == true
-              ? widget.existingPreset!.thumbnailPayload
-              : widget.payload;
-      _selectedMentionIds
-          .addAll(widget.existingPreset?.mentionUserIds ?? const <String>[]);
+      _isPublic = existing?.isPublic ?? true;
+      _pullSourceMode = sourceMode;
+      _pullSourcePayload = jsonDecode(jsonEncode(sourcePayload))
+          as Map<String, dynamic>;
+      if (_isDetailEditor) {
+        _thumbnailMode = sourceMode;
+        _thumbnailPayload = jsonDecode(jsonEncode(sourcePayload))
+            as Map<String, dynamic>;
+      } else if (widget.isEdit && widget.startBlankCard) {
+        _thumbnailMode = existing?.thumbnailMode ?? sourceMode;
+        _thumbnailPayload = _blankPayloadForMode(_thumbnailMode);
+      } else {
+        _thumbnailMode = existing?.thumbnailMode ?? widget.mode;
+        final payload =
+            existing?.thumbnailPayload.isNotEmpty == true
+                ? existing!.thumbnailPayload
+                : widget.payload;
+        _thumbnailPayload = jsonDecode(jsonEncode(payload))
+            as Map<String, dynamic>;
+      }
+      _selectedMentionIds.addAll(existing?.mentionUserIds ?? const <String>[]);
     } else {
+      _editableCollectionItems = widget.items
+          .map(
+            (item) => CollectionDraftItem(
+              mode: item.mode,
+              name: item.name,
+              snapshot:
+                  jsonDecode(jsonEncode(item.snapshot)) as Map<String, dynamic>,
+            ),
+          )
+          .toList();
       _titleController = TextEditingController(text: widget.collectionName);
       _descriptionController =
           TextEditingController(text: widget.collectionDescription);
       _tagsController = TextEditingController(text: widget.tags.join(' '));
       _selectedMentionIds.addAll(widget.mentionUserIds);
       _isPublic = widget.published;
-      if (widget.items.isNotEmpty) {
-        _thumbnailMode = widget.items.first.mode;
-        _thumbnailPayload = widget.items.first.snapshot;
+      if (_editableCollectionItems.isNotEmpty) {
+        _pullSourceMode = _editableCollectionItems.first.mode;
+        _pullSourcePayload =
+            jsonDecode(jsonEncode(_editableCollectionItems.first.snapshot))
+            as Map<String, dynamic>;
+      }
+      if (_editableCollectionItems.isNotEmpty) {
+        if (_isDetailEditor) {
+          _thumbnailMode = _editableCollectionItems.first.mode;
+          _thumbnailPayload = jsonDecode(
+            jsonEncode(_editableCollectionItems.first.snapshot),
+          ) as Map<String, dynamic>;
+        } else if (widget.isEdit && widget.startBlankCard) {
+          _thumbnailMode = widget.initialCardMode ??
+              _editableCollectionItems.first.mode;
+          _thumbnailPayload = _blankPayloadForMode(_thumbnailMode);
+        } else {
+          _thumbnailMode =
+              widget.initialCardMode ?? _editableCollectionItems.first.mode;
+          final payload = widget.initialCardPayload.isNotEmpty
+              ? widget.initialCardPayload
+              : _editableCollectionItems.first.snapshot;
+          _thumbnailPayload = jsonDecode(jsonEncode(payload))
+              as Map<String, dynamic>;
+        }
       } else {
         _thumbnailMode = '2d';
-        _thumbnailPayload = const <String, dynamic>{};
+        _thumbnailPayload = _blankPayloadForMode('2d');
       }
     }
     _ensure3DWindowLayerDefaults();
     _ensureTurningPointLayer();
     _ensure2DLayerSelection();
+    _ensure3DSelection();
     _mentionController.addListener(_onMentionQueryChanged);
   }
 
@@ -6936,16 +8355,50 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         .toList();
   }
 
+  void _persistActiveCollectionItemSnapshot() {
+    if (widget.kind != _ComposerKind.collection || !_isDetailEditor) return;
+    if (_thumbnailIndex < 0 || _thumbnailIndex >= _editableCollectionItems.length) {
+      return;
+    }
+    _editableCollectionItems[_thumbnailIndex] = CollectionDraftItem(
+      mode: _thumbnailMode,
+      name: _editableCollectionItems[_thumbnailIndex].name,
+      snapshot:
+          jsonDecode(jsonEncode(_thumbnailPayload)) as Map<String, dynamic>,
+    );
+  }
+
   void _setThumbnailFromCollectionIndex(int index) {
-    if (index < 0 || index >= widget.items.length) return;
-    final item = widget.items[index];
+    if (index < 0 || index >= _editableCollectionItems.length) return;
+    _persistActiveCollectionItemSnapshot();
+    final item = _editableCollectionItems[index];
+    _pullSourceMode = item.mode;
+    _pullSourcePayload =
+        jsonDecode(jsonEncode(item.snapshot)) as Map<String, dynamic>;
     setState(() {
       _thumbnailIndex = index;
       _thumbnailMode = item.mode;
-      _thumbnailPayload = item.snapshot;
+      _thumbnailPayload =
+          jsonDecode(jsonEncode(item.snapshot)) as Map<String, dynamic>;
       _ensure3DWindowLayerDefaults();
       _ensureTurningPointLayer();
       _ensure2DLayerSelection();
+      _ensure3DSelection();
+    });
+  }
+
+  void _pullFromSourcePayload() {
+    final source = _pullSourcePayload;
+    final sourceMode = _pullSourceMode;
+    if (source == null || sourceMode == null || sourceMode.isEmpty) return;
+    setState(() {
+      _thumbnailMode = sourceMode;
+      _thumbnailPayload =
+          jsonDecode(jsonEncode(source)) as Map<String, dynamic>;
+      _ensure3DWindowLayerDefaults();
+      _ensureTurningPointLayer();
+      _ensure2DLayerSelection();
+      _ensure3DSelection();
     });
   }
 
@@ -6954,6 +8407,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final dynamic sceneRaw = _thumbnailPayload['scene'];
     if (sceneRaw is! Map) return;
     final Map<String, dynamic> scene = Map<String, dynamic>.from(sceneRaw);
+    final Map<String, dynamic> controls = _thumbnail3DControls();
     bool changed = false;
 
     final dynamic modelsRaw = scene['models'];
@@ -7035,9 +8489,77 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       changed = true;
     }
 
+    final Map<String, dynamic> migratedControls = Map<String, dynamic>.from(controls);
+    if (migratedControls.containsKey('manualMode') &&
+        !migratedControls.containsKey('manual-mode')) {
+      migratedControls['manual-mode'] = migratedControls['manualMode'];
+      changed = true;
+    }
+    if (migratedControls.containsKey('deadZoneX') &&
+        !migratedControls.containsKey('dz-x')) {
+      migratedControls['dz-x'] = migratedControls['deadZoneX'];
+      changed = true;
+    }
+    if (migratedControls.containsKey('deadZoneY') &&
+        !migratedControls.containsKey('dz-y')) {
+      migratedControls['dz-y'] = migratedControls['deadZoneY'];
+      changed = true;
+    }
+    if (migratedControls.containsKey('deadZoneZ') &&
+        !migratedControls.containsKey('dz-z')) {
+      migratedControls['dz-z'] = migratedControls['deadZoneZ'];
+      changed = true;
+    }
+    if (migratedControls.containsKey('deadZoneYaw') &&
+        !migratedControls.containsKey('dz-yaw')) {
+      migratedControls['dz-yaw'] = migratedControls['deadZoneYaw'];
+      changed = true;
+    }
+    if (migratedControls.containsKey('deadZonePitch') &&
+        !migratedControls.containsKey('dz-pitch')) {
+      migratedControls['dz-pitch'] = migratedControls['deadZonePitch'];
+      changed = true;
+    }
+    void ensureControlDefault(String key, dynamic value) {
+      if (!migratedControls.containsKey(key)) {
+        migratedControls[key] = value;
+        changed = true;
+      }
+    }
+    void ensureSceneDefault(String key, dynamic value) {
+      if (!scene.containsKey(key)) {
+        scene[key] = value;
+        changed = true;
+      }
+    }
+
+    ensureControlDefault('camera-mode', 'orbit');
+    ensureControlDefault('manual-mode', false);
+    ensureControlDefault('show-tracker', false);
+    ensureControlDefault('dz-x', 0.0);
+    ensureControlDefault('dz-y', 0.0);
+    ensureControlDefault('dz-z', 0.0);
+    ensureControlDefault('dz-yaw', 0.0);
+    ensureControlDefault('dz-pitch', 0.0);
+    ensureControlDefault('head-x', 0.0);
+    ensureControlDefault('head-y', 0.0);
+    ensureControlDefault('z-value', 0.2);
+    ensureControlDefault('yaw', 0.0);
+    ensureControlDefault('pitch', 0.0);
+
+    ensureSceneDefault('sunIntensity', 2.0);
+    ensureSceneDefault('ambLight', 0.5);
+    ensureSceneDefault('bloomIntensity', 1.0);
+    ensureSceneDefault('shadowQuality', '512');
+    ensureSceneDefault('shadowSoftness', 1.0);
+    ensureSceneDefault('envRot', 0.0);
+    ensureSceneDefault('initPos', <double>[0, 2, 10]);
+    ensureSceneDefault('initRot', <double>[0, 0, 0]);
+
     if (!changed) return;
     _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-      ..['scene'] = scene;
+      ..['scene'] = scene
+      ..['controls'] = migratedControls;
   }
 
   List<String> _sceneEntityTokens(Map<String, dynamic> scene) {
@@ -7157,12 +8679,15 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final keys = scene.entries
         .where((e) => e.value is Map<String, dynamic> || e.value is Map)
         .map((e) => e.key.toString())
-        .where((name) => name != 'turning_point')
         .toList();
     keys.sort((a, b) {
       final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
       final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
-      return aOrder.compareTo(bOrder);
+      final int cmp = aOrder.compareTo(bOrder);
+      if (cmp != 0) return cmp;
+      if (a == 'turning_point' && b != 'turning_point') return 1;
+      if (b == 'turning_point' && a != 'turning_point') return -1;
+      return a.compareTo(b);
     });
     return keys;
   }
@@ -7175,6 +8700,11 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
     if (raw is Map) return Map<String, dynamic>.from(raw);
     return null;
+  }
+
+  bool _isUtilityLayerKey(String? key) {
+    if (key == null) return false;
+    return key == 'turning_point' || key == 'top_bezel' || key == 'bottom_bezel';
   }
 
   void _set2DLayerField(String key, String field, dynamic value) {
@@ -7290,7 +8820,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   void _handle2DPreviewPanUpdate(DragUpdateDetails details) {
     if (_thumbnailMode != '2d') return;
     final key = _selected2dLayerKey;
-    if (key == null || key == 'turning_point') return;
+    if (key == null || _isUtilityLayerKey(key)) return;
     final scene = _thumbnail2DScene();
     final raw = scene[key];
     if (raw is! Map) return;
@@ -7310,7 +8840,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   void _handle2DPreviewPointerSignal(PointerSignalEvent event) {
     if (_thumbnailMode != '2d' || event is! PointerScrollEvent) return;
     final key = _selected2dLayerKey;
-    if (key == null || key == 'turning_point') return;
+    if (key == null || _isUtilityLayerKey(key)) return;
     final scene = _thumbnail2DScene();
     final raw = scene[key];
     if (raw is! Map) return;
@@ -7326,12 +8856,49 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   }
 
   String _next2DLayerKey(String prefix) {
+    String sanitized = prefix.trim();
+    if (sanitized.isEmpty) sanitized = 'layer_';
+    sanitized = sanitized
+        .replaceAll(RegExp(r'[^A-Za-z0-9_]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .toLowerCase();
+    if (!sanitized.endsWith('_')) {
+      sanitized = '${sanitized}_';
+    }
     final scene = _thumbnail2DScene();
     int index = 1;
-    while (scene.containsKey('$prefix$index')) {
+    while (scene.containsKey('$sanitized$index')) {
       index++;
     }
-    return '$prefix$index';
+    return '$sanitized$index';
+  }
+
+  String _layerPrefixFromImageSource(String imageUrl) {
+    final String trimmed = imageUrl.trim();
+    if (trimmed.isEmpty) return 'layer_';
+    try {
+      final Uri uri = Uri.parse(trimmed);
+      String candidate = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : trimmed.split('/').last;
+      if (candidate.isEmpty) return 'layer_';
+      candidate = Uri.decodeComponent(candidate);
+      candidate = candidate.split('?').first.split('#').first;
+      final int dot = candidate.lastIndexOf('.');
+      if (dot > 0) {
+        candidate = candidate.substring(0, dot);
+      }
+      candidate = candidate.trim();
+      if (candidate.isEmpty) return 'layer_';
+      return '${candidate}_';
+    } catch (_) {
+      final String fallback = trimmed.split('/').last.split('?').first;
+      if (fallback.isEmpty) return 'layer_';
+      final int dot = fallback.lastIndexOf('.');
+      final String raw =
+          dot > 0 ? fallback.substring(0, dot).trim() : fallback.trim();
+      return raw.isEmpty ? 'layer_' : '${raw}_';
+    }
   }
 
   void _normalize2DOrders(Map<String, dynamic> scene) {
@@ -7357,8 +8924,10 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final scene = _thumbnail2DScene();
     final keys = _thumbnail2DLayerKeys();
     if (oldIndex < 0 || oldIndex >= keys.length) return;
+    if (keys[oldIndex] == 'turning_point') return;
     if (newIndex > oldIndex) newIndex -= 1;
     if (newIndex < 0 || newIndex >= keys.length) return;
+    if (keys[newIndex] == 'turning_point') return;
     final moved = keys.removeAt(oldIndex);
     keys.insert(newIndex, moved);
     for (int i = 0; i < keys.length; i++) {
@@ -7403,7 +8972,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         'url': '',
       };
     }
-    final key = _next2DLayerKey(textLayer ? 'text_' : 'layer_');
+    final key = _next2DLayerKey(
+      textLayer ? 'text_' : _layerPrefixFromImageSource(imageUrl),
+    );
     _normalize2DOrders(scene);
     final int order = _thumbnail2DLayerKeys().length;
     final Map<String, dynamic> layer = <String, dynamic>{
@@ -7450,7 +9021,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
 
   void _duplicateSelected2DLayer() {
     final key = _selected2dLayerKey;
-    if (key == null || key == 'turning_point') return;
+    if (key == null || _isUtilityLayerKey(key)) return;
     final scene = _thumbnail2DScene();
     final raw = scene[key];
     if (raw is! Map) return;
@@ -7469,7 +9040,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
 
   void _deleteSelected2DLayer() {
     final key = _selected2dLayerKey;
-    if (key == null || key == 'turning_point') return;
+    if (key == null || _isUtilityLayerKey(key)) return;
     final scene = _thumbnail2DScene();
     scene.remove(key);
     _normalize2DOrders(scene);
@@ -7537,6 +9108,135 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     return ordered;
   }
 
+  void _ensure3DSelection() {
+    if (_thumbnailMode != '3d') {
+      _selected3dToken = null;
+      return;
+    }
+    final List<String> tokens = _ordered3dEntityTokens();
+    if (tokens.isEmpty) {
+      _selected3dToken = null;
+      return;
+    }
+    if (_selected3dToken != null && tokens.contains(_selected3dToken)) {
+      return;
+    }
+    _selected3dToken = tokens.first;
+  }
+
+  Map<String, dynamic> _thumbnail3DControls() {
+    final dynamic raw = _thumbnailPayload['controls'];
+    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return <String, dynamic>{};
+  }
+
+  void _set3DControlField(String field, dynamic value) {
+    final controls = _thumbnail3DControls();
+    controls[field] = value;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['controls'] = controls;
+    });
+  }
+
+  void _set3DSceneField(String field, dynamic value) {
+    final scene = _thumbnail3DScene();
+    scene[field] = value;
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+      _ensure3DSelection();
+    });
+  }
+
+  void _set3DEntityField({
+    required String token,
+    required String field,
+    required dynamic value,
+  }) {
+    final parts = token.split(':');
+    if (parts.length != 2) return;
+    final String type = parts.first;
+    final String id = parts.last;
+    final scene = _thumbnail3DScene();
+    final list = _listForEntityType(scene, type);
+    final int index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
+    if (index < 0) return;
+    list[index] = Map<String, dynamic>.from(list[index])..[field] = value;
+    _setListForEntityType(scene, type, list);
+    setState(() {
+      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
+        ..['scene'] = scene;
+    });
+  }
+
+  void _set3DEntityVectorComponent({
+    required String token,
+    required String field,
+    required int index,
+    required double value,
+  }) {
+    final entity = _entityByToken(_thumbnail3DScene(), token);
+    if (entity == null) return;
+    final dynamic raw = entity[field];
+    final List<double> next = <double>[
+      0,
+      0,
+      0,
+    ];
+    if (raw is List) {
+      for (int i = 0; i < raw.length && i < next.length; i++) {
+        next[i] = _toDouble(raw[i], 0);
+      }
+    } else if (field == 'scale' && raw is num) {
+      final double uniform = raw.toDouble();
+      for (int i = 0; i < next.length; i++) {
+        next[i] = uniform;
+      }
+    }
+    if (index >= 0 && index < next.length) {
+      next[index] = value;
+    }
+    _set3DEntityField(token: token, field: field, value: next);
+  }
+
+  double _vectorComponent(
+    dynamic raw,
+    int index,
+    double fallback,
+  ) {
+    if (raw is List && index >= 0 && index < raw.length) {
+      return _toDouble(raw[index], fallback);
+    }
+    if (raw is num) return raw.toDouble();
+    return fallback;
+  }
+
+  void _set3DSceneVectorComponent({
+    required String field,
+    required int index,
+    required double value,
+    List<double> fallback = const <double>[0, 0, 0],
+  }) {
+    final scene = _thumbnail3DScene();
+    final dynamic raw = scene[field];
+    final List<double> next = <double>[
+      fallback.length > 0 ? fallback[0] : 0,
+      fallback.length > 1 ? fallback[1] : 0,
+      fallback.length > 2 ? fallback[2] : 0,
+    ];
+    if (raw is List) {
+      for (int i = 0; i < raw.length && i < next.length; i++) {
+        next[i] = _toDouble(raw[i], next[i]);
+      }
+    }
+    if (index >= 0 && index < next.length) {
+      next[index] = value;
+    }
+    _set3DSceneField(field, next);
+  }
+
   String _next3dEntityId(Map<String, dynamic> scene, String type) {
     final list = _listForEntityType(scene, type);
     int idx = 1;
@@ -7599,6 +9299,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     setState(() {
       _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
         ..['scene'] = scene;
+      _selected3dToken = token;
     });
   }
 
@@ -7613,6 +9314,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     setState(() {
       _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
         ..['scene'] = (scene..['renderOrder'] = order);
+      _selected3dToken = token;
     });
   }
 
@@ -7653,9 +9355,11 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     }
     _setListForEntityType(scene, type, list);
     final order = _ordered3dEntityTokens(scene)..add('$type:$id');
+    final String newToken = '$type:$id';
     setState(() {
       _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
         ..['scene'] = (scene..['renderOrder'] = order.toSet().toList());
+      _selected3dToken = newToken;
     });
   }
 
@@ -7680,9 +9384,11 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     } else {
       order.add('$type:$newId');
     }
+    final String newToken = '$type:$newId';
     setState(() {
       _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
         ..['scene'] = (scene..['renderOrder'] = order);
+      _selected3dToken = newToken;
     });
   }
 
@@ -7699,6 +9405,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     setState(() {
       _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
         ..['scene'] = (scene..['renderOrder'] = order);
+      if (_selected3dToken == token) {
+        _selected3dToken = order.isEmpty ? null : order.first;
+      }
     });
   }
 
@@ -7710,7 +9419,44 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   Widget _build3DWindowLayerPanel(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final scene = _thumbnail3DScene();
+    final controls = _thumbnail3DControls();
     final List<String> tokens = _ordered3dEntityTokens(scene);
+    final String? selectedToken = _selected3dToken != null &&
+            tokens.contains(_selected3dToken)
+        ? _selected3dToken
+        : (tokens.isEmpty ? null : tokens.first);
+    final Map<String, dynamic>? selectedEntity =
+        selectedToken == null ? null : _entityByToken(scene, selectedToken);
+    final String selectedType = selectedToken?.split(':').first ?? '';
+
+    bool asBool(dynamic value, [bool fallback = false]) {
+      if (value is bool) return value;
+      final String raw = value?.toString().toLowerCase() ?? '';
+      if (raw == 'true') return true;
+      if (raw == 'false') return false;
+      return fallback;
+    }
+
+    final bool manualMode =
+        asBool(controls['manual-mode']) || asBool(controls['manualMode']);
+
+    final List<double> initPos = <double>[
+      _vectorComponent(scene['initPos'], 0, 0),
+      _vectorComponent(scene['initPos'], 1, 2),
+      _vectorComponent(scene['initPos'], 2, 10),
+    ];
+    final List<double> initRot = <double>[
+      _vectorComponent(scene['initRot'], 0, 0),
+      _vectorComponent(scene['initRot'], 1, 0),
+      _vectorComponent(scene['initRot'], 2, 0),
+    ];
+
+    final String shadowQuality = () {
+      final raw = (scene['shadowQuality'] ?? controls['shadowQuality'] ?? '512')
+          .toString();
+      const valid = <String>{'256', '512', '1024', '2048'};
+      return valid.contains(raw) ? raw : '512';
+    }();
 
     return Container(
       margin: const EdgeInsets.only(top: 12),
@@ -7734,7 +9480,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           ),
           const SizedBox(height: 6),
           Text(
-            'Reorder/add/delete/duplicate models, lights, and audios.',
+            'Full 3D controls (entities, world/FX, camera, and tracking).',
             style: TextStyle(
               color: cs.onSurfaceVariant,
               fontSize: 12,
@@ -7765,12 +9511,12 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           const SizedBox(height: 10),
           if (tokens.isEmpty)
             Text(
-              'No 3D entities found.',
+              'No 3D entities found. Add a model/light/audio to start.',
               style: TextStyle(color: cs.onSurfaceVariant),
             )
           else
             Container(
-              constraints: const BoxConstraints(maxHeight: 320),
+              constraints: const BoxConstraints(maxHeight: 240),
               decoration: BoxDecoration(
                 color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
                 borderRadius: BorderRadius.circular(10),
@@ -7787,74 +9533,665 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                   final entity = _entityByToken(scene, token);
                   final String layer =
                       (entity?['windowLayer'] ?? 'inside').toString();
-                  return Container(
+                  return InkWell(
                     key: ValueKey<String>('entity-$token'),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: cs.outline.withValues(alpha: 0.12),
+                    onTap: () => setState(() => _selected3dToken = token),
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: selectedToken == token
+                            ? cs.primary.withValues(alpha: 0.12)
+                            : Colors.transparent,
+                        border: Border(
+                          bottom: BorderSide(
+                            color: cs.outline.withValues(alpha: 0.12),
+                          ),
                         ),
                       ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _labelForEntityToken(token, scene),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _labelForEntityToken(token, scene),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                            ),
-                            Text(
-                              type.toUpperCase(),
-                              style: TextStyle(
-                                color: cs.onSurfaceVariant,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
+                              Text(
+                                type.toUpperCase(),
+                                style: TextStyle(
+                                  color: cs.onSurfaceVariant,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                            IconButton(
-                              tooltip: 'Duplicate',
-                              onPressed: () => _duplicate3dEntity(token),
-                              icon: const Icon(Icons.copy_outlined, size: 16),
-                            ),
-                            IconButton(
-                              tooltip: 'Delete',
-                              onPressed: () => _delete3dEntity(token),
-                              icon: const Icon(Icons.delete_outline, size: 16),
-                            ),
-                          ],
-                        ),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment<String>(
-                              value: 'inside',
-                              label: Text('Inside'),
-                            ),
-                            ButtonSegment<String>(
-                              value: 'outside',
-                              label: Text('Outside'),
-                            ),
-                          ],
-                          selected: <String>{layer},
-                          onSelectionChanged: (values) {
-                            _set3dWindowLayerByToken(
-                              token: token,
-                              layer: values.first,
-                            );
-                          },
-                        ),
-                      ],
+                              IconButton(
+                                tooltip: 'Duplicate',
+                                onPressed: () => _duplicate3dEntity(token),
+                                icon: const Icon(Icons.copy_outlined, size: 16),
+                              ),
+                              IconButton(
+                                tooltip: 'Delete',
+                                onPressed: () => _delete3dEntity(token),
+                                icon: const Icon(Icons.delete_outline, size: 16),
+                              ),
+                            ],
+                          ),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment<String>(
+                                value: 'inside',
+                                label: Text('Inside'),
+                              ),
+                              ButtonSegment<String>(
+                                value: 'outside',
+                                label: Text('Outside'),
+                              ),
+                            ],
+                            selected: <String>{layer},
+                            onSelectionChanged: (values) {
+                              _set3dWindowLayerByToken(
+                                token: token,
+                                layer: values.first,
+                              );
+                            },
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
               ),
             ),
+          if (selectedEntity != null && selectedToken != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Selected: ${_labelForEntityToken(selectedToken, scene)}',
+              style: TextStyle(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (selectedType == 'model')
+              TextFormField(
+                key: ValueKey<String>(
+                  'model-name-$selectedToken-${selectedEntity['name'] ?? ''}',
+                ),
+                initialValue: (selectedEntity['name'] ?? '').toString(),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'name',
+                  value: value.trim(),
+                ),
+                decoration: const InputDecoration(labelText: 'Model Name'),
+              ),
+            if (selectedType == 'model' || selectedType == 'audio') ...[
+              const SizedBox(height: 8),
+              TextFormField(
+                key: ValueKey<String>(
+                  'entity-url-$selectedToken-${selectedEntity['url'] ?? ''}',
+                ),
+                initialValue: (selectedEntity['url'] ?? '').toString(),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'url',
+                  value: value.trim(),
+                ),
+                decoration: InputDecoration(
+                  labelText: selectedType == 'model' ? 'Model URL' : 'Audio URL',
+                ),
+              ),
+            ],
+            if (selectedType == 'model') ...[
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Visible'),
+                value: asBool(selectedEntity['visible'], true),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'visible',
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position X',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 0, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 0,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position Y',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 1, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 1,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position Z',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 2, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 2,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Rotation X',
+                min: -6.28,
+                max: 6.28,
+                value: _vectorComponent(selectedEntity['rotation'], 0, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'rotation',
+                  index: 0,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Rotation Y',
+                min: -6.28,
+                max: 6.28,
+                value: _vectorComponent(selectedEntity['rotation'], 1, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'rotation',
+                  index: 1,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Rotation Z',
+                min: -6.28,
+                max: 6.28,
+                value: _vectorComponent(selectedEntity['rotation'], 2, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'rotation',
+                  index: 2,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Scale X',
+                min: 0.01,
+                max: 10,
+                value: _vectorComponent(selectedEntity['scale'], 0, 1),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'scale',
+                  index: 0,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Scale Y',
+                min: 0.01,
+                max: 10,
+                value: _vectorComponent(selectedEntity['scale'], 1, 1),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'scale',
+                  index: 1,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Scale Z',
+                min: 0.01,
+                max: 10,
+                value: _vectorComponent(selectedEntity['scale'], 2, 1),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'scale',
+                  index: 2,
+                  value: value,
+                ),
+              ),
+            ] else if (selectedType == 'light') ...[
+              TextFormField(
+                key: ValueKey<String>(
+                  'light-color-$selectedToken-${selectedEntity['color'] ?? ''}',
+                ),
+                initialValue: (selectedEntity['color'] ?? 'ffffff').toString(),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'color',
+                  value: value.replaceAll('#', '').trim(),
+                ),
+                decoration: const InputDecoration(labelText: 'Color (hex)'),
+              ),
+              _composerSlider(
+                label: 'Intensity',
+                min: 0,
+                max: 50,
+                value: _toDouble(selectedEntity['intensity'], 10),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'intensity',
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position X',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 0, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 0,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position Y',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 1, 5),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 1,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position Z',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 2, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 2,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Helper Scale',
+                min: 0.1,
+                max: 10,
+                value: _toDouble(selectedEntity['scale'], 1),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'scale',
+                  value: value,
+                ),
+              ),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Ghost (hide helper)'),
+                value: asBool(selectedEntity['ghost']),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'ghost',
+                  value: value,
+                ),
+              ),
+            ] else if (selectedType == 'audio') ...[
+              _composerSlider(
+                label: 'Volume',
+                min: 0,
+                max: 2,
+                value: _toDouble(selectedEntity['volume'], 1),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'volume',
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position X',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 0, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 0,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position Y',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 1, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 1,
+                  value: value,
+                ),
+              ),
+              _composerSlider(
+                label: 'Position Z',
+                min: -30,
+                max: 30,
+                value: _vectorComponent(selectedEntity['position'], 2, 0),
+                onChanged: (value) => _set3DEntityVectorComponent(
+                  token: selectedToken,
+                  field: 'position',
+                  index: 2,
+                  value: value,
+                ),
+              ),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Ghost (hide helper)'),
+                value: asBool(selectedEntity['ghost']),
+                onChanged: (value) => _set3DEntityField(
+                  token: selectedToken,
+                  field: 'ghost',
+                  value: value,
+                ),
+              ),
+            ],
+          ],
+          const SizedBox(height: 10),
+          Text(
+            'World & FX',
+            style: TextStyle(
+              color: cs.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          _composerSlider(
+            label: 'Sun Intensity',
+            min: 0,
+            max: 10,
+            value: _toDouble(scene['sunIntensity'], 2.0),
+            onChanged: (value) => _set3DSceneField('sunIntensity', value),
+          ),
+          _composerSlider(
+            label: 'Ambient Light',
+            min: 0,
+            max: 2,
+            value: _toDouble(scene['ambLight'], 0.5),
+            onChanged: (value) => _set3DSceneField('ambLight', value),
+          ),
+          _composerSlider(
+            label: 'Bloom Intensity',
+            min: 0,
+            max: 4,
+            value: _toDouble(scene['bloomIntensity'], 1.0),
+            onChanged: (value) => _set3DSceneField('bloomIntensity', value),
+          ),
+          DropdownButtonFormField<String>(
+            key: ValueKey<String>('shadow-quality-$shadowQuality'),
+            value: shadowQuality,
+            decoration: const InputDecoration(labelText: 'Shadow Quality'),
+            items: const <String>[
+              '256',
+              '512',
+              '1024',
+              '2048',
+            ]
+                .map(
+                  (value) => DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              _set3DSceneField('shadowQuality', value);
+            },
+          ),
+          _composerSlider(
+            label: 'Shadow Softness',
+            min: 0,
+            max: 5,
+            value: _toDouble(scene['shadowSoftness'], 1.0),
+            onChanged: (value) => _set3DSceneField('shadowSoftness', value),
+          ),
+          TextFormField(
+            key: ValueKey<String>('sky-url-${scene['skyUrl'] ?? ''}'),
+            initialValue: (scene['skyUrl'] ?? '').toString(),
+            onChanged: (value) => _set3DSceneField('skyUrl', value.trim()),
+            decoration: const InputDecoration(labelText: 'Sky URL'),
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            key: ValueKey<String>('env-url-${scene['envUrl'] ?? ''}'),
+            initialValue: (scene['envUrl'] ?? '').toString(),
+            onChanged: (value) => _set3DSceneField('envUrl', value.trim()),
+            decoration: const InputDecoration(labelText: 'Environment URL'),
+          ),
+          _composerSlider(
+            label: 'Environment Rotation',
+            min: -6.28,
+            max: 6.28,
+            value: _toDouble(scene['envRot'], 0.0),
+            onChanged: (value) => _set3DSceneField('envRot', value),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Initial Camera',
+            style: TextStyle(
+              color: cs.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          _composerSlider(
+            label: 'Init Pos X',
+            min: -30,
+            max: 30,
+            value: initPos[0],
+            onChanged: (value) => _set3DSceneVectorComponent(
+              field: 'initPos',
+              index: 0,
+              value: value,
+              fallback: initPos,
+            ),
+          ),
+          _composerSlider(
+            label: 'Init Pos Y',
+            min: -30,
+            max: 30,
+            value: initPos[1],
+            onChanged: (value) => _set3DSceneVectorComponent(
+              field: 'initPos',
+              index: 1,
+              value: value,
+              fallback: initPos,
+            ),
+          ),
+          _composerSlider(
+            label: 'Init Pos Z',
+            min: -30,
+            max: 30,
+            value: initPos[2],
+            onChanged: (value) => _set3DSceneVectorComponent(
+              field: 'initPos',
+              index: 2,
+              value: value,
+              fallback: initPos,
+            ),
+          ),
+          _composerSlider(
+            label: 'Init Rot X',
+            min: -6.28,
+            max: 6.28,
+            value: initRot[0],
+            onChanged: (value) => _set3DSceneVectorComponent(
+              field: 'initRot',
+              index: 0,
+              value: value,
+              fallback: initRot,
+            ),
+          ),
+          _composerSlider(
+            label: 'Init Rot Y',
+            min: -6.28,
+            max: 6.28,
+            value: initRot[1],
+            onChanged: (value) => _set3DSceneVectorComponent(
+              field: 'initRot',
+              index: 1,
+              value: value,
+              fallback: initRot,
+            ),
+          ),
+          _composerSlider(
+            label: 'Init Rot Z',
+            min: -6.28,
+            max: 6.28,
+            value: initRot[2],
+            onChanged: (value) => _set3DSceneVectorComponent(
+              field: 'initRot',
+              index: 2,
+              value: value,
+              fallback: initRot,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Tracking',
+            style: TextStyle(
+              color: cs.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          DropdownButtonFormField<String>(
+            value: () {
+              const modes = <String>{'orbit', 'fps', 'free'};
+              final String raw =
+                  (controls['camera-mode'] ?? 'orbit').toString().toLowerCase();
+              return modes.contains(raw) ? raw : 'orbit';
+            }(),
+            decoration: const InputDecoration(labelText: 'Camera Mode'),
+            items: const [
+              DropdownMenuItem<String>(value: 'orbit', child: Text('Orbit')),
+              DropdownMenuItem<String>(value: 'fps', child: Text('FPS')),
+              DropdownMenuItem<String>(value: 'free', child: Text('Free')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              _set3DControlField('camera-mode', value);
+            },
+          ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Manual Mode'),
+            value: manualMode,
+            onChanged: (value) => _set3DControlField('manual-mode', value),
+          ),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Tracker UI'),
+            value: asBool(controls['show-tracker']),
+            onChanged: (value) => _set3DControlField('show-tracker', value),
+          ),
+          _composerSlider(
+            label: 'Dead Zone X',
+            min: 0,
+            max: 0.1,
+            value: _toDouble(controls['dz-x'], 0),
+            onChanged: (value) => _set3DControlField('dz-x', value),
+          ),
+          _composerSlider(
+            label: 'Dead Zone Y',
+            min: 0,
+            max: 0.1,
+            value: _toDouble(controls['dz-y'], 0),
+            onChanged: (value) => _set3DControlField('dz-y', value),
+          ),
+          _composerSlider(
+            label: 'Dead Zone Z',
+            min: 0,
+            max: 0.1,
+            value: _toDouble(controls['dz-z'], 0),
+            onChanged: (value) => _set3DControlField('dz-z', value),
+          ),
+          _composerSlider(
+            label: 'Dead Zone Yaw',
+            min: 0,
+            max: 10,
+            value: _toDouble(controls['dz-yaw'], 0),
+            onChanged: (value) => _set3DControlField('dz-yaw', value),
+          ),
+          _composerSlider(
+            label: 'Dead Zone Pitch',
+            min: 0,
+            max: 10,
+            value: _toDouble(controls['dz-pitch'], 0),
+            onChanged: (value) => _set3DControlField('dz-pitch', value),
+          ),
+          OutlinedButton.icon(
+            onPressed: () {
+              final frame = TrackingService.instance.frameNotifier.value;
+              _set3DControlField('head-x', frame.headX);
+              _set3DControlField('head-y', frame.headY);
+              _set3DControlField('z-value', frame.headZ);
+              _set3DControlField('yaw', frame.yaw);
+              _set3DControlField('pitch', frame.pitch);
+            },
+            icon: const Icon(Icons.gps_fixed, size: 16),
+            label: const Text('Recenter Manual Anchor'),
+          ),
+          if (manualMode) ...[
+            _composerSlider(
+              label: 'Manual Head X',
+              min: -1,
+              max: 1,
+              value: _toDouble(controls['head-x'], 0),
+              onChanged: (value) => _set3DControlField('head-x', value),
+            ),
+            _composerSlider(
+              label: 'Manual Head Y',
+              min: -1,
+              max: 1,
+              value: _toDouble(controls['head-y'], 0),
+              onChanged: (value) => _set3DControlField('head-y', value),
+            ),
+            _composerSlider(
+              label: 'Manual Z',
+              min: 0.05,
+              max: 2,
+              value: _toDouble(controls['z-value'], 0.2),
+              onChanged: (value) => _set3DControlField('z-value', value),
+            ),
+            _composerSlider(
+              label: 'Manual Yaw',
+              min: -60,
+              max: 60,
+              value: _toDouble(controls['yaw'], 0),
+              onChanged: (value) => _set3DControlField('yaw', value),
+            ),
+            _composerSlider(
+              label: 'Manual Pitch',
+              min: -40,
+              max: 40,
+              value: _toDouble(controls['pitch'], 0),
+              onChanged: (value) => _set3DControlField('pitch', value),
+            ),
+          ],
         ],
       ),
     );
@@ -7870,7 +10207,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         turningRaw is Map ? Map<String, dynamic>.from(turningRaw) : <String, dynamic>{};
     final String? selectedKey = _selected2dLayerKey;
     final bool selectedEditable =
-        selectedKey != null && selectedKey != 'turning_point';
+        selectedKey != null && !_isUtilityLayerKey(selectedKey);
 
     return Container(
       margin: const EdgeInsets.only(top: 12),
@@ -7959,6 +10296,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                   final bool locked =
                       layerMap is Map && layerMap['isLocked'] == true;
                   final bool selectedLayer = key == _selected2dLayerKey;
+                  final bool utilityLayer = _isUtilityLayerKey(key);
                   return Container(
                     key: ValueKey<String>('2d-layer-$key'),
                     decoration: BoxDecoration(
@@ -7985,8 +10323,13 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                           children: [
                             IconButton(
                               tooltip: visible ? 'Hide layer' : 'Show layer',
-                              onPressed: () =>
-                                  _set2DLayerField(key, 'isVisible', !visible),
+                              onPressed: utilityLayer
+                                  ? null
+                                  : () => _set2DLayerField(
+                                        key,
+                                        'isVisible',
+                                        !visible,
+                                      ),
                               icon: Icon(
                                 visible
                                     ? Icons.visibility_outlined
@@ -7996,21 +10339,33 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                             ),
                             IconButton(
                               tooltip: locked ? 'Unlock layer' : 'Lock layer',
-                              onPressed: () =>
-                                  _set2DLayerField(key, 'isLocked', !locked),
+                              onPressed: utilityLayer
+                                  ? null
+                                  : () =>
+                                      _set2DLayerField(key, 'isLocked', !locked),
                               icon: Icon(
                                 locked ? Icons.lock_outline : Icons.lock_open,
                                 size: 18,
                               ),
                             ),
-                            ReorderableDragStartListener(
-                              index: index,
-                              child: const Icon(Icons.drag_handle, size: 18),
-                            ),
+                            utilityLayer
+                                ? Icon(
+                                    Icons.drag_handle,
+                                    size: 18,
+                                    color: cs.onSurfaceVariant
+                                        .withValues(alpha: 0.35),
+                                  )
+                                : ReorderableDragStartListener(
+                                    index: index,
+                                    child:
+                                        const Icon(Icons.drag_handle, size: 18),
+                                  ),
                           ],
                         ),
                       ),
-                      onTap: () => setState(() => _selected2dLayerKey = key),
+                      onTap: utilityLayer
+                          ? null
+                          : () => setState(() => _selected2dLayerKey = key),
                     ),
                   );
                 },
@@ -8406,6 +10761,43 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               value: controls['manualMode'] == true,
               onChanged: (v) => _set2DControlField('manualMode', v),
             ),
+            if (controls['manualMode'] == true) ...[
+              _composerSlider(
+                label: 'Manual Head X',
+                min: -1,
+                max: 1,
+                value: _toDouble(controls['manualHeadX'], 0),
+                onChanged: (v) => _set2DControlField('manualHeadX', v),
+              ),
+              _composerSlider(
+                label: 'Manual Head Y',
+                min: -1,
+                max: 1,
+                value: _toDouble(controls['manualHeadY'], 0),
+                onChanged: (v) => _set2DControlField('manualHeadY', v),
+              ),
+              _composerSlider(
+                label: 'Manual Head Z',
+                min: 0.05,
+                max: 2.0,
+                value: _toDouble(controls['manualHeadZ'], 0.2),
+                onChanged: (v) => _set2DControlField('manualHeadZ', v),
+              ),
+              _composerSlider(
+                label: 'Manual Yaw',
+                min: -60,
+                max: 60,
+                value: _toDouble(controls['manualYaw'], 0),
+                onChanged: (v) => _set2DControlField('manualYaw', v),
+              ),
+              _composerSlider(
+                label: 'Manual Pitch',
+                min: -40,
+                max: 40,
+                value: _toDouble(controls['manualPitch'], 0),
+                onChanged: (v) => _set2DControlField('manualPitch', v),
+              ),
+            ],
             DropdownButtonFormField<String>(
               value: (() {
                 final String selectedAspect =
@@ -8484,6 +10876,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     try {
       final tags = _parseTags(_tagsController.text);
       final mentions = _selectedMentionIds.toList();
+      _persistActiveCollectionItemSnapshot();
       final Map<String, dynamic> canonicalPayload =
           jsonDecode(jsonEncode(_thumbnailPayload)) as Map<String, dynamic>;
 
@@ -8491,17 +10884,29 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         final String presetId;
         if (widget.existingPreset != null) {
           presetId = widget.existingPreset!.id;
-          await _repository.updatePresetPost(
-            presetId: presetId,
-            title: title,
-            description: description,
-            tags: tags,
-            mentionUserIds: mentions,
-            payload: canonicalPayload,
-            thumbnailPayload: canonicalPayload,
-            thumbnailMode: _thumbnailMode,
-            visibility: _isPublic ? 'public' : 'private',
-          );
+          if (_isDetailEditor) {
+            await _repository.updatePresetDetail(
+              presetId: presetId,
+              title: title,
+              description: description,
+              tags: tags,
+              mentionUserIds: mentions,
+              payload: canonicalPayload,
+              mode: _thumbnailMode,
+              visibility: _isPublic ? 'public' : 'private',
+            );
+          } else {
+            await _repository.updatePresetCard(
+              presetId: presetId,
+              title: title,
+              description: description,
+              tags: tags,
+              mentionUserIds: mentions,
+              thumbnailPayload: canonicalPayload,
+              thumbnailMode: _thumbnailMode,
+              visibility: _isPublic ? 'public' : 'private',
+            );
+          }
         } else {
           presetId = await _repository.publishPresetPost(
             mode: _thumbnailMode,
@@ -8524,24 +10929,53 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           );
         }
       } else {
-        if (widget.items.isEmpty) {
+        if (_editableCollectionItems.isEmpty) {
           throw Exception('Collection is empty.');
         }
-        final String collectionId = await _repository.saveCollectionWithItems(
-          collectionId: widget.collectionId,
-          name: title,
-          description: description,
-          tags: tags,
-          mentionUserIds: mentions,
-          thumbnailPayload: _thumbnailPayload,
-          thumbnailMode: _thumbnailMode,
-          publish: _isPublic,
-          items: widget.items,
-        );
+        final String collectionId = widget.collectionId ?? '';
+        final String resolvedCollectionId;
+        if (collectionId.isEmpty) {
+          resolvedCollectionId = await _repository.saveCollectionWithItems(
+            collectionId: null,
+            name: title,
+            description: description,
+            tags: tags,
+            mentionUserIds: mentions,
+            thumbnailPayload: canonicalPayload,
+            thumbnailMode: _thumbnailMode,
+            publish: _isPublic,
+            items: _editableCollectionItems,
+          );
+        } else {
+          resolvedCollectionId = collectionId;
+          if (_isDetailEditor) {
+            await _repository.updateCollectionItemsDetail(
+              collectionId: collectionId,
+              name: title,
+              description: description,
+              tags: tags,
+              mentionUserIds: mentions,
+              publish: _isPublic,
+              items: _editableCollectionItems,
+            );
+          } else {
+            await _repository.updateCollectionCard(
+              collectionId: collectionId,
+              name: title,
+              description: description,
+              tags: tags,
+              mentionUserIds: mentions,
+              publish: _isPublic,
+              items: _editableCollectionItems,
+              thumbnailPayload: canonicalPayload,
+              thumbnailMode: _thumbnailMode,
+            );
+          }
+        }
         if (mentions.isNotEmpty) {
           await _repository.createMentionNotifications(
             mentionedUserIds: mentions,
-            presetId: collectionId,
+            presetId: resolvedCollectionId,
             presetTitle: title,
           );
         }
@@ -8594,9 +11028,20 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       appBar: AppBar(
         backgroundColor: cs.surface,
         title: Text(
-          widget.kind == _ComposerKind.single
-              ? (widget.isEdit ? 'Update Post' : 'Compose Post')
-              : (widget.isEdit ? 'Update Collection' : 'Compose Collection'),
+          () {
+            if (_isDetailEditor) {
+              return widget.kind == _ComposerKind.single
+                  ? (widget.isEdit ? 'Update Preset Detail' : 'Compose Preset')
+                  : (widget.isEdit
+                      ? 'Update Collection Detail'
+                      : 'Compose Collection Detail');
+            }
+            return widget.kind == _ComposerKind.single
+                ? (widget.isEdit ? 'Update Feed Card' : 'Compose Card')
+                : (widget.isEdit
+                    ? 'Update Collection Card'
+                    : 'Compose Collection Card');
+          }(),
         ),
       ),
       body: Row(
@@ -8608,7 +11053,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Card Preview (16:9)',
+                    _isDetailEditor
+                        ? 'Detail Preview (16:9)'
+                        : 'Card Preview (16:9)',
                     style: TextStyle(
                       color: cs.onSurface,
                       fontWeight: FontWeight.w700,
@@ -8617,20 +11064,20 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                   ),
                   const SizedBox(height: 10),
                   if (widget.kind == _ComposerKind.collection &&
-                      widget.items.length > 1)
+                      _editableCollectionItems.length > 1)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: List<Widget>.generate(
-                          widget.items.length,
+                          _editableCollectionItems.length,
                           (index) {
                             final bool active = index == _thumbnailIndex;
                             return ChoiceChip(
                               selected: active,
                               label: Text(
-                                '${index + 1}. ${widget.items[index].name}',
+                                '${index + 1}. ${_editableCollectionItems[index].name}',
                               ),
                               onSelected: (_) =>
                                   _setThumbnailFromCollectionIndex(index),
@@ -8723,7 +11170,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                 children: [
                   if (!_showPublishStep) ...[
                     Text(
-                      'Card Editing',
+                      _isDetailEditor ? 'Detail Editing' : 'Card Editing',
                       style: TextStyle(
                         color: cs.onSurface,
                         fontSize: 18,
@@ -8732,10 +11179,25 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Adjust the 16:9 card preview first, then continue to metadata and publish.',
+                      _isDetailEditor
+                          ? 'Adjust the preset/collection detail payload, then continue to metadata.'
+                          : 'Adjust the feed card payload (independent from detail), then continue to metadata.',
                       style: TextStyle(color: cs.onSurfaceVariant),
                     ),
                     const SizedBox(height: 12),
+                    if (_isCardEditor && _pullSourcePayload != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: OutlinedButton.icon(
+                          onPressed: _pullFromSourcePayload,
+                          icon: const Icon(Icons.download_for_offline_outlined),
+                          label: Text(
+                            widget.kind == _ComposerKind.single
+                                ? 'Pull From Preset'
+                                : 'Pull From Active Collection Item',
+                          ),
+                        ),
+                      ),
                     if (_thumbnailMode == '3d')
                       _build3DWindowLayerPanel(context)
                     else
@@ -9767,4 +12229,18 @@ String _friendlyTime(DateTime value) {
   if (d.inHours < 24) return '${d.inHours}h ago';
   if (d.inDays < 7) return '${d.inDays}d ago';
   return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+}
+
+String _friendlyCount(int value) {
+  if (value < 1000) return '$value';
+  if (value < 1000000) {
+    final double k = value / 1000;
+    return k >= 10 ? '${k.toStringAsFixed(0)}K' : '${k.toStringAsFixed(1)}K';
+  }
+  if (value < 1000000000) {
+    final double m = value / 1000000;
+    return m >= 10 ? '${m.toStringAsFixed(0)}M' : '${m.toStringAsFixed(1)}M';
+  }
+  final double b = value / 1000000000;
+  return b >= 10 ? '${b.toStringAsFixed(0)}B' : '${b.toStringAsFixed(1)}B';
 }

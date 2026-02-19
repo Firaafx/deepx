@@ -12,6 +12,8 @@ class FeedPost {
     required this.myReaction,
     required this.isSaved,
     required this.isFollowingAuthor,
+    this.viewsCount = 0,
+    this.isWatchLater = false,
   });
 
   final RenderPreset preset;
@@ -23,4 +25,6 @@ class FeedPost {
   final int myReaction;
   final bool isSaved;
   final bool isFollowingAuthor;
+  final int viewsCount;
+  final bool isWatchLater;
 }

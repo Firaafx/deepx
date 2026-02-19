@@ -59,6 +59,7 @@ class TrackingService {
   bool _pointerDown = false;
   DateTime? _pointerDownAt;
   html.Element? _pointerTarget;
+  html.Element? _hoverTarget;
   int? _lastDispatchX;
   int? _lastDispatchY;
 
@@ -283,6 +284,25 @@ class TrackingService {
     }
     final html.Element dispatchTarget = targetAtCursor;
 
+    if (!identical(_hoverTarget, dispatchTarget)) {
+      final html.Element? previous = _hoverTarget;
+      if (previous != null) {
+        _dispatchMouseEvent(
+          target: previous,
+          type: 'mouseout',
+          x: x,
+          y: y,
+        );
+      }
+      _dispatchMouseEvent(
+        target: dispatchTarget,
+        type: 'mouseover',
+        x: x,
+        y: y,
+      );
+      _hoverTarget = dispatchTarget;
+    }
+
     void dispatchPointerToTargets({
       required String type,
       required int buttons,
@@ -485,18 +505,32 @@ class TrackingService {
     required int y,
     required int buttons,
   }) {
+    final String mouseType;
+    if (type == 'pointerdown') {
+      mouseType = 'mousedown';
+    } else if (type == 'pointerup' || type == 'pointercancel') {
+      mouseType = 'mouseup';
+    } else {
+      mouseType = 'mousemove';
+    }
+    _dispatchMouseEvent(
+      target: target,
+      type: mouseType,
+      x: x,
+      y: y,
+    );
+  }
+
+  void _dispatchMouseEvent({
+    required html.Element target,
+    required String type,
+    required int x,
+    required int y,
+  }) {
     try {
-      final String mouseType;
-      if (type == 'pointerdown') {
-        mouseType = 'mousedown';
-      } else if (type == 'pointerup' || type == 'pointercancel') {
-        mouseType = 'mouseup';
-      } else {
-        mouseType = 'mousemove';
-      }
       target.dispatchEvent(
         html.MouseEvent(
-          mouseType,
+          type,
           canBubble: true,
           cancelable: true,
           clientX: x,
@@ -545,6 +579,16 @@ class TrackingService {
   }
 
   void _clearHoverState() {
+    final html.Element? previous = _hoverTarget;
+    if (previous != null) {
+      _dispatchMouseEvent(
+        target: previous,
+        type: 'mouseout',
+        x: frameNotifier.value.cursorX.round(),
+        y: frameNotifier.value.cursorY.round(),
+      );
+    }
+    _hoverTarget = null;
     _lastDispatchX = null;
     _lastDispatchY = null;
   }
