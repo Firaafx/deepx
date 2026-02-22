@@ -32,13 +32,14 @@ class TrackingService {
   bool _trackerUiVisible = false;
 
   bool get dartCursorEnabled => _dartCursorEnabled;
-  bool _dartCursorEnabled = true;
+  bool _dartCursorEnabled = false;
 
   TrackerRuntimeConfig get runtimeConfig => _runtimeConfig;
   TrackerRuntimeConfig _runtimeConfig = TrackerRuntimeConfig.defaults;
 
   StreamSubscription? _messageSub;
   Timer? _configRetryTimer;
+  Timer? _staleFrameWatchdog;
   late String _viewId;
   late String _iframeElementId;
   late String _bridgeChannel;
@@ -134,6 +135,19 @@ class TrackingService {
       _bridgePointerInteractions(mappedFrame);
     });
 
+    _staleFrameWatchdog?.cancel();
+    _staleFrameWatchdog = Timer.periodic(
+      const Duration(milliseconds: 450),
+      (_) {
+        if (!_trackerEnabled || !_dartCursorEnabled) return;
+        final int age = DateTime.now().difference(_lastFrameAt).inMilliseconds;
+        if (age <= 1200) return;
+        _releasePointerAtCurrentPosition(cancel: true);
+        _clearHoverState();
+        _bumpOverlayTick();
+      },
+    );
+
     await refreshPreferences();
     _postConfig(force: true);
   }
@@ -142,6 +156,8 @@ class TrackingService {
     _postConfig(force: true);
     _configRetryTimer?.cancel();
     _configRetryTimer = null;
+    _staleFrameWatchdog?.cancel();
+    _staleFrameWatchdog = null;
     _releasePointerAtCurrentPosition();
     _clearHoverState();
     await _messageSub?.cancel();
@@ -267,9 +283,16 @@ class TrackingService {
       _clearHoverState();
       return;
     }
+    if (!hasFreshFrame) {
+      _releasePointerAtCurrentPosition(cancel: true);
+      _clearHoverState();
+      return;
+    }
 
-    final x = frame.cursorX.round();
-    final y = frame.cursorY.round();
+    final int viewportW = (html.window.innerWidth ?? 1).clamp(1, 1000000);
+    final int viewportH = (html.window.innerHeight ?? 1).clamp(1, 1000000);
+    final x = frame.cursorX.round().clamp(0, viewportW - 1);
+    final y = frame.cursorY.round().clamp(0, viewportH - 1);
     final dispatchSurface = _resolveDispatchSurface();
     final html.Element? targetAtCursor = html.document.elementFromPoint(x, y);
     if (targetAtCursor == null) {
@@ -293,10 +316,22 @@ class TrackingService {
           x: x,
           y: y,
         );
+        _dispatchMouseEvent(
+          target: previous,
+          type: 'mouseleave',
+          x: x,
+          y: y,
+        );
       }
       _dispatchMouseEvent(
         target: dispatchTarget,
-        type: 'mouseover',
+          type: 'mouseover',
+          x: x,
+          y: y,
+      );
+      _dispatchMouseEvent(
+        target: dispatchTarget,
+        type: 'mouseenter',
         x: x,
         y: y,
       );
@@ -317,6 +352,16 @@ class TrackingService {
         y: y,
         buttons: buttons,
       );
+      _dispatchMouseEvent(
+        target: target,
+        type: type == 'pointerdown'
+            ? 'mousedown'
+            : type == 'pointerup' || type == 'pointercancel'
+                ? 'mouseup'
+                : 'mousemove',
+        x: x,
+        y: y,
+      );
       final surface = dispatchSurface;
       final bool shouldFallbackToSurface = includeSurfaceFallback &&
           surface != null &&
@@ -330,6 +375,16 @@ class TrackingService {
           x: x,
           y: y,
           buttons: buttons,
+        );
+        _dispatchMouseEvent(
+          target: surface,
+          type: type == 'pointerdown'
+              ? 'mousedown'
+              : type == 'pointerup' || type == 'pointercancel'
+                  ? 'mouseup'
+                  : 'mousemove',
+          x: x,
+          y: y,
         );
       }
     }
@@ -505,20 +560,15 @@ class TrackingService {
     required int y,
     required int buttons,
   }) {
-    final String mouseType;
-    if (type == 'pointerdown') {
-      mouseType = 'mousedown';
-    } else if (type == 'pointerup' || type == 'pointercancel') {
-      mouseType = 'mouseup';
-    } else {
-      mouseType = 'mousemove';
-    }
-    _dispatchMouseEvent(
-      target: target,
-      type: mouseType,
-      x: x,
-      y: y,
-    );
+    try {
+      target.dispatchEvent(
+        html.Event(
+          type,
+          canBubble: true,
+          cancelable: true,
+        ),
+      );
+    } catch (_) {}
   }
 
   void _dispatchMouseEvent({
@@ -538,6 +588,19 @@ class TrackingService {
           button: 0,
         ),
       );
+      final html.Document doc = html.document;
+      if (!identical(target, doc.documentElement)) {
+        doc.dispatchEvent(
+          html.MouseEvent(
+            type,
+            canBubble: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y,
+            button: 0,
+          ),
+        );
+      }
     } catch (_) {}
   }
 

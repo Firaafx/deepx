@@ -332,6 +332,16 @@ class AppRepository {
         .eq('user_id', user.id);
   }
 
+  Future<void> markNotificationsSeen() async {
+    final user = currentUser;
+    if (user == null) return;
+    await _client
+        .from('notifications')
+        .update(<String, dynamic>{'read': true})
+        .eq('user_id', user.id)
+        .eq('read', false);
+  }
+
   Future<ProfileStats> fetchProfileStats(String userId) async {
     final row = await _client
         .from('profile_stats')
@@ -1031,6 +1041,65 @@ class AppRepository {
     }
   }
 
+  Future<void> submitReport({
+    required String targetType,
+    required String targetId,
+    required String reason,
+    String? details,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    final String normalizedType =
+        targetType.toLowerCase() == 'collection' ? 'collection' : 'post';
+    final String cleanReason = reason.trim();
+    if (cleanReason.isEmpty) return;
+    await _client.from('content_reports').insert(
+      <String, dynamic>{
+        'reporter_user_id': user.id,
+        'target_type': normalizedType,
+        'target_id': targetId,
+        'reason': cleanReason,
+        'details': details?.trim().isEmpty == true ? null : details?.trim(),
+      },
+    );
+  }
+
+  Future<void> setRecommendationExclusion({
+    required String exclusionType,
+    required String targetId,
+    required bool excluded,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+    final String normalizedType;
+    switch (exclusionType.toLowerCase()) {
+      case 'post':
+      case 'collection':
+      case 'user':
+        normalizedType = exclusionType.toLowerCase();
+        break;
+      default:
+        normalizedType = 'post';
+    }
+    if (excluded) {
+      await _client.from('recommendation_exclusions').upsert(
+        <String, dynamic>{
+          'user_id': user.id,
+          'exclusion_type': normalizedType,
+          'target_id': targetId,
+        },
+        onConflict: 'user_id,exclusion_type,target_id',
+      );
+    } else {
+      await _client
+          .from('recommendation_exclusions')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('exclusion_type', normalizedType)
+          .eq('target_id', targetId);
+    }
+  }
+
   Future<List<WatchLaterItem>> fetchWatchLaterForCurrentUser({
     int limit = 240,
   }) async {
@@ -1191,6 +1260,150 @@ class AppRepository {
       if (preset != null) ordered.add(preset);
     }
     return ordered;
+  }
+
+  Future<List<CollectionSummary>> fetchSavedCollectionsForCurrentUser() async {
+    final user = currentUser;
+    if (user == null) return const <CollectionSummary>[];
+    final List<dynamic> saveRows = await _client
+        .from('saved_collections')
+        .select('collection_id,created_at')
+        .eq('user_id', user.id)
+        .order('created_at', ascending: false);
+    final List<String> collectionIds = saveRows
+        .map((dynamic e) => (e as Map)['collection_id']?.toString() ?? '')
+        .where((String e) => e.isNotEmpty)
+        .toList();
+    if (collectionIds.isEmpty) return const <CollectionSummary>[];
+    final List<dynamic> rows = await _client
+        .from('collections')
+        .select('*')
+        .inFilter('id', collectionIds);
+    final List<CollectionSummary> hydrated = await _hydrateCollectionSummaries(rows);
+    final Map<String, CollectionSummary> byId = <String, CollectionSummary>{
+      for (final summary in hydrated) summary.id: summary,
+    };
+    final List<CollectionSummary> ordered = <CollectionSummary>[];
+    for (final id in collectionIds) {
+      final summary = byId[id];
+      if (summary != null) ordered.add(summary);
+    }
+    return ordered;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchSavedGrid({
+    String filter = 'all',
+    int limit = 300,
+  }) async {
+    final user = currentUser;
+    if (user == null) return const <Map<String, dynamic>>[];
+
+    final String normalized = filter.trim().toLowerCase();
+    final bool wantsPosts = normalized == 'all' || normalized == 'saved_posts';
+    final bool wantsCollections =
+        normalized == 'all' || normalized == 'saved_collections';
+    final bool wantsWatchLater = normalized == 'all' || normalized == 'watch_later';
+
+    final List<Map<String, dynamic>> entries = <Map<String, dynamic>>[];
+
+    if (wantsPosts) {
+      final List<dynamic> rows = await _client
+          .from('saved_presets')
+          .select('preset_id,created_at')
+          .eq('user_id', user.id)
+          .order('created_at', ascending: false)
+          .limit(limit);
+      final List<String> ids = rows
+          .map((dynamic row) => (row as Map)['preset_id']?.toString() ?? '')
+          .where((String id) => id.isNotEmpty)
+          .toList();
+      if (ids.isNotEmpty) {
+        final presets = await fetchPresetsByIds(ids);
+        for (final dynamic row in rows) {
+          final map = Map<String, dynamic>.from(row as Map);
+          final String id = map['preset_id']?.toString() ?? '';
+          final preset = presets[id];
+          if (preset == null) continue;
+          entries.add(
+            <String, dynamic>{
+              'kind': 'saved_post',
+              'createdAt': DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+                  DateTime.fromMillisecondsSinceEpoch(0),
+              'preset': preset,
+            },
+          );
+        }
+      }
+    }
+
+    if (wantsCollections) {
+      final List<dynamic> rows = await _client
+          .from('saved_collections')
+          .select('collection_id,created_at')
+          .eq('user_id', user.id)
+          .order('created_at', ascending: false)
+          .limit(limit);
+      final List<String> ids = rows
+          .map((dynamic row) => (row as Map)['collection_id']?.toString() ?? '')
+          .where((String id) => id.isNotEmpty)
+          .toList();
+      if (ids.isNotEmpty) {
+        final List<dynamic> summariesRaw = await _client
+            .from('collections')
+            .select('*')
+            .inFilter('id', ids);
+        final summaries = await _hydrateCollectionSummaries(summariesRaw);
+        final Map<String, CollectionSummary> byId = <String, CollectionSummary>{
+          for (final summary in summaries) summary.id: summary,
+        };
+        for (final dynamic row in rows) {
+          final map = Map<String, dynamic>.from(row as Map);
+          final String id = map['collection_id']?.toString() ?? '';
+          final summary = byId[id];
+          if (summary == null) continue;
+          entries.add(
+            <String, dynamic>{
+              'kind': 'saved_collection',
+              'createdAt': DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+                  DateTime.fromMillisecondsSinceEpoch(0),
+              'collection': summary,
+            },
+          );
+        }
+      }
+    }
+
+    if (wantsWatchLater) {
+      final List<WatchLaterItem> watchLater = await fetchWatchLaterForCurrentUser(
+        limit: limit,
+      );
+      for (final item in watchLater) {
+        entries.add(
+          <String, dynamic>{
+            'kind': item.type == WatchLaterTargetType.collection
+                ? 'watch_later_collection'
+                : 'watch_later_post',
+            'createdAt': item.createdAt,
+            if (item.post != null) 'preset': item.post,
+            if (item.collection != null) 'collection': item.collection,
+          },
+        );
+      }
+    }
+
+    entries.sort((a, b) {
+      final DateTime aTime = a['createdAt'] is DateTime
+          ? a['createdAt'] as DateTime
+          : DateTime.fromMillisecondsSinceEpoch(0);
+      final DateTime bTime = b['createdAt'] is DateTime
+          ? b['createdAt'] as DateTime
+          : DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+    if (entries.length > limit) {
+      return entries.sublist(0, limit);
+    }
+    return entries;
   }
 
   Future<List<RenderPreset>> fetchHistoryPresetsForCurrentUser() async {
@@ -1406,6 +1619,36 @@ class AppRepository {
       params: <String, dynamic>{'other_user_id': otherUserId},
     );
     return value?.toString() ?? '';
+  }
+
+  Future<void> shareCollectionToUser({
+    required String recipientUserId,
+    required CollectionSummary summary,
+  }) async {
+    final user = currentUser;
+    if (user == null) throw Exception('Not authenticated.');
+    if (recipientUserId.trim().isEmpty) return;
+    final String chatId = await createOrGetDirectChat(recipientUserId);
+    if (chatId.isEmpty) {
+      throw Exception('Unable to create direct chat.');
+    }
+    final String routeId = summary.shareId.trim().isNotEmpty
+        ? summary.shareId.trim()
+        : summary.id;
+    String prefix = '';
+    if (Uri.base.host.toLowerCase().endsWith('github.io')) {
+      final List<String> segments =
+          Uri.base.pathSegments.where((segment) => segment.isNotEmpty).toList();
+      if (segments.isNotEmpty) {
+        prefix = '/${segments.first}';
+      }
+    }
+    final String link =
+        '${Uri.base.origin}$prefix/collection/${Uri.encodeComponent(routeId)}';
+    await sendChatMessage(
+      chatId: chatId,
+      body: 'Shared a collection: ${summary.name}\n$link',
+    );
   }
 
   Future<String> createGroupChat({
@@ -1681,6 +1924,41 @@ class AppRepository {
       thumbnailPayload: thumbnailPayload,
       thumbnailMode: thumbnailMode,
     );
+  }
+
+  Future<void> updateCollectionMeta({
+    required String collectionId,
+    String? name,
+    String? description,
+    List<String>? tags,
+    List<String>? mentionUserIds,
+    bool? published,
+  }) async {
+    final user = currentUser;
+    if (user == null) throw Exception('Not authenticated.');
+    final Map<String, dynamic> values = <String, dynamic>{};
+    if (name != null) {
+      final String clean = name.trim();
+      values['name'] = clean.isEmpty ? 'Untitled collection' : clean;
+    }
+    if (description != null) {
+      values['description'] = description.trim();
+    }
+    if (tags != null) {
+      values['tags'] = _normalizeTags(tags);
+    }
+    if (mentionUserIds != null) {
+      values['mention_user_ids'] = _normalizeUuidList(mentionUserIds);
+    }
+    if (published != null) {
+      values['published'] = published;
+    }
+    if (values.isEmpty) return;
+    await _client
+        .from('collections')
+        .update(values)
+        .eq('id', collectionId)
+        .eq('user_id', user.id);
   }
 
   Future<void> deleteCollection(String collectionId) async {

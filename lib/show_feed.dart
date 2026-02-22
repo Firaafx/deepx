@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:collection/collection.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -353,7 +354,7 @@ class ShowFeedPage extends StatefulWidget {
 
 class _ShowFeedPageState extends State<ShowFeedPage> {
   static const double _headerHeight = 84;
-  static const double _headerTopOffset = 3;
+  static const double _headerTopOffset = 0;
   static const double _feedTopPadding = _headerHeight + _headerTopOffset;
   static const double _tabContentTopPadding = 48;
 
@@ -615,6 +616,9 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
               final String body = item.body.isNotEmpty
                   ? item.body
                   : (item.data['preset_title']?.toString() ?? '');
+              final String meta =
+                  '${_friendlyTime(item.createdAt)} · ${_formatDateTime(item.createdAt)}';
+              final String subtitleText = body.isEmpty ? meta : '$body\n$meta';
               return ListTile(
                 leading: CircleAvatar(
                   radius: 16,
@@ -632,10 +636,17 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                     fontWeight: item.read ? FontWeight.w500 : FontWeight.w700,
                   ),
                 ),
-                subtitle: body.isEmpty ? null : Text(body, maxLines: 2),
+                subtitle: Text(subtitleText, maxLines: 3),
                 trailing: item.read
                     ? null
-                    : const Icon(Icons.fiber_manual_record, size: 10),
+                    : Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Colors.redAccent,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
                 onTap: () async {
                   final navigator = Navigator.of(context);
                   await _markNotificationReadLocal(item);
@@ -651,6 +662,9 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
         );
       },
     );
+    await _repository.markNotificationsSeen();
+    if (!mounted) return;
+    await _loadHeaderNotifications();
   }
 
   void _syncTrackerCursorHover() {
@@ -1038,14 +1052,28 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                         ),
                                         if (unreadNotifications > 0)
                                           Positioned(
-                                            right: 8,
-                                            top: 8,
+                                            right: 2,
+                                            top: 4,
                                             child: Container(
-                                              width: 8,
-                                              height: 8,
-                                              decoration: const BoxDecoration(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 5,
+                                                vertical: 1.5,
+                                              ),
+                                              decoration: BoxDecoration(
                                                 color: Colors.redAccent,
-                                                shape: BoxShape.circle,
+                                                borderRadius:
+                                                    BorderRadius.circular(999),
+                                              ),
+                                              child: Text(
+                                                unreadNotifications > 99
+                                                    ? '99+'
+                                                    : '$unreadNotifications',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
                                               ),
                                             ),
                                           ),
@@ -1294,6 +1322,227 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     }
   }
 
+  Future<bool> _ensureSignedIn() async {
+    if (_repository.currentUser != null) return true;
+    final bool shouldSignIn = await _showSignInRequiredSheet(
+      context,
+      message: 'This action requires sign in.',
+    );
+    if (!mounted || !shouldSignIn) return false;
+    Navigator.pushNamed(context, '/auth');
+    return false;
+  }
+
+  Future<void> _toggleWatchLater(FeedPost post) async {
+    if (!await _ensureSignedIn()) return;
+    final bool watchLater = !post.isWatchLater;
+    await _repository.toggleWatchLaterItem(
+      targetType: 'post',
+      targetId: post.preset.id,
+      watchLater: watchLater,
+    );
+    if (!mounted) return;
+    setState(() {
+      final int index = _posts.indexWhere((p) => p.preset.id == post.preset.id);
+      if (index < 0) return;
+      final FeedPost current = _posts[index];
+      _posts[index] = FeedPost(
+        preset: current.preset,
+        author: current.author,
+        likesCount: current.likesCount,
+        dislikesCount: current.dislikesCount,
+        commentsCount: current.commentsCount,
+        savesCount: current.savesCount,
+        myReaction: current.myReaction,
+        isSaved: current.isSaved,
+        isFollowingAuthor: current.isFollowingAuthor,
+        viewsCount: current.viewsCount,
+        isWatchLater: watchLater,
+      );
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          watchLater ? 'Added to Watch Later.' : 'Removed from Watch Later.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyPostLink(RenderPreset preset) async {
+    await Clipboard.setData(ClipboardData(text: buildPostShareUrl(preset)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Post link copied.')),
+    );
+  }
+
+  Future<void> _openPostShareUrl(
+    String url, {
+    required RenderPreset preset,
+    bool copyLinkFirst = false,
+  }) async {
+    if (copyLinkFirst) {
+      await _copyPostLink(preset);
+    }
+    final Uri? uri = Uri.tryParse(url);
+    if (uri == null) return;
+    final bool launched =
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to open $url')),
+      );
+    }
+  }
+
+  Future<void> _openPostShareSheet(FeedPost post) async {
+    final String link = buildPostShareUrl(post.preset);
+    final String encodedLink = Uri.encodeComponent(link);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('Copy link'),
+              subtitle:
+                  Text(link, maxLines: 1, overflow: TextOverflow.ellipsis),
+              onTap: () {
+                Navigator.pop(context);
+                _copyPostLink(post.preset);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.send),
+              title: const Text('Telegram'),
+              onTap: () {
+                Navigator.pop(context);
+                _openPostShareUrl(
+                  'https://t.me/share/url?url=$encodedLink',
+                  preset: post.preset,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.public),
+              title: const Text('Facebook'),
+              onTap: () {
+                Navigator.pop(context);
+                _openPostShareUrl(
+                  'https://www.facebook.com/sharer/sharer.php?u=$encodedLink',
+                  preset: post.preset,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text('WhatsApp'),
+              onTap: () {
+                Navigator.pop(context);
+                _openPostShareUrl(
+                  'https://wa.me/?text=$encodedLink',
+                  preset: post.preset,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Instagram'),
+              subtitle: const Text('Copies link first'),
+              onTap: () {
+                Navigator.pop(context);
+                _openPostShareUrl(
+                  'https://www.instagram.com/',
+                  preset: post.preset,
+                  copyLinkFirst: true,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_front_outlined),
+              title: const Text('Snapchat'),
+              subtitle: const Text('Copies link first'),
+              onTap: () {
+                Navigator.pop(context);
+                _openPostShareUrl(
+                  'https://www.snapchat.com/',
+                  preset: post.preset,
+                  copyLinkFirst: true,
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _reportPost(FeedPost post) async {
+    if (!await _ensureSignedIn()) return;
+    if (!mounted) return;
+    const List<String> reasons = <String>[
+      'Spam',
+      'Harassment',
+      'Violence',
+      'Adult content',
+      'Misinformation',
+    ];
+    final String? reason = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final reason in reasons)
+              ListTile(
+                leading: const Icon(Icons.flag_outlined),
+                title: Text(reason),
+                onTap: () => Navigator.pop(context, reason),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (reason == null || reason.trim().isEmpty) return;
+    await _repository.submitReport(
+      targetType: 'post',
+      targetId: post.preset.id,
+      reason: reason.trim(),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report submitted.')),
+    );
+  }
+
+  Future<void> _notInterestedInPost(FeedPost post) async {
+    if (!await _ensureSignedIn()) return;
+    await _repository.setRecommendationExclusion(
+      exclusionType: 'post',
+      targetId: post.preset.id,
+      excluded: true,
+    );
+    if (!mounted) return;
+    setState(() => _posts.removeWhere((p) => p.preset.id == post.preset.id));
+  }
+
+  Future<void> _dontRecommendUser(FeedPost post) async {
+    if (!await _ensureSignedIn()) return;
+    await _repository.setRecommendationExclusion(
+      exclusionType: 'user',
+      targetId: post.preset.userId,
+      excluded: true,
+    );
+    if (!mounted) return;
+    setState(() => _posts.removeWhere((p) => p.preset.userId == post.preset.userId));
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -1366,6 +1615,11 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
                 onEdit: mine ? () => _openPostEditor(post) : null,
                 onToggleVisibility: mine ? () => _toggleVisibility(post) : null,
                 onDelete: mine ? () => _deletePost(post) : null,
+                onWatchLater: () => _toggleWatchLater(post),
+                onShare: () => _openPostShareSheet(post),
+                onReport: () => _reportPost(post),
+                onNotInterested: () => _notInterestedInPost(post),
+                onDontRecommend: () => _dontRecommendUser(post),
               );
             },
           );
@@ -1541,6 +1795,240 @@ class _CollectionTabState extends State<_CollectionTab> {
     }
   }
 
+  Future<bool> _ensureSignedIn() async {
+    if (_repository.currentUser != null) return true;
+    final bool shouldSignIn = await _showSignInRequiredSheet(
+      context,
+      message: 'This action requires sign in.',
+    );
+    if (!mounted || !shouldSignIn) return false;
+    Navigator.pushNamed(context, '/auth');
+    return false;
+  }
+
+  Future<void> _toggleCollectionWatchLater(CollectionSummary summary) async {
+    if (!await _ensureSignedIn()) return;
+    final bool watchLater = !summary.isWatchLater;
+    await _repository.toggleWatchLaterItem(
+      targetType: 'collection',
+      targetId: summary.id,
+      watchLater: watchLater,
+    );
+    if (!mounted) return;
+    setState(() {
+      final int index = _collections.indexWhere((c) => c.id == summary.id);
+      if (index < 0) return;
+      final CollectionSummary current = _collections[index];
+      _collections[index] = CollectionSummary(
+        id: current.id,
+        shareId: current.shareId,
+        userId: current.userId,
+        name: current.name,
+        description: current.description,
+        tags: current.tags,
+        mentionUserIds: current.mentionUserIds,
+        published: current.published,
+        thumbnailPayload: current.thumbnailPayload,
+        thumbnailMode: current.thumbnailMode,
+        itemsCount: current.itemsCount,
+        createdAt: current.createdAt,
+        updatedAt: current.updatedAt,
+        firstItem: current.firstItem,
+        author: current.author,
+        likesCount: current.likesCount,
+        dislikesCount: current.dislikesCount,
+        commentsCount: current.commentsCount,
+        savesCount: current.savesCount,
+        viewsCount: current.viewsCount,
+        myReaction: current.myReaction,
+        isSavedByCurrentUser: current.isSavedByCurrentUser,
+        isWatchLater: watchLater,
+      );
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          watchLater ? 'Added to Watch Later.' : 'Removed from Watch Later.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyCollectionLink(CollectionSummary summary) async {
+    await Clipboard.setData(ClipboardData(text: buildCollectionShareUrl(summary)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Collection link copied.')),
+    );
+  }
+
+  Future<void> _openCollectionShareUrl(
+    String url, {
+    required CollectionSummary summary,
+    bool copyLinkFirst = false,
+  }) async {
+    if (copyLinkFirst) {
+      await _copyCollectionLink(summary);
+    }
+    final Uri? uri = Uri.tryParse(url);
+    if (uri == null) return;
+    final bool launched =
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to open $url')),
+      );
+    }
+  }
+
+  Future<void> _openCollectionShareSheet(CollectionSummary summary) async {
+    final String link = buildCollectionShareUrl(summary);
+    final String encodedLink = Uri.encodeComponent(link);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('Copy link'),
+              subtitle: Text(link, maxLines: 1, overflow: TextOverflow.ellipsis),
+              onTap: () {
+                Navigator.pop(context);
+                _copyCollectionLink(summary);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.send),
+              title: const Text('Telegram'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://t.me/share/url?url=$encodedLink',
+                  summary: summary,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.public),
+              title: const Text('Facebook'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://www.facebook.com/sharer/sharer.php?u=$encodedLink',
+                  summary: summary,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text('WhatsApp'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://wa.me/?text=$encodedLink',
+                  summary: summary,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Instagram'),
+              subtitle: const Text('Copies link first'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://www.instagram.com/',
+                  summary: summary,
+                  copyLinkFirst: true,
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_front_outlined),
+              title: const Text('Snapchat'),
+              subtitle: const Text('Copies link first'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCollectionShareUrl(
+                  'https://www.snapchat.com/',
+                  summary: summary,
+                  copyLinkFirst: true,
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _reportCollection(CollectionSummary summary) async {
+    if (!await _ensureSignedIn()) return;
+    if (!mounted) return;
+    const List<String> reasons = <String>[
+      'Spam',
+      'Harassment',
+      'Violence',
+      'Adult content',
+      'Misinformation',
+    ];
+    final String? reason = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final reason in reasons)
+              ListTile(
+                leading: const Icon(Icons.flag_outlined),
+                title: Text(reason),
+                onTap: () => Navigator.pop(context, reason),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (reason == null || reason.trim().isEmpty) return;
+    await _repository.submitReport(
+      targetType: 'collection',
+      targetId: summary.id,
+      reason: reason.trim(),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report submitted.')),
+    );
+  }
+
+  Future<void> _notInterestedInCollection(CollectionSummary summary) async {
+    if (!await _ensureSignedIn()) return;
+    await _repository.setRecommendationExclusion(
+      exclusionType: 'collection',
+      targetId: summary.id,
+      excluded: true,
+    );
+    if (!mounted) return;
+    setState(() => _collections.removeWhere((c) => c.id == summary.id));
+  }
+
+  Future<void> _dontRecommendCollectionUser(CollectionSummary summary) async {
+    if (!await _ensureSignedIn()) return;
+    await _repository.setRecommendationExclusion(
+      exclusionType: 'user',
+      targetId: summary.userId,
+      excluded: true,
+    );
+    if (!mounted) return;
+    setState(
+      () => _collections.removeWhere((c) => c.userId == summary.userId),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -1613,6 +2101,11 @@ class _CollectionTabState extends State<_CollectionTab> {
                     mine ? () => _toggleCollectionVisibility(summary) : null,
                 onDelete: mine ? () => _deleteCollection(summary) : null,
                 onUpdate: mine ? () => _updateCollection(summary) : null,
+                onWatchLater: () => _toggleCollectionWatchLater(summary),
+                onShare: () => _openCollectionShareSheet(summary),
+                onReport: () => _reportCollection(summary),
+                onNotInterested: () => _notInterestedInCollection(summary),
+                onDontRecommend: () => _dontRecommendCollectionUser(summary),
               );
             },
           );
@@ -1627,6 +2120,11 @@ class _CollectionFeedTile extends StatelessWidget {
     required this.summary,
     required this.onTap,
     required this.isMine,
+    required this.onWatchLater,
+    required this.onShare,
+    required this.onReport,
+    required this.onNotInterested,
+    required this.onDontRecommend,
     this.onUpdate,
     this.onDelete,
     this.onToggleVisibility,
@@ -1635,6 +2133,11 @@ class _CollectionFeedTile extends StatelessWidget {
   final CollectionSummary summary;
   final VoidCallback onTap;
   final bool isMine;
+  final VoidCallback onWatchLater;
+  final VoidCallback onShare;
+  final VoidCallback onReport;
+  final VoidCallback onNotInterested;
+  final VoidCallback onDontRecommend;
   final VoidCallback? onUpdate;
   final VoidCallback? onDelete;
   final VoidCallback? onToggleVisibility;
@@ -1674,56 +2177,94 @@ class _CollectionFeedTile extends StatelessWidget {
           children: [
             AspectRatio(
               aspectRatio: 16 / 9,
-              child: ClipRRect(
-                borderRadius: cardRadius,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    IgnorePointer(child: preview),
-                    if (isMine)
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: PopupMenuButton<String>(
-                          tooltip: 'Collection actions',
-                          color: cs.surfaceContainerHighest,
-                          onSelected: (value) {
-                            if (value == 'update') onUpdate?.call();
-                            if (value == 'visibility') onToggleVisibility?.call();
-                            if (value == 'delete') onDelete?.call();
-                          },
-                          itemBuilder: (context) => [
-                            const PopupMenuItem<String>(
-                              value: 'update',
-                              child: Text('Update'),
-                            ),
-                            PopupMenuItem<String>(
-                              value: 'visibility',
-                              child: Text(
-                                summary.published ? 'Make Private' : 'Make Public',
-                              ),
-                            ),
-                            const PopupMenuItem<String>(
-                              value: 'delete',
-                              child: Text('Delete'),
-                            ),
-                          ],
-                          icon: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.35),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.more_vert,
-                              color: Colors.white,
-                              size: 18,
+              child: Stack(
+                clipBehavior: Clip.none,
+                fit: StackFit.expand,
+                children: [
+                  IgnorePointer(child: preview),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: PopupMenuButton<String>(
+                      tooltip: 'Collection actions',
+                      color: cs.surfaceContainerHighest,
+                      onSelected: (value) {
+                        if (value == 'watch_later') onWatchLater();
+                        if (value == 'share') onShare();
+                        if (value == 'report') onReport();
+                        if (value == 'not_interested') onNotInterested();
+                        if (value == 'dont_recommend') onDontRecommend();
+                        if (value == 'update') onUpdate?.call();
+                        if (value == 'visibility') onToggleVisibility?.call();
+                        if (value == 'delete') onDelete?.call();
+                      },
+                      itemBuilder: (context) {
+                        final items = <PopupMenuEntry<String>>[
+                          PopupMenuItem<String>(
+                            value: 'watch_later',
+                            child: Text(
+                              summary.isWatchLater
+                                  ? 'Remove from Watch Later'
+                                  : 'Watch Later',
                             ),
                           ),
+                          const PopupMenuItem<String>(
+                            value: 'share',
+                            child: Text('Share'),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'report',
+                            child: Text('Report'),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'not_interested',
+                            child: Text('Not interested'),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'dont_recommend',
+                            child: Text('Don\'t recommend channel'),
+                          ),
+                        ];
+                        if (isMine) {
+                          items.addAll(
+                            <PopupMenuEntry<String>>[
+                              const PopupMenuDivider(),
+                              const PopupMenuItem<String>(
+                                value: 'update',
+                                child: Text('Update'),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'visibility',
+                                child: Text(
+                                  summary.published
+                                      ? 'Make Private'
+                                      : 'Make Public',
+                                ),
+                              ),
+                              const PopupMenuItem<String>(
+                                value: 'delete',
+                                child: Text('Delete'),
+                              ),
+                            ],
+                          );
+                        }
+                        return items;
+                      },
+                      icon: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.more_vert,
+                          color: Colors.white,
+                          size: 18,
                         ),
                       ),
-                  ],
-                ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 8),
@@ -1769,6 +2310,11 @@ class _FeedTile extends StatelessWidget {
     required this.post,
     required this.onTap,
     required this.isMine,
+    required this.onWatchLater,
+    required this.onShare,
+    required this.onReport,
+    required this.onNotInterested,
+    required this.onDontRecommend,
     this.onEdit,
     this.onDelete,
     this.onToggleVisibility,
@@ -1777,6 +2323,11 @@ class _FeedTile extends StatelessWidget {
   final FeedPost post;
   final VoidCallback onTap;
   final bool isMine;
+  final VoidCallback onWatchLater;
+  final VoidCallback onShare;
+  final VoidCallback onReport;
+  final VoidCallback onNotInterested;
+  final VoidCallback onDontRecommend;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
   final VoidCallback? onToggleVisibility;
@@ -1807,56 +2358,94 @@ class _FeedTile extends StatelessWidget {
           children: [
             AspectRatio(
               aspectRatio: 16 / 9,
-              child: ClipRRect(
-                borderRadius: cardRadius,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    IgnorePointer(child: preview),
-                    if (isMine)
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: PopupMenuButton<String>(
-                          tooltip: 'Post actions',
-                          color: cs.surfaceContainerHighest,
-                          onSelected: (value) {
-                            if (value == 'edit') onEdit?.call();
-                            if (value == 'visibility') onToggleVisibility?.call();
-                            if (value == 'delete') onDelete?.call();
-                          },
-                          itemBuilder: (context) => [
-                            const PopupMenuItem<String>(
-                              value: 'edit',
-                              child: Text('Update'),
-                            ),
-                            PopupMenuItem<String>(
-                              value: 'visibility',
-                              child: Text(
-                                post.preset.isPublic ? 'Make Private' : 'Make Public',
-                              ),
-                            ),
-                            const PopupMenuItem<String>(
-                              value: 'delete',
-                              child: Text('Delete'),
-                            ),
-                          ],
-                          icon: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.35),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.more_vert,
-                              color: Colors.white,
-                              size: 18,
+              child: Stack(
+                clipBehavior: Clip.none,
+                fit: StackFit.expand,
+                children: [
+                  IgnorePointer(child: preview),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: PopupMenuButton<String>(
+                      tooltip: 'Post actions',
+                      color: cs.surfaceContainerHighest,
+                      onSelected: (value) {
+                        if (value == 'watch_later') onWatchLater();
+                        if (value == 'share') onShare();
+                        if (value == 'report') onReport();
+                        if (value == 'not_interested') onNotInterested();
+                        if (value == 'dont_recommend') onDontRecommend();
+                        if (value == 'edit') onEdit?.call();
+                        if (value == 'visibility') onToggleVisibility?.call();
+                        if (value == 'delete') onDelete?.call();
+                      },
+                      itemBuilder: (context) {
+                        final items = <PopupMenuEntry<String>>[
+                          PopupMenuItem<String>(
+                            value: 'watch_later',
+                            child: Text(
+                              post.isWatchLater
+                                  ? 'Remove from Watch Later'
+                                  : 'Watch Later',
                             ),
                           ),
+                          const PopupMenuItem<String>(
+                            value: 'share',
+                            child: Text('Share'),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'report',
+                            child: Text('Report'),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'not_interested',
+                            child: Text('Not interested'),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'dont_recommend',
+                            child: Text('Don\'t recommend channel'),
+                          ),
+                        ];
+                        if (isMine) {
+                          items.addAll(
+                            <PopupMenuEntry<String>>[
+                              const PopupMenuDivider(),
+                              const PopupMenuItem<String>(
+                                value: 'edit',
+                                child: Text('Update'),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'visibility',
+                                child: Text(
+                                  post.preset.isPublic
+                                      ? 'Make Private'
+                                      : 'Make Public',
+                                ),
+                              ),
+                              const PopupMenuItem<String>(
+                                value: 'delete',
+                                child: Text('Delete'),
+                              ),
+                            ],
+                          );
+                        }
+                        return items;
+                      },
+                      icon: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.more_vert,
+                          color: Colors.white,
+                          size: 18,
                         ),
                       ),
-                  ],
-                ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 8),
@@ -1919,15 +2508,18 @@ class _GridPresetPreview extends StatelessWidget {
     );
 
     if (adapted.scene.isEmpty) {
-      return DecoratedBox(
-        decoration: BoxDecoration(color: cs.surfaceContainerLow),
-        child: Center(
-          child: Icon(
-            adapted.mode == '3d'
-                ? Icons.view_in_ar_outlined
-                : Icons.layers_outlined,
-            color: cs.onSurfaceVariant,
-            size: 28,
+      return ClipRRect(
+        borderRadius: borderRadius,
+        child: DecoratedBox(
+          decoration: BoxDecoration(color: cs.surfaceContainerLow),
+          child: Center(
+            child: Icon(
+              adapted.mode == '3d'
+                  ? Icons.view_in_ar_outlined
+                  : Icons.layers_outlined,
+              color: cs.onSurfaceVariant,
+              size: 28,
+            ),
           ),
         ),
       );
@@ -3391,36 +3983,78 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   List<String> _studio2DLayerKeys() {
     final scene = _studio2DScene();
     final keys = scene.entries
-        .where((e) => e.key != 'turning_point' && e.value is Map)
+        .where((e) => e.value is Map)
         .map((e) => e.key)
         .toList();
     keys.sort((a, b) {
       final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
       final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
-      return aOrder.compareTo(bOrder);
+      final int cmp = aOrder.compareTo(bOrder);
+      if (cmp != 0) return cmp;
+      if (a == 'turning_point' && b != 'turning_point') return 1;
+      if (b == 'turning_point' && a != 'turning_point') return -1;
+      return a.compareTo(b);
     });
     return keys;
   }
 
   void _ensureStudio2DSelection() {
     final keys = _studio2DLayerKeys();
-    if (keys.isEmpty) {
+    final selectable = keys.where((k) => k != 'turning_point').toList();
+    if (selectable.isEmpty) {
       _studioSelected2dLayerKey = null;
       return;
     }
     if (_studioSelected2dLayerKey != null &&
-        keys.contains(_studioSelected2dLayerKey)) {
+        selectable.contains(_studioSelected2dLayerKey)) {
       return;
     }
-    _studioSelected2dLayerKey = keys.first;
+    _studioSelected2dLayerKey = selectable.first;
+  }
+
+  String _studioLayerPrefixFromImageSource(String imageUrl) {
+    final String trimmed = imageUrl.trim();
+    if (trimmed.isEmpty) return 'layer_';
+    try {
+      final Uri uri = Uri.parse(trimmed);
+      String candidate = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : trimmed.split('/').last;
+      if (candidate.isEmpty) return 'layer_';
+      candidate = Uri.decodeComponent(candidate);
+      candidate = candidate.split('?').first.split('#').first;
+      final int dot = candidate.lastIndexOf('.');
+      if (dot > 0) {
+        candidate = candidate.substring(0, dot);
+      }
+      candidate = candidate.trim();
+      if (candidate.isEmpty) return 'layer_';
+      return '${candidate}_';
+    } catch (_) {
+      final String fallback = trimmed.split('/').last.split('?').first;
+      if (fallback.isEmpty) return 'layer_';
+      final int dot = fallback.lastIndexOf('.');
+      final String raw =
+          dot > 0 ? fallback.substring(0, dot).trim() : fallback.trim();
+      return raw.isEmpty ? 'layer_' : '${raw}_';
+    }
   }
 
   String _nextStudio2DLayerKey(String prefix, Map<String, dynamic> scene) {
+    String sanitized = prefix.trim();
+    if (sanitized.isEmpty) sanitized = 'layer_';
+    sanitized = sanitized
+        .replaceAll(RegExp(r'[^A-Za-z0-9_]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .toLowerCase();
+    if (!sanitized.endsWith('_')) {
+      sanitized = '${sanitized}_';
+    }
     int index = 1;
-    while (scene.containsKey('$prefix$index')) {
+    while (scene.containsKey('$sanitized$index')) {
       index++;
     }
-    return '$prefix$index';
+    return '$sanitized$index';
   }
 
   void _normalizeStudio2DOrder(Map<String, dynamic> scene) {
@@ -3444,8 +4078,10 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     final scene = _studio2DScene();
     final keys = _studio2DLayerKeys();
     if (oldIndex < 0 || oldIndex >= keys.length) return;
+    if (keys[oldIndex] == 'turning_point') return;
     if (newIndex > oldIndex) newIndex -= 1;
     if (newIndex < 0 || newIndex >= keys.length) return;
+    if (keys[newIndex] == 'turning_point') return;
     final moved = keys.removeAt(oldIndex);
     keys.insert(newIndex, moved);
     for (int i = 0; i < keys.length; i++) {
@@ -3459,11 +4095,44 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     _applyStudioPayload(payload);
   }
 
-  void _studioAdd2DLayer(bool textLayer, {String imageUrl = ''}) {
+  void _studioAdd2DLayer(
+    bool textLayer, {
+    String imageUrl = '',
+    String sourceName = '',
+  }) {
     final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
     final scene = _studio2DScene();
+    if (!scene.containsKey('turning_point')) {
+      scene['turning_point'] = <String, dynamic>{
+        'x': 0.0,
+        'y': 0.0,
+        'scale': 1.0,
+        'order': 0.0,
+        'isVisible': false,
+        'isLocked': true,
+        'isText': false,
+        'canShift': false,
+        'canZoom': false,
+        'canTilt': false,
+        'minScale': 0.1,
+        'maxScale': 5.0,
+        'minX': -3000.0,
+        'maxX': 3000.0,
+        'minY': -3000.0,
+        'maxY': 3000.0,
+        'shiftSensMult': 1.0,
+        'zoomSensMult': 1.0,
+        'url': '',
+      };
+    }
     _normalizeStudio2DOrder(scene);
-    final key = _nextStudio2DLayerKey(textLayer ? 'text_' : 'layer_', scene);
+    final String inferredSource = sourceName.trim().isNotEmpty
+        ? sourceName.trim()
+        : imageUrl;
+    final String prefix = textLayer
+        ? 'text_'
+        : _studioLayerPrefixFromImageSource(inferredSource);
+    final key = _nextStudio2DLayerKey(prefix, scene);
     scene[key] = <String, dynamic>{
       'x': 0.0,
       'y': 0.0,
@@ -3611,7 +4280,11 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         folder: 'studio-layers',
       );
       if (!mounted) return;
-      _studioAdd2DLayer(false, imageUrl: publicUrl);
+      _studioAdd2DLayer(
+        false,
+        imageUrl: publicUrl,
+        sourceName: picked.name,
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Image uploaded to studio layer.')),
       );
@@ -4003,13 +4676,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           : <String, dynamic>{};
       _ensureStudio2DSelection();
       return Container(
-        width: 320,
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.58),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+          color: cs.surface,
+          border: Border(
+            left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
+          ),
         ),
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -4423,13 +5096,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     }();
 
     return Container(
-      width: 320,
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.58),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+        color: cs.surface,
+        border: Border(
+          left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
+        ),
       ),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -5439,7 +6112,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 right: 12,
                 top: 132,
                 bottom: 12,
-                width: 320,
+                width: 430,
                 child: IgnorePointer(
                   ignoring: !_studioChromeVisible,
                   child: AnimatedSlide(
@@ -6072,6 +6745,33 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
 
   CollectionSummary? get _activeSummary => _detail?.summary ?? widget.initialSummary;
 
+  Future<void> _shareCollectionToUser() async {
+    if (!await _requireAuthAction()) return;
+    final summary = _activeSummary;
+    if (summary == null || !mounted) return;
+    final profile = await showDialog<AppUserProfile>(
+      context: context,
+      builder: (context) =>
+          const _ProfilePickerDialog(title: 'Share Collection to User'),
+    );
+    if (profile == null) return;
+    try {
+      await _repository.shareCollectionToUser(
+        recipientUserId: profile.userId,
+        summary: summary,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Collection shared successfully.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Share failed: $e')),
+      );
+    }
+  }
+
   Future<void> _copyCollectionLinkToClipboard() async {
     final summary = _activeSummary;
     if (summary == null) return;
@@ -6114,6 +6814,14 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         child: ListView(
           shrinkWrap: true,
           children: [
+            ListTile(
+              leading: const Icon(Icons.person_add_alt_1_outlined),
+              title: const Text('Share to user'),
+              onTap: () {
+                Navigator.pop(context);
+                _shareCollectionToUser();
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.link),
               title: const Text('Copy link'),
@@ -6551,6 +7259,13 @@ class _ProfileTab extends StatefulWidget {
   State<_ProfileTab> createState() => _ProfileTabState();
 }
 
+enum _SavedGridFilter {
+  all,
+  savedPosts,
+  savedCollections,
+  watchLater,
+}
+
 class _ProfileTabState extends State<_ProfileTab> {
   final AppRepository _repository = AppRepository.instance;
 
@@ -6562,9 +7277,11 @@ class _ProfileTabState extends State<_ProfileTab> {
     postsCount: 0,
   );
   List<RenderPreset> _saved = const <RenderPreset>[];
+  List<CollectionSummary> _savedCollections = const <CollectionSummary>[];
   List<RenderPreset> _posts = const <RenderPreset>[];
   List<RenderPreset> _history = const <RenderPreset>[];
   List<WatchLaterItem> _watchLater = const <WatchLaterItem>[];
+  _SavedGridFilter _savedFilter = _SavedGridFilter.all;
 
   @override
   void initState() {
@@ -6580,6 +7297,8 @@ class _ProfileTabState extends State<_ProfileTab> {
     final profile = await _repository.ensureCurrentProfile();
     final stats = await _repository.fetchProfileStats(user.id);
     final saved = await _repository.fetchSavedPresetsForCurrentUser();
+    final savedCollections =
+        await _repository.fetchSavedCollectionsForCurrentUser();
     final posts = await _repository.fetchUserPosts(user.id);
     final history = await _repository.fetchHistoryPresetsForCurrentUser();
     final watchLater = await _repository.fetchWatchLaterForCurrentUser();
@@ -6589,6 +7308,7 @@ class _ProfileTabState extends State<_ProfileTab> {
       _profile = profile;
       _stats = stats;
       _saved = saved;
+      _savedCollections = savedCollections;
       _posts = posts;
       _history = history;
       _watchLater = watchLater;
@@ -6647,6 +7367,271 @@ class _ProfileTabState extends State<_ProfileTab> {
     Navigator.pushReplacementNamed(context, '/feed');
   }
 
+  List<Map<String, dynamic>> _savedEntries() {
+    final List<Map<String, dynamic>> entries = <Map<String, dynamic>>[];
+    final Set<String> dedupe = <String>{};
+
+    for (final preset in _saved) {
+      final key = 'saved_post:${preset.id}';
+      if (!dedupe.add(key)) continue;
+      entries.add(
+        <String, dynamic>{
+          'key': key,
+          'kind': 'saved_post',
+          'createdAt': preset.updatedAt,
+          'preset': preset,
+        },
+      );
+    }
+    for (final summary in _savedCollections) {
+      final key = 'saved_collection:${summary.id}';
+      if (!dedupe.add(key)) continue;
+      entries.add(
+        <String, dynamic>{
+          'key': key,
+          'kind': 'saved_collection',
+          'createdAt': summary.updatedAt,
+          'collection': summary,
+        },
+      );
+    }
+    for (final watch in _watchLater) {
+      if (watch.type == WatchLaterTargetType.collection &&
+          watch.collection != null) {
+        final summary = watch.collection!;
+        final key = 'watch_later_collection:${summary.id}';
+        if (!dedupe.add(key)) continue;
+        entries.add(
+          <String, dynamic>{
+            'key': key,
+            'kind': 'watch_later_collection',
+            'createdAt': watch.createdAt,
+            'collection': summary,
+          },
+        );
+      } else if (watch.type == WatchLaterTargetType.post && watch.post != null) {
+        final preset = watch.post!;
+        final key = 'watch_later_post:${preset.id}';
+        if (!dedupe.add(key)) continue;
+        entries.add(
+          <String, dynamic>{
+            'key': key,
+            'kind': 'watch_later_post',
+            'createdAt': watch.createdAt,
+            'preset': preset,
+          },
+        );
+      }
+    }
+
+    entries.sort((a, b) {
+      final DateTime aTime = a['createdAt'] is DateTime
+          ? a['createdAt'] as DateTime
+          : DateTime.fromMillisecondsSinceEpoch(0);
+      final DateTime bTime = b['createdAt'] is DateTime
+          ? b['createdAt'] as DateTime
+          : DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+    return entries;
+  }
+
+  List<Map<String, dynamic>> _filteredSavedEntries() {
+    final entries = _savedEntries();
+    switch (_savedFilter) {
+      case _SavedGridFilter.savedPosts:
+        return entries
+            .where((e) => (e['kind']?.toString() ?? '') == 'saved_post')
+            .toList();
+      case _SavedGridFilter.savedCollections:
+        return entries
+            .where((e) => (e['kind']?.toString() ?? '') == 'saved_collection')
+            .toList();
+      case _SavedGridFilter.watchLater:
+        return entries
+            .where(
+                (e) => (e['kind']?.toString() ?? '').startsWith('watch_later_'))
+            .toList();
+      case _SavedGridFilter.all:
+        return entries;
+    }
+  }
+
+  Widget _buildSavedUnifiedTab() {
+    final cs = Theme.of(context).colorScheme;
+    final entries = _filteredSavedEntries();
+    if (entries.isEmpty) {
+      return Center(
+        child: Text(
+          'Nothing saved yet.',
+          style: TextStyle(color: cs.onSurfaceVariant),
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double width = constraints.maxWidth;
+        int crossAxisCount = 2;
+        if (width >= 1300) {
+          crossAxisCount = 6;
+        } else if (width >= 1000) {
+          crossAxisCount = 5;
+        } else if (width >= 760) {
+          crossAxisCount = 4;
+        } else if (width >= 540) {
+          crossAxisCount = 3;
+        }
+        return Column(
+          children: [
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              child: Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('All'),
+                    selected: _savedFilter == _SavedGridFilter.all,
+                    onSelected: (_) =>
+                        setState(() => _savedFilter = _SavedGridFilter.all),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('Saved Posts'),
+                    selected: _savedFilter == _SavedGridFilter.savedPosts,
+                    onSelected: (_) => setState(
+                      () => _savedFilter = _SavedGridFilter.savedPosts,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('Saved Collections'),
+                    selected: _savedFilter == _SavedGridFilter.savedCollections,
+                    onSelected: (_) => setState(
+                      () => _savedFilter = _SavedGridFilter.savedCollections,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('Watch Later'),
+                    selected: _savedFilter == _SavedGridFilter.watchLater,
+                    onSelected: (_) => setState(
+                      () => _savedFilter = _SavedGridFilter.watchLater,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: GridView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                itemCount: entries.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: 1,
+                ),
+                itemBuilder: (context, index) {
+                  final entry = entries[index];
+                  final RenderPreset? preset =
+                      entry['preset'] as RenderPreset?;
+                  final CollectionSummary? collection =
+                      entry['collection'] as CollectionSummary?;
+                  final bool isCollection = collection != null;
+                  final String title = isCollection
+                      ? (collection.name.isEmpty
+                          ? 'Collection'
+                          : collection.name)
+                      : ((preset?.title.trim().isNotEmpty == true)
+                          ? preset!.title.trim()
+                          : (preset?.name ?? 'Post'));
+                  final String mode = isCollection
+                      ? (collection.thumbnailMode ??
+                          collection.firstItem?.mode ??
+                          '2d')
+                      : (preset?.thumbnailMode ?? preset?.mode ?? '2d');
+                  final Map<String, dynamic> payload = isCollection
+                      ? (collection.thumbnailPayload.isNotEmpty
+                          ? collection.thumbnailPayload
+                          : (collection.firstItem?.snapshot ??
+                              const <String, dynamic>{}))
+                      : ((preset?.thumbnailPayload.isNotEmpty == true)
+                          ? preset!.thumbnailPayload
+                          : (preset?.payload ?? const <String, dynamic>{}));
+                  final String kind = entry['kind']?.toString() ?? '';
+                  final String meta = switch (kind) {
+                    'saved_collection' => 'Saved collection',
+                    'watch_later_collection' => 'Watch later',
+                    'watch_later_post' => 'Watch later',
+                    _ => 'Saved post',
+                  };
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {
+                      if (isCollection && collection != null) {
+                        _openCollection(collection);
+                        return;
+                      }
+                      if (!isCollection && preset != null) {
+                        _openPost(preset);
+                      }
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerLow,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: cs.outline.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      padding: const EdgeInsets.all(8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: _GridPresetPreview(
+                                mode: mode,
+                                payload: payload,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: cs.onSurface,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '$meta · ${_friendlyTime(entry['createdAt'] as DateTime)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: cs.onSurfaceVariant,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -6669,7 +7654,7 @@ class _ProfileTabState extends State<_ProfileTab> {
     return Padding(
       padding: EdgeInsets.only(top: widget.topInset),
       child: DefaultTabController(
-        length: 4,
+        length: 3,
         child: Column(
           children: [
             Container(
@@ -6768,8 +7753,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               labelColor: cs.onSurface,
               unselectedLabelColor: cs.onSurfaceVariant,
               tabs: const [
-                Tab(text: 'Saved Collection'),
-                Tab(text: 'Watch Later'),
+                Tab(text: 'Saved'),
                 Tab(text: 'My Posts'),
                 Tab(text: 'History'),
               ],
@@ -6777,16 +7761,7 @@ class _ProfileTabState extends State<_ProfileTab> {
             Expanded(
               child: TabBarView(
                 children: [
-                  _PresetListView(
-                    presets: _saved,
-                    emptyMessage: 'Nothing saved yet.',
-                    onTap: _openPost,
-                  ),
-                  _WatchLaterListView(
-                    items: _watchLater,
-                    onOpenPost: _openPost,
-                    onOpenCollection: _openCollection,
-                  ),
+                  _buildSavedUnifiedTab(),
                   _PresetListView(
                     presets: _posts,
                     emptyMessage: 'No posts yet.',
@@ -8784,7 +9759,11 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         folder: 'composer-layers',
       );
       if (!mounted) return;
-      _add2DLayer(textLayer: false, imageUrl: publicUrl);
+      _add2DLayer(
+        textLayer: false,
+        imageUrl: publicUrl,
+        sourceName: picked.name,
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Image uploaded and layer added.')),
       );
@@ -8947,6 +9926,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   void _add2DLayer({
     required bool textLayer,
     String imageUrl = '',
+    String sourceName = '',
   }) {
     final scene = _thumbnail2DScene();
     if (!scene.containsKey('turning_point')) {
@@ -8972,8 +9952,11 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         'url': '',
       };
     }
+    final String inferredSource = sourceName.trim().isNotEmpty
+        ? sourceName.trim()
+        : imageUrl;
     final key = _next2DLayerKey(
-      textLayer ? 'text_' : _layerPrefixFromImageSource(imageUrl),
+      textLayer ? 'text_' : _layerPrefixFromImageSource(inferredSource),
     );
     _normalize2DOrders(scene);
     final int order = _thumbnail2DLayerKeys().length;
@@ -11374,7 +12357,7 @@ class _SettingsTabState extends State<_SettingsTab> {
   late String _themeMode;
   bool _trackerEnabled = true;
   bool _trackerUiVisible = false;
-  bool _cursorEnabled = true;
+  bool _cursorEnabled = false;
   bool _prefsLoading = true;
   TrackerRuntimeConfig _trackerConfig = TrackerRuntimeConfig.defaults;
 
@@ -11446,6 +12429,11 @@ class _SettingsTabState extends State<_SettingsTab> {
     });
     TrackingService.instance.setRuntimeConfig(next);
     await _repository.updateTrackerRuntimeConfigForCurrentUser(next);
+  }
+
+  Future<void> _setInputMode(String mode) async {
+    if (!_trackerEnabled) return;
+    await _updateTrackerConfig(_trackerConfig.copyWith(inputMode: mode));
   }
 
   Future<void> _confirmSignOut() async {
@@ -11580,6 +12568,41 @@ class _SettingsTabState extends State<_SettingsTab> {
                   ),
                   onChanged: _trackerEnabled ? _setCursorEnabled : null,
                 ),
+                const SizedBox(height: 4),
+                _settingsSectionTitle('Parallax Input Mode'),
+                SwitchListTile(
+                  value: _trackerConfig.inputMode == 'mouse_hover',
+                  title: const Text('Use mouse hover'),
+                  subtitle: const Text('Uses real mouse movement for parallax.'),
+                  onChanged: _trackerEnabled
+                      ? (value) => _setInputMode(value ? 'mouse_hover' : 'mediapipe')
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.inputMode == 'accelerometer',
+                  title: const Text('Use accelerometer'),
+                  subtitle: Text(
+                    kIsWeb
+                        ? 'Uses device accelerometer when supported.'
+                        : 'Not available on this device.',
+                  ),
+                  onChanged: (_trackerEnabled && kIsWeb)
+                      ? (value) =>
+                          _setInputMode(value ? 'accelerometer' : 'mediapipe')
+                      : null,
+                ),
+                SwitchListTile(
+                  value: _trackerConfig.inputMode == 'gyro',
+                  title: const Text('Use gyro'),
+                  subtitle: Text(
+                    kIsWeb
+                        ? 'Uses device gyroscope when supported.'
+                        : 'Not available on this device.',
+                  ),
+                  onChanged: (_trackerEnabled && kIsWeb)
+                      ? (value) => _setInputMode(value ? 'gyro' : 'mediapipe')
+                      : null,
+                ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
                   initialValue: _trackerConfig.cursorMode,
@@ -11699,6 +12722,52 @@ class _SettingsTabState extends State<_SettingsTab> {
                   onChanged: _trackerEnabled
                       ? (v) => _updateTrackerConfig(
                             _trackerConfig.copyWith(smoothing: v),
+                          )
+                      : null,
+                ),
+                _settingsSectionTitle('Head Cursor Sensitivity'),
+                _settingsSlider(
+                  label: 'Head Sensitivity X',
+                  value: _trackerConfig.headSensitivityX,
+                  min: 1,
+                  max: 10000,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(headSensitivityX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Head Sensitivity Y',
+                  value: _trackerConfig.headSensitivityY,
+                  min: 1,
+                  max: 10000,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(headSensitivityY: v),
+                          )
+                      : null,
+                ),
+                _settingsSectionTitle('Hand Cursor Sensitivity'),
+                _settingsSlider(
+                  label: 'Hand Sensitivity X',
+                  value: _trackerConfig.handSensitivityX,
+                  min: 1,
+                  max: 10000,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(handSensitivityX: v),
+                          )
+                      : null,
+                ),
+                _settingsSlider(
+                  label: 'Hand Sensitivity Y',
+                  value: _trackerConfig.handSensitivityY,
+                  min: 1,
+                  max: 10000,
+                  onChanged: _trackerEnabled
+                      ? (v) => _updateTrackerConfig(
+                            _trackerConfig.copyWith(handSensitivityY: v),
                           )
                       : null,
                 ),
@@ -12229,6 +13298,14 @@ String _friendlyTime(DateTime value) {
   if (d.inHours < 24) return '${d.inHours}h ago';
   if (d.inDays < 7) return '${d.inDays}d ago';
   return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+}
+
+String _formatDateTime(DateTime value) {
+  final String mm = value.month.toString().padLeft(2, '0');
+  final String dd = value.day.toString().padLeft(2, '0');
+  final String hh = value.hour.toString().padLeft(2, '0');
+  final String min = value.minute.toString().padLeft(2, '0');
+  return '${value.year}-$mm-$dd $hh:$min';
 }
 
 String _friendlyCount(int value) {
