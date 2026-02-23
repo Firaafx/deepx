@@ -365,8 +365,7 @@ class WindowEffect2DPreview extends StatelessWidget {
     for (final layer in layers) {
       if (layer.name == 'turning_point') return layer.order;
     }
-    if (layers.isEmpty) return 0;
-    return layers.map((e) => e.order).reduce(math.max);
+    return 0;
   }
 
   List<_LayerNode> _extractLayers(Map<String, dynamic> scene) {

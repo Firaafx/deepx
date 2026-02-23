@@ -247,19 +247,28 @@ function _readElementNumber(id, fallback) {
 }
 
 function _headSensX() {
-    return _toNumber(runtimeHeadSensitivityX, _readElementNumber('h-sens', 100));
+    const raw = _toNumber(runtimeHeadSensitivityX, _readElementNumber('h-sens', 100));
+    const normalized = Math.max(0, Math.min(1, (raw - 1) / 9999));
+    // Keep minimum sensitivity very precise and ramp progressively.
+    return 0.00018 + Math.pow(normalized, 2.7) * 0.85;
 }
 
 function _headSensY() {
-    return _toNumber(runtimeHeadSensitivityY, _readElementNumber('v-sens', 100));
+    const raw = _toNumber(runtimeHeadSensitivityY, _readElementNumber('v-sens', 100));
+    const normalized = Math.max(0, Math.min(1, (raw - 1) / 9999));
+    return 0.00018 + Math.pow(normalized, 2.7) * 0.85;
 }
 
 function _handSensX() {
-    return _toNumber(runtimeHandSensitivityX, _readElementNumber('h-sens', 500));
+    const raw = _toNumber(runtimeHandSensitivityX, _readElementNumber('h-sens', 500));
+    const normalized = Math.max(0, Math.min(1, (raw - 1) / 9999));
+    return 0.2 + (normalized * 8.8);
 }
 
 function _handSensY() {
-    return _toNumber(runtimeHandSensitivityY, _readElementNumber('v-sens', 500));
+    const raw = _toNumber(runtimeHandSensitivityY, _readElementNumber('v-sens', 500));
+    const normalized = Math.max(0, Math.min(1, (raw - 1) / 9999));
+    return 0.2 + (normalized * 8.8);
 }
 
 function applyRuntimeSettings(settings) {
@@ -1386,6 +1395,14 @@ function frameUpdate() {
         requestAnimationFrame(frameUpdate);
         return;
     }
+    if (!trackerRuntimeEnabled) {
+        if (cursor) cursor.style.display = 'none';
+        if (tCtx && tCanvas) {
+            tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
+        }
+        requestAnimationFrame(frameUpdate);
+        return;
+    }
     frameCount++;
     const now = performance.now();
     dt = now - prevTime;
@@ -1463,8 +1480,8 @@ function frameUpdate() {
                     const normalizedY = (speedY - thresholdY) / (30 - thresholdY);
                     accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
                 }
-                let cursorDeltaX = deltaYaw * baseSensH * accelX * 1;
-                let cursorDeltaY = deltaPitch * baseSensV * accelY * 2.2;
+                let cursorDeltaX = deltaYaw * baseSensH * accelX * 0.35;
+                let cursorDeltaY = deltaPitch * baseSensV * accelY * 0.7;
                 targetX += cursorDeltaX;
                 targetY += cursorDeltaY;
                 targetX = Math.max(0, Math.min(window.innerWidth, targetX));
@@ -1496,8 +1513,8 @@ function frameUpdate() {
                 const normalizedY = (speedY - thresholdY) / (30 - thresholdY);
                 accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
             }
-            let cursorDeltaX = deltaYaw * baseSensH * accelX * 2.5;
-            let cursorDeltaY = deltaPitch * baseSensV * accelY * 4.2;
+            let cursorDeltaX = deltaYaw * baseSensH * accelX * 0.45;
+            let cursorDeltaY = deltaPitch * baseSensV * accelY * 0.85;
             targetX += cursorDeltaX;
             targetY += cursorDeltaY;
             targetX = Math.max(0, Math.min(window.innerWidth, targetX));
@@ -1913,11 +1930,24 @@ function setupTrackerEvents() {
     document.getElementById('toggle-tracker-ui').onclick = toggleUI;
     document.getElementById('tracking-toggle').onchange = async (e) => {
         trackerRuntimeEnabled = e.target.checked;
+        isPaused = !trackerRuntimeEnabled;
         localStorage.setItem('tracking-toggle', trackerRuntimeEnabled);
         if (trackerRuntimeEnabled) {
             await updatePerformanceSettings();
         } else if (cameraSvc) {
             await cameraSvc.stop();
+            const webcam = document.getElementById('webcam-small');
+            const stream = webcam ? webcam.srcObject : null;
+            if (stream && typeof stream.getTracks === 'function') {
+                stream.getTracks().forEach((track) => track.stop());
+            }
+            if (webcam) webcam.srcObject = null;
+            hasHand = false;
+            handLm = null;
+            isPinching = false;
+            isWinking = false;
+            prevWinking = false;
+            winkDownSent = false;
         }
     };
     document.getElementById('show-cursor').onchange = (e) => {

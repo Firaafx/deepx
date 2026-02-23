@@ -10,7 +10,6 @@ import 'dart:js_interop';
 import 'models/preset_payload_v2.dart';
 import 'services/app_repository.dart';
 import 'services/tracking_service.dart';
-import 'services/web_file_upload.dart';
 
 class Engine3DPage extends StatefulWidget {
   const Engine3DPage({
@@ -69,7 +68,6 @@ class _Engine3DPageState extends State<Engine3DPage> {
   Timer? _saveDebounce;
   bool _iframeReady = false;
   TextEditingController presetNameController = TextEditingController();
-  bool _uploadingAsset = false;
   double headX = 0, headY = 0, yaw = 0, pitch = 0, zValue = 0.2;
   double deadZoneX = 0.0,
       deadZoneY = 0.0,
@@ -93,339 +91,12 @@ class _Engine3DPageState extends State<Engine3DPage> {
 <html>
 <head>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap');
-        body { margin: 0; background: __BODY_BG__; overflow: hidden; font-family: 'Poppins', sans-serif; color: #e0e0e0; }
-        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; }
-        /* --- 3D ENGINE PANEL (RIGHT) --- */
-        #control-panel-3d {
-            position: absolute; top: 0; right: 0; width: 300px; height: 100vh;
-            background: linear-gradient(to bottom, rgba(20,20,30,0.95), rgba(5,5,10,0.95)); backdrop-filter: blur(15px);
-            border-left: 1px solid rgba(255,255,255,0.1); padding: 16px; z-index: 1000;
-            overflow-y: auto; box-sizing: border-box; transition: transform 0.3s ease;
-            box-shadow: -2px 0 10px rgba(0,0,0,0.5);
-        }
-        #control-panel-3d.hidden { transform: translateX(300px); }
-        /* --- UI ELEMENTS --- */
-        .section { border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px; margin-bottom: 12px; }
-        .section-title { font-size: 12px; color: #ffffff; font-weight: 500; letter-spacing: 0.5px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-        .control-group { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-        .control-group div { flex: 1; }
-        label { display: block; font-size: 10px; color: #a0a0a0; margin-bottom: 4px; }
-        .val-display { color: #00e5ff; float: right; }
-        input[type=range] { width: 100%; accent-color: #651fff; cursor: pointer; }
-        input[type=text], select { width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #e0e0e0; padding: 8px; font-size: 12px; border-radius: 4px; }
-        input[type=number] { width: 60px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #e0e0e0; padding: 4px; font-size: 12px; border-radius: 4px; }
-        .btn { background: linear-gradient(135deg, #651fff, #311b92); color: white; border: none; padding: 8px 16px; width: 100%; font-weight: 500; cursor: pointer; font-size: 12px; margin-top: 4px; border-radius: 4px; transition: box-shadow 0.2s; box-shadow: 0 4px 15px rgba(101,31,255,0.4); }
-        .btn:hover { box-shadow: 0 6px 20px rgba(101,31,255,0.6); }
-        .btn-small { width: 40px; padding: 8px 0; background: linear-gradient(135deg, #ff1744, #b71c1c); color: white; margin-left: 5px; border-radius: 4px; box-shadow: 0 4px 15px rgba(244,67,54,0.4); }
-        .btn-small:hover { box-shadow: 0 6px 20px rgba(244,67,54,0.6); }
-        .btn-inc { width: 28px; padding: 4px 0; background: rgba(255,255,255,0.05); color: #00b8d4; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); }
-        .btn-inc:hover { background: rgba(255,255,255,0.1); }
-        .slider-wrap { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 160px; }
-        .slider-wrap input[type=range] { flex: 1; }
-        select option { background: #242424; color: #e0e0e0; }
-        #playback-controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1001; display: none; align-items: center; gap: 12px; background: rgba(20,20,30,0.95); padding: 8px 16px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
-        #playback-controls.hidden { display: none; }
-        .light-card { background: rgba(255,255,255,0.05); padding: 8px; border: 1px solid rgba(255,255,255,0.1); margin-top: 8px; border-radius: 4px; }
+        body { margin: 0; background: __BODY_BG__; overflow: hidden; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; inset: 0; }
     </style>
 </head>
 <body>
     <div id="canvas-container"></div>
-    <div id="control-panel-3d">
-        <div class="section">
-            <div class="section-title">Model Source</div>
-            <input type="text" id="model-url" value="https://wkpsdgedgtpsiqeyqbhi.supabase.co/storage/v1/object/public/users/tests/3d%20models/spaceship_corridor.glb">
-            <button class="btn" id="add-model-btn">Add Model</button>
-        </div>
-        <div class="section">
-            <div class="section-title">Select Model</div>
-            <div id="model-list"></div>
-            <div style="display: flex; gap: 8px; margin-top: 8px;">
-                <button class="btn" id="hide-model-btn" style="flex:1;">Hide</button>
-                <button class="btn btn-small" id="delete-model-btn">Delete</button>
-            </div>
-        </div>
-        <div class="section">
-            <div class="section-title">Model Transform <span class="val-display" id="v-scale">1.0</span></div>
-            <label>Pos X/Y/Z</label>
-            <div class="control-group">
-                <div class="slider-wrap">
-                    <input type="range" id="mPosX" min="-30000" max="30000" step="1" value="0">
-                    <input type="number" id="mPosX-num" step="0.001" value="0">
-                    <button class="btn-inc" id="mPosX-minus">-</button>
-                    <button class="btn-inc" id="mPosX-plus">+</button>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="mPosY" min="-30000" max="30000" step="1" value="0">
-                    <input type="number" id="mPosY-num" step="0.001" value="0">
-                    <button class="btn-inc" id="mPosY-minus">-</button>
-                    <button class="btn-inc" id="mPosY-plus">+</button>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="mPosZ" min="-30000" max="30000" step="1" value="0">
-                    <input type="number" id="mPosZ-num" step="0.001" value="0">
-                    <button class="btn-inc" id="mPosZ-minus">-</button>
-                    <button class="btn-inc" id="mPosZ-plus">+</button>
-                </div>
-            </div>
-            <label>Rot X/Y/Z</label>
-            <div class="control-group">
-                <div class="slider-wrap">
-                    <input type="range" id="mRotX" min="0" max="6280" step="1" value="0">
-                    <input type="number" id="mRotX-num" step="0.001" value="0">
-                    <button class="btn-inc" id="mRotX-minus">-</button>
-                    <button class="btn-inc" id="mRotX-plus">+</button>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="mRotY" min="0" max="6280" step="1" value="0">
-                    <input type="number" id="mRotY-num" step="0.001" value="0">
-                    <button class="btn-inc" id="mRotY-minus">-</button>
-                    <button class="btn-inc" id="mRotY-plus">+</button>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="mRotZ" min="0" max="6280" step="1" value="0">
-                    <input type="number" id="mRotZ-num" step="0.001" value="0">
-                    <button class="btn-inc" id="mRotZ-minus">-</button>
-                    <button class="btn-inc" id="mRotZ-plus">+</button>
-                </div>
-            </div>
-            <div class="slider-wrap">
-                <input type="range" id="mScale" min="1" max="10000" step="1" value="1000">
-                <input type="number" id="mScale-num" step="0.001" value="1">
-                <button class="btn-inc" id="mScale-minus">-</button>
-                <button class="btn-inc" id="mScale-plus">+</button>
-            </div>
-            <button class="btn" id="capture-anchor">Capture Transform</button>
-            <button class="btn" id="restore-anchor" style="background:linear-gradient(135deg, #444, #333); color:white;">Restore</button>
-        </div>
-        <div class="section">
-            <div class="section-title">Dynamic Lights <button class="btn" id="add-light-btn" style="width:80px; margin:0; font-size:10px;">Add Light</button></div>
-            <div id="lights-container"></div>
-        </div>
-        <div class="section">
-            <div class="section-title">Spatial Audio <button class="btn" id="add-audio-btn" style="width:80px; margin:0; font-size:10px;">Add Audio</button></div>
-            <div id="audios-container"></div>
-        </div>
-        <div class="section">
-            <div class="section-title">World & FX</div>
-            <label>Sun Intensity <span id="v-sun" class="val-display">2.0</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="sunIntensity" min="0" max="10" step="0.001" value="2">
-                <input type="number" id="sunIntensity-num" step="0.001" value="2">
-                <button class="btn-inc" id="sunIntensity-minus">-</button>
-                <button class="btn-inc" id="sunIntensity-plus">+</button>
-            </div>
-            <label>Ambient <span id="v-amb" class="val-display">0.5</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="ambLight" min="0" max="2" step="0.001" value="0.5">
-                <input type="number" id="ambLight-num" step="0.001" value="0.5">
-                <button class="btn-inc" id="ambLight-minus">-</button>
-                <button class="btn-inc" id="ambLight-plus">+</button>
-            </div>
-            <label>Bloom Intensity <span id="v-bi" class="val-display">1.0</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="bloomIntensity" min="0" max="4" step="0.001" value="1.0">
-                <input type="number" id="bloomIntensity-num" step="0.001" value="1.0">
-                <button class="btn-inc" id="bloomIntensity-minus">-</button>
-                <button class="btn-inc" id="bloomIntensity-plus">+</button>
-            </div>
-            <label>Shadow Quality</label>
-            <select id="shadowQuality">
-                <option value="256">Low</option>
-                <option value="512" selected>Medium</option>
-                <option value="1024">High</option>
-                <option value="2048">Ultra</option>
-            </select>
-            <label>Shadow Softness <span id="v-shadow-soft" class="val-display">1.0</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="shadowSoftness" min="0" max="5" step="0.001" value="1.0">
-                <input type="number" id="shadowSoftness-num" step="0.001" value="1.0">
-                <button class="btn-inc" id="shadowSoftness-minus">-</button>
-                <button class="btn-inc" id="shadowSoftness-plus">+</button>
-            </div>
-        </div>
-        <div class="section">
-            <div class="section-title">Sky Box</div>
-            <input type="text" id="sky-url" placeholder="HDR/EXR URL...">
-            <div style="display: flex; gap: 8px;">
-                <button class="btn" id="sky-btn" style="flex:1;">Update Sky</button>
-                <button class="btn btn-small" id="sky-clear" style="width:40px;">Clear</button>
-            </div>
-        </div>
-        <div class="section">
-            <div class="section-title">Environment Light</div>
-            <input type="text" id="env-url" placeholder="HDR/EXR URL...">
-            <div style="display: flex; gap: 8px;">
-                <button class="btn" id="env-btn" style="flex:1;">Update Env</button>
-                <button class="btn btn-small" id="env-clear" style="width:40px;">Clear</button>
-            </div>
-        </div>
-        <div class="section">
-            <div class="section-title">Env Rotation <span id="v-envRot" class="val-display">0</span></div>
-            <div class="slider-wrap">
-                <input type="range" id="envRot" min="0" max="6280" step="1" value="0">
-                <input type="number" id="envRot-num" step="0.001" value="0">
-                <button class="btn-inc" id="envRot-minus">-</button>
-                <button class="btn-inc" id="envRot-plus">+</button>
-            </div>
-        </div>
-        <div class="section">
-            <div class="section-title">Preset</div>
-            <input type="text" id="preset-name" placeholder="Preset Name">
-            <button class="btn" id="save-preset-btn">Save Preset</button>
-            <select id="preset-select">
-                <option value="">Load Preset</option>
-            </select>
-            <button class="btn" id="load-preset-btn">Load</button>
-        </div>
-        <div class="section">
-            <div class="section-title">Initial Camera Position</div>
-            <label>Pos X/Y/Z</label>
-            <div class="control-group">
-                <div class="slider-wrap">
-                    <input type="range" id="initPosX" min="-30000" max="30000" step="1" value="0">
-                    <input type="number" id="initPosX-num" step="0.001" value="0">
-                    <button class="btn-inc" id="initPosX-minus">-</button>
-                    <button class="btn-inc" id="initPosX-plus">+</button>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="initPosY" min="-30000" max="30000" step="1" value="2000">
-                    <input type="number" id="initPosY-num" step="0.001" value="2">
-                    <button class="btn-inc" id="initPosY-minus">-</button>
-                    <button class="btn-inc" id="initPosY-plus">+</button>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="initPosZ" min="-30000" max="30000" step="1" value="10000">
-                    <input type="number" id="initPosZ-num" step="0.001" value="10">
-                    <button class="btn-inc" id="initPosZ-minus">-</button>
-                    <button class="btn-inc" id="initPosZ-plus">+</button>
-                </div>
-            </div>
-            <label>Rot X/Y/Z</label>
-            <div class="control-group">
-                <div class="slider-wrap">
-                    <input type="range" id="initRotX" min="-6280" max="6280" step="1" value="0">
-                    <input type="number" id="initRotX-num" step="0.001" value="0">
-                    <button class="btn-inc" id="initRotX-minus">-</button>
-                    <button class="btn-inc" id="initRotX-plus">+</button>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="initRotY" min="-6280" max="6280" step="1" value="0">
-                    <input type="number" id="initRotY-num" step="0.001" value="0">
-                    <button class="btn-inc" id="initRotY-minus">-</button>
-                    <button class="btn-inc" id="initRotY-plus">+</button>
-                </div>
-                <div class="slider-wrap">
-                    <input type="range" id="initRotZ" min="-6280" max="6280" step="1" value="0">
-                    <input type="number" id="initRotZ-num" step="0.001" value="0">
-                    <button class="btn-inc" id="initRotZ-minus">-</button>
-                    <button class="btn-inc" id="initRotZ-plus">+</button>
-                </div>
-            </div>
-        </div>
-        <div class="section">
-            <div class="section-title">Tracking Settings</div>
-            <label>Camera Mode</label>
-            <select id="camera-mode">
-                <option value="orbit">Orbit-style</option>
-                <option value="fps">FPS-style</option>
-                <option value="free">Free-fly style</option>
-            </select>
-            <div style="display:flex; justify-content:space-between; margin-top:8px;">
-                <label>Manual Control</label>
-                <input type="checkbox" id="manual-mode">
-            </div>
-            <div style="display:flex; justify-content:space-between; margin-top:8px;">
-                <label>Show Tracker</label>
-                <input type="checkbox" id="show-tracker">
-            </div>
-            <label>Dead Zone X <span id="dz-x-val" class="val-display">0.0</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="dz-x" min="0.001" max="0.1" step="0.001" value="0.0">
-                <input type="number" id="dz-x-num" step="0.001" value="0.0">
-                <button class="btn-inc" id="dz-x-minus">-</button>
-                <button class="btn-inc" id="dz-x-plus">+</button>
-            </div>
-            <label>Dead Zone Y <span id="dz-y-val" class="val-display">0.0</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="dz-y" min="0.001" max="0.1" step="0.001" value="0.0">
-                <input type="number" id="dz-y-num" step="0.001" value="0.0">
-                <button class="btn-inc" id="dz-y-minus">-</button>
-                <button class="btn-inc" id="dz-y-plus">+</button>
-            </div>
-            <label>Dead Zone Z <span id="dz-z-val" class="val-display">0.0</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="dz-z" min="0.001" max="0.1" step="0.001" value="0.0">
-                <input type="number" id="dz-z-num" step="0.001" value="0.0">
-                <button class="btn-inc" id="dz-z-minus">-</button>
-                <button class="btn-inc" id="dz-z-plus">+</button>
-            </div>
-            <label>Dead Zone Yaw <span id="dz-yaw-val" class="val-display">0.0</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="dz-yaw" min="0.0" max="10.0" step="0.1" value="0.0">
-                <input type="number" id="dz-yaw-num" step="0.1" value="0.0">
-                <button class="btn-inc" id="dz-yaw-minus">-</button>
-                <button class="btn-inc" id="dz-yaw-plus">+</button>
-            </div>
-            <label>Dead Zone Pitch <span id="dz-pitch-val" class="val-display">0.0</span></label>
-            <div class="slider-wrap">
-                <input type="range" id="dz-pitch" min="0.0" max="10.0" step="0.1" value="0.0">
-                <input type="number" id="dz-pitch-num" step="0.1" value="0.0">
-                <button class="btn-inc" id="dz-pitch-minus">-</button>
-                <button class="btn-inc" id="dz-pitch-plus">+</button>
-            </div>
-            <button class="btn" id="anchor-center">Anchor Center</button>
-            <div id="manual-controls" style="display:none;">
-                <label>Head X <span id="head-x-val" class="val-display">0.0</span></label>
-                <div class="slider-wrap">
-                    <input type="range" id="head-x" min="-1" max="1" step="0.001" value="0">
-                    <input type="number" id="head-x-num" step="0.001" value="0">
-                    <button class="btn-inc" id="head-x-minus">-</button>
-                    <button class="btn-inc" id="head-x-plus">+</button>
-                </div>
-                <label>Head Y <span id="head-y-val" class="val-display">0.0</span></label>
-                <div class="slider-wrap">
-                    <input type="range" id="head-y" min="-1" max="1" step="0.001" value="0">
-                    <input type="number" id="head-y-num" step="0.001" value="0">
-                    <button class="btn-inc" id="head-y-minus">-</button>
-                    <button class="btn-inc" id="head-y-plus">+</button>
-                </div>
-                <label>Z Value <span id="z-value-val" class="val-display">0.2</span></label>
-                <div class="slider-wrap">
-                    <input type="range" id="z-value" min="0.1" max="0.3" step="0.001" value="0.2">
-                    <input type="number" id="z-value-num" step="0.001" value="0.2">
-                    <button class="btn-inc" id="z-value-minus">-</button>
-                    <button class="btn-inc" id="z-value-plus">+</button>
-                </div>
-                <label>Yaw <span id="yaw-val" class="val-display">0.0</span></label>
-                <div class="slider-wrap">
-                    <input type="range" id="yaw" min="-60" max="60" step="0.1" value="0">
-                    <input type="number" id="yaw-num" step="0.1" value="0">
-                    <button class="btn-inc" id="yaw-minus">-</button>
-                    <button class="btn-inc" id="yaw-plus">+</button>
-                </div>
-                <label>Pitch <span id="pitch-val" class="val-display">0.0</span></label>
-                <div class="slider-wrap">
-                    <input type="range" id="pitch" min="-40" max="40" step="0.1" value="0">
-                    <input type="number" id="pitch-num" step="0.1" value="0">
-                    <button class="btn-inc" id="pitch-minus">-</button>
-                    <button class="btn-inc" id="pitch-plus">+</button>
-                </div>
-            </div>
-        </div>
-        <div class="section">
-            <button class="btn" id="switch-2d">2D Mode</button>
-        </div>
-    </div>
-    <div id="toggle-btns">
-        <button class="btn" id="toggle-3d-ui" style="width:120px;">Engine UI</button>
-    </div>
-    <div id="playback-controls" class="hidden">
-        <button id="play-pause" class="btn" style="width:80px;">Play</button>
-        <input type="range" id="progress" min="0" max="100" value="0" style="width:200px;">
-        <span id="timer">0:00 / 0:00</span>
-        <button id="restart" class="btn btn-small">Restart</button>
-    </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script type="importmap">
     {
@@ -492,6 +163,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
         let mouseYawOffset = 0;
         let mousePitchOffset = 0;
         let mouseZoomOffset = 0;
+        let shadowQualityValue = '512';
+        let snapshotRevision = 0;
         function emitToParent(payload) {
             window.parent.postMessage(JSON.stringify({ ...payload, channel: BRIDGE_CHANNEL }), '*');
         }
@@ -503,7 +176,14 @@ class _Engine3DPageState extends State<Engine3DPage> {
             emitToParent({ type: 'engine_setting', key, value: String(value) });
         }
         function pushStateSnapshot() {
-            emitToParent({ type: 'engine_snapshot', state: getCurrentState() });
+            snapshotRevision += 1;
+            emitToParent({
+                type: 'engine_snapshot',
+                kind: 'full',
+                revision: snapshotRevision,
+                sceneDelta: getCurrentState(),
+                settingsDelta: { ...persistedSettings },
+            });
         }
         function applyGlobalTrackingConfig(enabled) {
             useGlobalTracking = !!enabled;
@@ -610,11 +290,6 @@ class _Engine3DPageState extends State<Engine3DPage> {
             renderer.setAnimationLoop(animate);
             document.getElementById('canvas-container').appendChild(renderer.domElement);
             setupMouseCameraControls(renderer.domElement);
-            if (CLEAN_VIEW || HIDE_PANEL) {
-                document.getElementById('control-panel-3d').style.display = 'none';
-                document.getElementById('toggle-btns').style.display = 'none';
-                document.getElementById('playback-controls').style.display = 'none';
-            }
             ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
             scene.add(ambientLight);
             sun = new THREE.DirectionalLight(0xffffff, 2);
@@ -652,10 +327,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
                   convolver.buffer = decoded;
                 }).catch(e => console.error('Failed to load IR', e));
             }
-            setupEngineEvents();
             loadSettings();
-            updatePresetSelect();
-            updateModelList();
             window.addEventListener('message', (event) => {
                 try {
                     let data = event.data;
@@ -668,37 +340,98 @@ class _Engine3DPageState extends State<Engine3DPage> {
                         disposeEngine();
                         return;
                     }
-                    if (data.type === 'hydrate_engine') {
-                        persistedSettings = data.settings || {};
-                        presets = data.presets || {};
+                    if (data.type === 'bootstrap_state') {
+                        const incomingSettings = data.settings || {};
+                        persistedSettings = { ...persistedSettings, ...incomingSettings };
+                        presets = data.presets || presets || {};
                         loadSettings();
                         updatePresetSelect();
-                        if (data.sceneState) {
-                            applyState(data.sceneState);
+                        const incomingScene = data.scene || data.sceneState;
+                        if (incomingScene) {
+                            applyState(incomingScene);
+                        } else {
+                            pushStateSnapshot();
                         }
+                        return;
+                    }
+                    if (data.type === 'apply_scene_patch') {
+                        const patch = data.patch || data.scene || data.sceneState;
+                        if (patch) {
+                            applyState(patch);
+                        } else {
+                            pushStateSnapshot();
+                        }
+                        return;
+                    }
+                    if (data.type === 'apply_settings_patch') {
+                        const patch = data.patch || data.settings || {};
+                        persistedSettings = { ...persistedSettings, ...patch };
+                        loadSettings();
+                        pushStateSnapshot();
                         return;
                     }
                     if (data.type === 'global_tracking_config') {
                         applyGlobalTrackingConfig(data.useGlobal === true);
                         return;
                     }
-                    if (data.type === 'load_preset_state') {
-                        if (data.state) {
-                            applyState(data.state);
-                        }
+                    if (data.type === 'snapshot_request') {
+                        pushStateSnapshot();
                         return;
                     }
-                    if (data.type === 'external_add_model') {
-                        if (data.url) {
-                            addModel(data.url).then(() => pushStateSnapshot());
+                    if (data.type === 'entity_add' || data.type === 'external_add_model' || data.type === 'external_add_audio') {
+                        const entityType = (data.entityType || (data.type === 'external_add_audio' ? 'audio' : 'model')).toString().toLowerCase();
+                        if (entityType === 'model') {
+                            const modelUrl = data.url || (data.entity && data.entity.url) || '';
+                            if (modelUrl) {
+                                addModel(modelUrl, data.entity || null).then(() => pushStateSnapshot());
+                            }
+                            return;
                         }
-                        return;
-                    }
-                    if (data.type === 'external_add_audio') {
-                        if (data.url) {
-                            addSpatialAudio(data.url);
+                        if (entityType === 'audio') {
+                            const audioUrl = data.url || (data.entity && data.entity.url) || '';
+                            if (audioUrl) {
+                                addSpatialAudio(audioUrl, data.entity || null);
+                                pushStateSnapshot();
+                            }
+                            return;
+                        }
+                        if (entityType === 'light') {
+                            addPointLight(data.entity || null);
                             pushStateSnapshot();
                         }
+                        return;
+                    }
+                    if (data.type === 'entity_update' || data.type === 'entity_delete' || data.type === 'entity_reorder') {
+                        if (data.scene) {
+                            applyState(data.scene);
+                            return;
+                        }
+                        const current = getCurrentState();
+                        const listKeyForType = (type) => type === 'model' ? 'models' : (type === 'light' ? 'lights' : 'audios');
+                        const token = (data.token || '').toString();
+                        const entityType = (data.entityType || (token.includes(':') ? token.split(':')[0] : '')).toString().toLowerCase();
+                        const entityId = (data.id || (token.includes(':') ? token.split(':')[1] : '')).toString();
+                        if (!entityType || !entityId) {
+                            pushStateSnapshot();
+                            return;
+                        }
+                        const listKey = listKeyForType(entityType);
+                        const list = Array.isArray(current[listKey]) ? current[listKey].slice() : [];
+                        const idx = list.findIndex((item) => item && String(item.id || '') === entityId);
+                        if (data.type === 'entity_update' && idx >= 0) {
+                            list[idx] = { ...(list[idx] || {}), ...(data.patch || {}) };
+                            current[listKey] = list;
+                        } else if (data.type === 'entity_delete' && idx >= 0) {
+                            list.splice(idx, 1);
+                            current[listKey] = list;
+                            const removeToken = `${entityType}:${entityId}`;
+                            if (Array.isArray(current.renderOrder)) {
+                                current.renderOrder = current.renderOrder.filter((t) => t !== removeToken);
+                            }
+                        } else if (data.type === 'entity_reorder' && Array.isArray(data.order)) {
+                            current.renderOrder = data.order.map((item) => String(item));
+                        }
+                        applyState(current);
                         return;
                     }
                     if (data.type === 'external_set_sky') {
@@ -713,7 +446,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
                         }
                         return;
                     }
-                    if (data.type === 'external_reanchor') {
+                    if (data.type === 'reanchor' || data.type === 'external_reanchor') {
                         anchorHeadX = headX;
                         anchorHeadY = headY;
                         anchorZ = zValue;
@@ -722,6 +455,19 @@ class _Engine3DPageState extends State<Engine3DPage> {
                         mouseYawOffset = 0;
                         mousePitchOffset = 0;
                         mouseZoomOffset = 0;
+                        return;
+                    }
+                    if (data.type === 'tracking_patch' && data.head && typeof data.head === 'object') {
+                        const nextX = Number(data.head.x);
+                        const nextY = Number(data.head.y);
+                        const nextZ = Number(data.head.z);
+                        const nextYaw = Number(data.head.yaw);
+                        const nextPitch = Number(data.head.pitch);
+                        if (Number.isFinite(nextX)) headX = nextX;
+                        if (Number.isFinite(nextY)) headY = nextY;
+                        if (Number.isFinite(nextZ)) zValue = nextZ;
+                        if (Number.isFinite(nextYaw)) yaw = nextYaw;
+                        if (Number.isFinite(nextPitch)) pitch = nextPitch;
                         return;
                     }
                     if (data.head && typeof data.head === 'object') {
@@ -799,7 +545,10 @@ class _Engine3DPageState extends State<Engine3DPage> {
         function addModel(url, initialState = null) {
             if(!url) return Promise.resolve(null);
             const modelName = url.split('/').pop().replace(/\.[^/.]+$/, "");
-            document.getElementById('model-url').value = '';
+            const modelUrlInput = document.getElementById('model-url');
+            if (modelUrlInput && 'value' in modelUrlInput) {
+                modelUrlInput.value = '';
+            }
             return new Promise((resolve, reject) => {
                 new GLTFLoader().load(url, (gltf) => {
                     const model = gltf.scene;
@@ -1636,6 +1385,13 @@ class _Engine3DPageState extends State<Engine3DPage> {
                 fps = (frameCount / ((now - lastFpsTime) / 1000)).toFixed(1);
                 frameCount = 0;
                 lastFpsTime = now;
+                const memoryApi = performance && performance.memory ? performance.memory : null;
+                emitToParent({
+                    type: 'engine_metrics',
+                    fps: Number(fps),
+                    latency: 0,
+                    memory: memoryApi ? Number(memoryApi.usedJSHeapSize || 0) : null,
+                });
             }
             const delta = clock.getDelta();
             mixers.forEach(m => { if(m) m.update(delta); });
@@ -1754,6 +1510,356 @@ class _Engine3DPageState extends State<Engine3DPage> {
                 plus.onmouseleave = stopHold;
             }
         }
+        // Renderer-only bridge overrides.
+        function applyGlobalTrackingConfig(enabled) {
+            useGlobalTracking = !!enabled;
+            if (useGlobalTracking) {
+                showTracker = false;
+                persistedSettings['show-tracker'] = 'false';
+            }
+        }
+        function _readStoredNumber(key, fallback) {
+            const raw = getStore(key);
+            if (raw === null || raw === undefined) return fallback;
+            const next = Number(raw);
+            return Number.isFinite(next) ? next : fallback;
+        }
+        function loadSettings() {
+            cameraMode = (getStore('camera-mode') || cameraMode || 'orbit').toString();
+            manualMode = getStore('manual-mode') === 'true';
+            showTracker = getStore('show-tracker') === 'true';
+            deadZoneX = _readStoredNumber('dz-x', deadZoneX);
+            deadZoneY = _readStoredNumber('dz-y', deadZoneY);
+            deadZoneZ = _readStoredNumber('dz-z', deadZoneZ);
+            deadZoneYaw = _readStoredNumber('dz-yaw', deadZoneYaw);
+            deadZonePitch = _readStoredNumber('dz-pitch', deadZonePitch);
+            headX = _readStoredNumber('head-x', headX);
+            headY = _readStoredNumber('head-y', headY);
+            zValue = _readStoredNumber('z-value', zValue);
+            yaw = _readStoredNumber('yaw', yaw);
+            pitch = _readStoredNumber('pitch', pitch);
+            sun.intensity = _readStoredNumber('sunIntensity', sun.intensity);
+            ambientLight.intensity = _readStoredNumber('ambLight', ambientLight.intensity);
+            bloomPass.strength = _readStoredNumber('bloomIntensity', bloomPass.strength);
+            sun.shadow.radius = _readStoredNumber('shadowSoftness', sun.shadow.radius);
+            shadowQualityValue = String(getStore('shadowQuality') || shadowQualityValue || '512');
+            const parsedShadowQuality = Number.parseInt(shadowQualityValue, 10);
+            if (Number.isFinite(parsedShadowQuality) && parsedShadowQuality > 0) {
+                updateShadows(parsedShadowQuality);
+            }
+            const envRotStored = _readStoredNumber('envRot', scene.backgroundRotation?.y || 0);
+            scene.backgroundRotation.y = envRotStored;
+            scene.environmentRotation.y = envRotStored;
+            if (useGlobalTracking) {
+                showTracker = false;
+                persistedSettings['show-tracker'] = 'false';
+            }
+        }
+        function saveSettings() {
+            pushStateSnapshot();
+        }
+        function setupEngineEvents() {}
+        function setupSlider(_) {}
+        function updateModelTransform() {}
+        function loadModelTransformToSliders() {}
+        function updateModelList() {}
+        function updatePresetSelect() {}
+        function updatePlaybackVisibility() {}
+        function updateProgress() {}
+        function addPointLight(initialState = null) {
+            const id =
+                (initialState && initialState.id) ||
+                `light_${Date.now()}_${dynamicLights.length}`;
+            const colorHex = ((initialState && initialState.color) || 'ffffff').toString().replace('#', '');
+            const intensity = Number(initialState && initialState.intensity);
+            const scale = Number(initialState && initialState.scale);
+            const light = new THREE.PointLight(
+                Number.parseInt(colorHex, 16),
+                Number.isFinite(intensity) ? intensity : 10,
+                100
+            );
+            if (Array.isArray(initialState && initialState.position)) {
+                const position = initialState.position;
+                light.position.set(
+                    Number(position[0]) || 0,
+                    Number(position[1]) || 5,
+                    Number(position[2]) || 0
+                );
+            } else {
+                light.position.set(0, 5, 0);
+            }
+            light.castShadow = true;
+            const helper = new THREE.Mesh(
+                new THREE.SphereGeometry(0.35),
+                new THREE.MeshStandardMaterial({
+                    color: light.color,
+                    emissive: light.color,
+                    emissiveIntensity: 0.5,
+                }),
+            );
+            helper.layers.enable(1);
+            helper.position.copy(light.position);
+            helper.scale.setScalar(Number.isFinite(scale) ? scale : 1);
+            helper.visible = !(initialState && initialState.ghost === true);
+            const root = getRoot();
+            (root || scene).add(light);
+            (root || scene).add(helper);
+            dynamicLights.push({
+                id,
+                light,
+                helper,
+                modelIndex: currentModels.length > 0 ? 0 : -1,
+                windowLayer: (initialState && initialState.windowLayer) || 'inside',
+            });
+            return dynamicLights[dynamicLights.length - 1];
+        }
+        function addSpatialAudio(explicitUrl, initialState = null) {
+            if (!AUDIO_ENABLED) return null;
+            const url =
+                explicitUrl ||
+                (initialState && initialState.url) ||
+                '';
+            if (!url) return null;
+            const id =
+                (initialState && initialState.id) ||
+                `audio_${Date.now()}_${spatialAudios.length}`;
+            const audio = new Audio(url);
+            audio.preload = 'auto';
+            audio.crossOrigin = 'anonymous';
+            const source = audioCtx.createMediaElementSource(audio);
+            const lowpass = audioCtx.createBiquadFilter();
+            lowpass.type = 'lowpass';
+            lowpass.frequency.value = 22050;
+            const panner = audioCtx.createPanner();
+            panner.panningModel = 'HRTF';
+            panner.distanceModel = 'inverse';
+            panner.refDistance = 1;
+            panner.maxDistance = 10000;
+            panner.rolloffFactor = 1;
+            const dryGain = audioCtx.createGain();
+            const wetGain = audioCtx.createGain();
+            source.connect(lowpass);
+            lowpass.connect(panner);
+            panner.connect(dryGain);
+            dryGain.connect(audioCtx.destination);
+            if (convolver) {
+                panner.connect(convolver);
+                convolver.connect(wetGain);
+                wetGain.connect(audioCtx.destination);
+            }
+            const helper = new THREE.Mesh(
+                new THREE.SphereGeometry(0.3),
+                new THREE.MeshStandardMaterial({ color: 0x00ff88 }),
+            );
+            helper.layers.enable(1);
+            if (Array.isArray(initialState && initialState.position)) {
+                const position = initialState.position;
+                helper.position.set(
+                    Number(position[0]) || 0,
+                    Number(position[1]) || 0,
+                    Number(position[2]) || 0
+                );
+            } else {
+                helper.position.set(0, 0, 0);
+            }
+            const label = createTextSprite(
+                url.split('/').pop().replace(/\.[^/.]+$/, '') || 'audio',
+            );
+            label.position.set(0, 0.5, 0);
+            helper.add(label);
+            const root = getRoot();
+            (root || scene).add(helper);
+            const volume = Number(initialState && initialState.volume);
+            const resolvedVolume = Number.isFinite(volume) ? volume : 1;
+            dryGain.gain.value = resolvedVolume;
+            wetGain.gain.value = 0;
+            helper.visible = !(initialState && initialState.ghost === true);
+            label.visible = helper.visible;
+            const audioData = {
+                id,
+                audio,
+                source,
+                lowpass,
+                panner,
+                dryGain,
+                wetGain,
+                helper,
+                label,
+                modelIndex: currentModels.length > 0 ? 0 : -1,
+                volume: resolvedVolume,
+                windowLayer: (initialState && initialState.windowLayer) || 'inside',
+            };
+            spatialAudios.push(audioData);
+            audio.addEventListener('ended', () => {
+                activeCount--;
+                if (activeCount === 0 && isPlaying) {
+                    syncAudioTimes(0);
+                    playAll();
+                }
+            });
+            return audioData;
+        }
+        function getCurrentState() {
+            const skySource = skyTex && skyTex.source && skyTex.source.data ? skyTex.source.data : null;
+            const envSource = envTex && envTex.source && envTex.source.data ? envTex.source.data : null;
+            return {
+                models: currentModels.map((m, i) => ({
+                    id: m.userData.id || `model_${i}`,
+                    windowLayer: m.userData.windowLayer || 'inside',
+                    name: modelNames[i],
+                    url: m.userData.url,
+                    position: m.position.toArray(),
+                    rotation: m.rotation.toArray(),
+                    scale: m.scale.toArray(),
+                    visible: m.visible
+                })),
+                lights: dynamicLights.map(l => ({
+                    id: l.id,
+                    windowLayer: l.windowLayer || 'inside',
+                    color: l.light.color.getHexString(),
+                    intensity: l.light.intensity,
+                    position: l.light.position.toArray(),
+                    scale: l.helper.scale.x,
+                    ghost: !l.helper.visible
+                })),
+                audios: spatialAudios.map(a => ({
+                    id: a.id,
+                    windowLayer: a.windowLayer || 'inside',
+                    url: a.audio.src,
+                    volume: a.volume,
+                    position: a.helper.position.toArray(),
+                    ghost: !a.helper.visible
+                })),
+                renderOrder: [
+                    ...currentModels.map((m, i) => 'model:' + (m.userData.id || ('model_' + i))),
+                    ...dynamicLights.map((l) => `light:${l.id}`),
+                    ...spatialAudios.map((a) => `audio:${a.id}`),
+                ],
+                sunIntensity: sun.intensity,
+                ambLight: ambientLight.intensity,
+                bloomIntensity: bloomPass.strength,
+                shadowQuality: shadowQualityValue,
+                shadowSoftness: sun.shadow.radius,
+                skyUrl: skySource ? (skySource.currentSrc || skySource.src || null) : null,
+                envUrl: envSource ? (envSource.currentSrc || envSource.src || null) : null,
+                envRot: scene.backgroundRotation.y,
+                initPos: initPos.toArray(),
+                initRot: initRot.toArray()
+            };
+        }
+        async function applyState(state) {
+            if (!state) return;
+            while (currentModels.length > 0) {
+                const model = currentModels.pop();
+                if (model && model.parent) model.parent.remove(model);
+            }
+            modelNames = [];
+            mixers = [];
+            modelAnchors = [];
+            dynamicLights.forEach(l => {
+                if (l.light && l.light.parent) l.light.parent.remove(l.light);
+                if (l.helper && l.helper.parent) l.helper.parent.remove(l.helper);
+            });
+            dynamicLights = [];
+            spatialAudios.forEach(a => {
+                if (a.helper && a.helper.parent) a.helper.parent.remove(a.helper);
+                try { a.audio.pause(); } catch (_) {}
+                try { a.source.disconnect(); } catch (_) {}
+                try { a.lowpass.disconnect(); } catch (_) {}
+                try { a.panner.disconnect(); } catch (_) {}
+                try { a.dryGain.disconnect(); } catch (_) {}
+                try { a.wetGain.disconnect(); } catch (_) {}
+            });
+            spatialAudios = [];
+            const models = Array.isArray(state.models) ? state.models : [];
+            const lights = Array.isArray(state.lights) ? state.lights : [];
+            const audios = Array.isArray(state.audios) ? state.audios : [];
+            for (const m of models) {
+                const model = await addModel(m.url, m);
+                if (!model) continue;
+                if (Array.isArray(m.position)) model.position.fromArray(m.position);
+                if (Array.isArray(m.rotation)) model.rotation.fromArray(m.rotation);
+                if (Array.isArray(m.scale)) model.scale.fromArray(m.scale);
+                model.visible = (m.visible !== false);
+            }
+            lights.forEach((l) => addPointLight(l));
+            if (AUDIO_ENABLED) {
+                audios.forEach((a) => addSpatialAudio(a.url, a));
+            }
+            if (Number.isFinite(state.sunIntensity)) sun.intensity = state.sunIntensity;
+            if (Number.isFinite(state.ambLight)) ambientLight.intensity = state.ambLight;
+            if (Number.isFinite(state.bloomIntensity)) bloomPass.strength = state.bloomIntensity;
+            if (state.shadowQuality != null) {
+                shadowQualityValue = String(state.shadowQuality);
+                const parsedShadowQuality = Number.parseInt(shadowQualityValue, 10);
+                if (Number.isFinite(parsedShadowQuality) && parsedShadowQuality > 0) {
+                    updateShadows(parsedShadowQuality);
+                }
+            }
+            if (Number.isFinite(state.shadowSoftness)) sun.shadow.radius = state.shadowSoftness;
+            if (state.skyUrl) loadEnv(state.skyUrl, tex => { skyTex = tex; scene.background = tex; });
+            if (state.envUrl) loadEnv(state.envUrl, tex => { envTex = tex; scene.environment = tex; });
+            if (Number.isFinite(state.envRot)) {
+                scene.backgroundRotation.y = state.envRot;
+                scene.environmentRotation.y = state.envRot;
+            }
+            if (Array.isArray(state.initPos)) initPos.fromArray(state.initPos);
+            if (Array.isArray(state.initRot)) initRot.fromArray(state.initRot);
+            camera.position.copy(initPos);
+            camera.setRotationFromEuler(initRot);
+            pushStateSnapshot();
+        }
+        function updateCamera() {
+            const relX = headX - anchorHeadX;
+            const relY = headY - anchorHeadY;
+            const relZ = zValue - anchorZ;
+            const relYaw = yaw - anchorYaw;
+            const relPitch = pitch - anchorPitch;
+            let effectiveRelX = relX;
+            let effectiveRelY = relY;
+            let effectiveRelZ = relZ;
+            let effectiveRelYaw = relYaw + mouseYawOffset;
+            let effectiveRelPitch = relPitch + mousePitchOffset;
+            effectiveRelZ += mouseZoomOffset;
+            const relEuler = new THREE.Euler(effectiveRelPitch * Math.PI / 180, -effectiveRelYaw * Math.PI / 180, 0, 'YXZ');
+            switch (cameraMode) {
+                case 'orbit':
+                    const phi = (effectiveRelPitch / 90) * Math.PI / 2;
+                    const theta = (effectiveRelYaw / 90) * Math.PI * 2;
+                    const radius = 10 + effectiveRelZ * 50;
+                    camera.position.x = radius * Math.sin(phi) * Math.sin(theta) + orbitTarget.x;
+                    camera.position.y = radius * Math.cos(phi) + orbitTarget.y;
+                    camera.position.z = radius * Math.sin(phi) * Math.cos(theta) + orbitTarget.z;
+                    camera.lookAt(orbitTarget);
+                    break;
+                case 'fps':
+                    camera.position.copy(initPos);
+                    const moveSpeed = 0.1;
+                    const forward = new THREE.Vector3(0, 0, -1).applyEuler(relEuler);
+                    camera.position.add(forward.multiplyScalar(-effectiveRelY * moveSpeed));
+                    const right = new THREE.Vector3(1, 0, 0).applyEuler(relEuler);
+                    camera.position.add(right.multiplyScalar(effectiveRelX * moveSpeed));
+                    camera.position.y += effectiveRelZ * moveSpeed * 10;
+                    camera.setRotationFromEuler(initRot);
+                    camera.rotateX(relEuler.x);
+                    camera.rotateY(relEuler.y);
+                    break;
+                case 'free':
+                    camera.position.copy(initPos);
+                    const moveSpeedFree = 0.05;
+                    const forwardFree = new THREE.Vector3(0, 0, -1).applyEuler(relEuler);
+                    camera.position.add(forwardFree.multiplyScalar(effectiveRelZ * moveSpeedFree * 10));
+                    const rightFree = new THREE.Vector3(1, 0, 0).applyEuler(relEuler);
+                    camera.position.add(rightFree.multiplyScalar(effectiveRelX * moveSpeedFree));
+                    const upFree = new THREE.Vector3(0, 1, 0).applyEuler(relEuler);
+                    camera.position.add(upFree.multiplyScalar(-effectiveRelY * moveSpeedFree));
+                    camera.setRotationFromEuler(initRot);
+                    camera.rotateX(relEuler.x);
+                    camera.rotateY(relEuler.y);
+                    break;
+            }
+            camera.updateMatrixWorld(true);
+        }
         init();
         window.addEventListener('resize', handleResize);
     </script>
@@ -1830,7 +1936,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
         }
         if (type == 'engine_ready') {
           _iframeReady = true;
-          _hydrateEngine();
+          _bootstrapEngineState();
           return;
         }
         if (type == 'engine_setting') {
@@ -1882,6 +1988,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
         pitch = _toDouble(headMap['pitch'], pitch);
       }
       _postToEngine(<String, dynamic>{
+        'type': 'tracking_patch',
         'head': <String, dynamic>{
           'x': headX,
           'y': headY,
@@ -1912,6 +2019,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
           pitch = frame.pitch;
         }
         _postToEngine(<String, dynamic>{
+          'type': 'tracking_patch',
           'head': <String, dynamic>{
             'x': headX,
             'y': headY,
@@ -1972,11 +2080,12 @@ class _Engine3DPageState extends State<Engine3DPage> {
         settings.addAll(adapted.controls);
         _modeState['settings'] = settings;
         _postToEngine(<String, dynamic>{
-          'type': 'hydrate_engine',
-          'settings': settings,
-          'presets': presets,
-          'sceneState': adapted.scene,
-          'useGlobal': widget.useGlobalTracking,
+          'type': 'apply_scene_patch',
+          'patch': adapted.scene,
+        });
+        _postToEngine(<String, dynamic>{
+          'type': 'apply_settings_patch',
+          'patch': settings,
         });
         widget.onLivePayloadChanged?.call(_buildLivePayloadFromScene(
           adapted.scene,
@@ -2007,6 +2116,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
           pitch = frame.pitch;
         }
         _postToEngine(<String, dynamic>{
+          'type': 'tracking_patch',
           'head': <String, dynamic>{
             'x': headX,
             'y': headY,
@@ -2036,7 +2146,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
           'pointer-events', widget.pointerPassthrough ? 'none' : 'auto');
     }
     if (widget.reanchorToken != oldWidget.reanchorToken) {
-      _postToEngine(<String, dynamic>{'type': 'external_reanchor'});
+      _postToEngine(<String, dynamic>{'type': 'reanchor'});
     }
   }
 
@@ -2095,7 +2205,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
       }
     }
 
-    _hydrateEngine();
+    _bootstrapEngineState();
     if (mounted) setState(() {});
   }
 
@@ -2153,7 +2263,19 @@ class _Engine3DPageState extends State<Engine3DPage> {
   }
 
   void _onEngineSnapshot(Map<String, dynamic> messageData) {
-    final dynamic state = messageData['state'];
+    final dynamic state = messageData['sceneDelta'] ?? messageData['state'];
+    final dynamic settingsDelta = messageData['settingsDelta'];
+    if (settingsDelta is Map || settingsDelta is Map<String, dynamic>) {
+      final Map<String, dynamic> patch = settingsDelta is Map<String, dynamic>
+          ? Map<String, dynamic>.from(settingsDelta)
+          : Map<String, dynamic>.from(settingsDelta as Map);
+      final settings =
+          ((_modeState['settings'] as Map?)?.cast<String, dynamic>()) ??
+              <String, dynamic>{};
+      settings.addAll(patch);
+      _modeState['settings'] = settings;
+      manualMode = settings['manual-mode']?.toString() == 'true';
+    }
     if (state is Map<String, dynamic>) {
       _modeState['sceneState'] = state;
       widget.onLivePayloadChanged?.call(_buildLivePayloadFromScene(state));
@@ -2205,9 +2327,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
     currentPresetName = name;
     widget.onPresetSaved?.call(name, payload);
     _postToEngine(<String, dynamic>{
-      'type': 'hydrate_engine',
-      'settings': _modeState['settings'] ?? <String, dynamic>{},
-      'presets': presets,
+      'type': 'apply_settings_patch',
+      'patch': _modeState['settings'] ?? <String, dynamic>{},
     });
   }
 
@@ -2217,8 +2338,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
     final preset = presets[name];
     if (preset == null) return;
     _postToEngine(<String, dynamic>{
-      'type': 'load_preset_state',
-      'state': preset,
+      'type': 'apply_scene_patch',
+      'patch': preset,
     });
   }
 
@@ -2261,6 +2382,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
       'pitch': pose['pitch'] ?? 0.0,
     });
     _postToEngine(<String, dynamic>{
+      'type': 'tracking_patch',
       'head': <String, dynamic>{
         'x': headX,
         'y': headY,
@@ -2279,7 +2401,7 @@ class _Engine3DPageState extends State<Engine3DPage> {
     });
   }
 
-  void _hydrateEngine() {
+  void _bootstrapEngineState() {
     if (!_iframeReady) return;
     final Map<String, dynamic> settings =
         ((_modeState['settings'] as Map?)?.cast<String, dynamic>()) ??
@@ -2297,10 +2419,10 @@ class _Engine3DPageState extends State<Engine3DPage> {
     if (rawScene is Map) sceneState = Map<String, dynamic>.from(rawScene);
 
     _postToEngine(<String, dynamic>{
-      'type': 'hydrate_engine',
+      'type': 'bootstrap_state',
       'settings': settings,
       'presets': presets,
-      'sceneState': sceneState,
+      'scene': sceneState ?? <String, dynamic>{},
     });
     if (sceneState != null) {
       widget.onLivePayloadChanged?.call(_buildLivePayloadFromScene(sceneState));
@@ -2341,50 +2463,6 @@ class _Engine3DPageState extends State<Engine3DPage> {
       'showCursor': showTracker,
       'headless': !showTracker,
     });
-  }
-
-  Future<void> _uploadToEngine({
-    required String accept,
-    required String folder,
-    required String messageType,
-    required String successLabel,
-  }) async {
-    if (_uploadingAsset) return;
-    final file = await pickDeviceFile(accept: accept);
-    if (file == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No file selected.')),
-      );
-      return;
-    }
-
-    if (mounted) {
-      setState(() => _uploadingAsset = true);
-    }
-
-    try {
-      final String url = await _repository.uploadAssetBytes(
-        bytes: file.bytes,
-        fileName: file.name,
-        contentType: file.contentType,
-        folder: folder,
-      );
-      _postToEngine(<String, dynamic>{'type': messageType, 'url': url});
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$successLabel uploaded and injected.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Upload failed: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _uploadingAsset = false);
-      }
-    }
   }
 
   double _toDouble(dynamic value, double fallback) {
@@ -2489,79 +2567,6 @@ class _Engine3DPageState extends State<Engine3DPage> {
                   ),
                 ),
               ],
-            ),
-          ),
-        if (!widget.cleanView && !widget.embeddedStudio)
-          Positioned(
-            top: 16,
-            left: 16,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.72),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white24),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: _uploadingAsset
-                          ? null
-                          : () => _uploadToEngine(
-                                accept: '.glb,.gltf,.fbx,.obj,.usdz,model/*',
-                                folder: 'models',
-                                messageType: 'external_add_model',
-                                successLabel: '3D model',
-                              ),
-                      icon: const Icon(Icons.view_in_ar_outlined, size: 16),
-                      label: Text(
-                          _uploadingAsset ? 'Uploading...' : 'Upload Model'),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _uploadingAsset || widget.disableAudio
-                          ? null
-                          : () => _uploadToEngine(
-                                accept: 'audio/*',
-                                folder: 'audio',
-                                messageType: 'external_add_audio',
-                                successLabel: 'Audio',
-                              ),
-                      icon: const Icon(Icons.graphic_eq_outlined, size: 16),
-                      label: Text(
-                          _uploadingAsset ? 'Uploading...' : 'Upload Audio'),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _uploadingAsset
-                          ? null
-                          : () => _uploadToEngine(
-                                accept: '.hdr,.exr,image/*',
-                                folder: 'sky',
-                                messageType: 'external_set_sky',
-                                successLabel: 'Sky texture',
-                              ),
-                      icon: const Icon(Icons.wb_sunny_outlined, size: 16),
-                      label:
-                          Text(_uploadingAsset ? 'Uploading...' : 'Upload Sky'),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _uploadingAsset
-                          ? null
-                          : () => _uploadToEngine(
-                                accept: '.hdr,.exr,image/*',
-                                folder: 'env',
-                                messageType: 'external_set_env',
-                                successLabel: 'Environment map',
-                              ),
-                      icon: const Icon(Icons.landscape_outlined, size: 16),
-                      label:
-                          Text(_uploadingAsset ? 'Uploading...' : 'Upload Env'),
-                    ),
-                  ],
-                ),
-              ),
             ),
           ),
       ],

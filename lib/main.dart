@@ -31,6 +31,8 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   final AppRepository _repository = AppRepository.instance;
+  final _TrackingRouteObserver _trackingRouteObserver =
+      _TrackingRouteObserver();
 
   String _themeMode = 'dark';
   StreamSubscription<AuthState>? _authSub;
@@ -90,9 +92,8 @@ class _MyAppState extends State<MyApp> {
     List<String> normalizedPathSegments(Uri uri) {
       final List<String> raw =
           uri.pathSegments.where((segment) => segment.isNotEmpty).toList();
-      final List<String> basePath = Uri.base.pathSegments
-          .where((segment) => segment.isNotEmpty)
-          .toList();
+      final List<String> basePath =
+          Uri.base.pathSegments.where((segment) => segment.isNotEmpty).toList();
       final bool hostedOnGithubPages =
           Uri.base.host.toLowerCase().endsWith('github.io');
       final String? repoPrefix =
@@ -157,6 +158,7 @@ class _MyAppState extends State<MyApp> {
         ),
       ),
       initialRoute: SupabaseConfig.isConfigured ? '/feed/home' : '/config',
+      navigatorObservers: <NavigatorObserver>[_trackingRouteObserver],
       builder: (context, child) {
         final safeChild = child ?? const SizedBox.shrink();
         if (!_trackerReady) return safeChild;
@@ -196,10 +198,20 @@ class _MyAppState extends State<MyApp> {
           return buildFeedRoute(name: '/feed/home', initialTab: 'home');
         }
 
+        if (segments.isNotEmpty && segments.first.startsWith('@')) {
+          final String username =
+              Uri.decodeComponent(segments.first.substring(1)).trim();
+          return MaterialPageRoute<void>(
+            settings: RouteSettings(name: '/@$username'),
+            builder: (_) => StandalonePublicProfileRoutePage(
+              username: username,
+            ),
+          );
+        }
+
         if (segments.isNotEmpty && segments.first == 'post') {
-          final String idOrShareId = segments.length > 1
-              ? Uri.decodeComponent(segments[1])
-              : '';
+          final String idOrShareId =
+              segments.length > 1 ? Uri.decodeComponent(segments[1]) : '';
           return MaterialPageRoute<void>(
             settings: RouteSettings(name: '/post/$idOrShareId'),
             builder: (_) => StandalonePostRoutePage(
@@ -208,9 +220,8 @@ class _MyAppState extends State<MyApp> {
           );
         }
         if (segments.isNotEmpty && segments.first == 'collection') {
-          final String idOrShareId = segments.length > 1
-              ? Uri.decodeComponent(segments[1])
-              : '';
+          final String idOrShareId =
+              segments.length > 1 ? Uri.decodeComponent(segments[1]) : '';
           return MaterialPageRoute<void>(
             settings: RouteSettings(name: '/collection/$idOrShareId'),
             builder: (_) => StandaloneCollectionRoutePage(
@@ -251,5 +262,43 @@ class _SupabaseConfigMissingPage extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _TrackingRouteObserver extends NavigatorObserver {
+  bool _isTrackingActiveRoute(String name) {
+    final String trimmed = name.trim().toLowerCase();
+    if (trimmed.isEmpty) return false;
+    if (trimmed == '/auth' || trimmed == '/config') return false;
+    if (trimmed == '/feed' || trimmed == '/app') return true;
+    if (trimmed == '/2d' || trimmed == '/3d') return true;
+    if (trimmed.startsWith('/feed/')) return true;
+    if (trimmed.startsWith('/post/')) return true;
+    if (trimmed.startsWith('/collection/')) return true;
+    if (trimmed.startsWith('/@')) return true;
+    return false;
+  }
+
+  void _sync(Route<dynamic>? route) {
+    final String name = route?.settings.name?.toString() ?? '';
+    TrackingService.instance.setRouteActive(_isTrackingActiveRoute(name));
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    _sync(route);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+    _sync(newRoute);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPop(route, previousRoute);
+    _sync(previousRoute);
   }
 }

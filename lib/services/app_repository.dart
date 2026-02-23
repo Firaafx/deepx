@@ -133,6 +133,53 @@ class AppRepository {
     return AppUserProfile.fromMap(row);
   }
 
+  Future<AppUserProfile?> fetchProfileByUsername(String username) async {
+    final String normalized = username.trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    final row = await _client
+        .from('profiles')
+        .select('*')
+        .eq('username', normalized)
+        .maybeSingle();
+    if (row == null) return null;
+    return AppUserProfile.fromMap(row);
+  }
+
+  Future<List<RenderPreset>> fetchPublicPostsForUser(
+    String userId, {
+    int limit = 80,
+  }) async {
+    final String trimmed = userId.trim();
+    if (trimmed.isEmpty) return const <RenderPreset>[];
+    final rows = await _client
+        .from('presets')
+        .select('*')
+        .eq('user_id', trimmed)
+        .neq('visibility', 'private')
+        .order('created_at', ascending: false)
+        .limit(limit);
+    return (rows as List)
+        .map((raw) =>
+            RenderPreset.fromMap(Map<String, dynamic>.from(raw as Map)))
+        .toList();
+  }
+
+  Future<List<CollectionSummary>> fetchPublicCollectionsForUser(
+    String userId, {
+    int limit = 40,
+  }) async {
+    final String trimmed = userId.trim();
+    if (trimmed.isEmpty) return const <CollectionSummary>[];
+    final rows = await _client
+        .from('collections')
+        .select('*')
+        .eq('user_id', trimmed)
+        .eq('published', true)
+        .order('created_at', ascending: false)
+        .limit(limit);
+    return _hydrateCollectionSummaries(rows);
+  }
+
   Future<bool> isUsernameAvailable(String rawUsername) async {
     final user = currentUser;
     if (user == null) return false;
@@ -441,7 +488,7 @@ class AppRepository {
         .from('presets')
         .select('*')
         .eq('user_id', user.id)
-        .order('updated_at', ascending: false);
+        .order('created_at', ascending: false);
 
     if (mode != null) {
       query = query.eq('mode', mode);
@@ -459,7 +506,7 @@ class AppRepository {
         .from('presets')
         .select('*')
         .eq('user_id', userId)
-        .order('updated_at', ascending: false);
+        .order('created_at', ascending: false);
 
     if (currentUser?.id != userId) {
       query = query.eq('visibility', 'public');
@@ -482,7 +529,7 @@ class AppRepository {
         .from('presets')
         .select('*')
         .eq('visibility', 'public')
-        .order('updated_at', ascending: false)
+        .order('created_at', ascending: false)
         .limit(limit);
     for (final dynamic raw in publicRows) {
       final RenderPreset preset =
@@ -498,7 +545,7 @@ class AppRepository {
           .select('*')
           .eq('user_id', user.id)
           .eq('visibility', 'private')
-          .order('updated_at', ascending: false)
+          .order('created_at', ascending: false)
           .limit(limit);
       for (final dynamic raw in mineRows) {
         final RenderPreset preset =
@@ -509,7 +556,7 @@ class AppRepository {
       }
     }
 
-    merged.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     if (merged.length > limit) {
       return merged.sublist(0, limit);
     }
@@ -526,7 +573,7 @@ class AppRepository {
         .from('presets')
         .select('*')
         .eq('visibility', 'public')
-        .order('updated_at', ascending: false)
+        .order('created_at', ascending: false)
         .limit(limit);
     final List<RenderPreset> presets = rows
         .map((dynamic e) =>
@@ -1279,7 +1326,8 @@ class AppRepository {
         .from('collections')
         .select('*')
         .inFilter('id', collectionIds);
-    final List<CollectionSummary> hydrated = await _hydrateCollectionSummaries(rows);
+    final List<CollectionSummary> hydrated =
+        await _hydrateCollectionSummaries(rows);
     final Map<String, CollectionSummary> byId = <String, CollectionSummary>{
       for (final summary in hydrated) summary.id: summary,
     };
@@ -1302,7 +1350,8 @@ class AppRepository {
     final bool wantsPosts = normalized == 'all' || normalized == 'saved_posts';
     final bool wantsCollections =
         normalized == 'all' || normalized == 'saved_collections';
-    final bool wantsWatchLater = normalized == 'all' || normalized == 'watch_later';
+    final bool wantsWatchLater =
+        normalized == 'all' || normalized == 'watch_later';
 
     final List<Map<String, dynamic>> entries = <Map<String, dynamic>>[];
 
@@ -1327,8 +1376,9 @@ class AppRepository {
           entries.add(
             <String, dynamic>{
               'kind': 'saved_post',
-              'createdAt': DateTime.tryParse(map['created_at']?.toString() ?? '') ??
-                  DateTime.fromMillisecondsSinceEpoch(0),
+              'createdAt':
+                  DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+                      DateTime.fromMillisecondsSinceEpoch(0),
               'preset': preset,
             },
           );
@@ -1348,10 +1398,8 @@ class AppRepository {
           .where((String id) => id.isNotEmpty)
           .toList();
       if (ids.isNotEmpty) {
-        final List<dynamic> summariesRaw = await _client
-            .from('collections')
-            .select('*')
-            .inFilter('id', ids);
+        final List<dynamic> summariesRaw =
+            await _client.from('collections').select('*').inFilter('id', ids);
         final summaries = await _hydrateCollectionSummaries(summariesRaw);
         final Map<String, CollectionSummary> byId = <String, CollectionSummary>{
           for (final summary in summaries) summary.id: summary,
@@ -1364,8 +1412,9 @@ class AppRepository {
           entries.add(
             <String, dynamic>{
               'kind': 'saved_collection',
-              'createdAt': DateTime.tryParse(map['created_at']?.toString() ?? '') ??
-                  DateTime.fromMillisecondsSinceEpoch(0),
+              'createdAt':
+                  DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+                      DateTime.fromMillisecondsSinceEpoch(0),
               'collection': summary,
             },
           );
@@ -1374,7 +1423,8 @@ class AppRepository {
     }
 
     if (wantsWatchLater) {
-      final List<WatchLaterItem> watchLater = await fetchWatchLaterForCurrentUser(
+      final List<WatchLaterItem> watchLater =
+          await fetchWatchLaterForCurrentUser(
         limit: limit,
       );
       for (final item in watchLater) {
@@ -1601,7 +1651,8 @@ class AppRepository {
                   'chat_id': chatId,
                   'sender_id': user.id,
                   'preview': preview,
-                  if (sharedPresetId != null) 'shared_preset_id': sharedPresetId,
+                  if (sharedPresetId != null)
+                    'shared_preset_id': sharedPresetId,
                 },
               },
             )
@@ -1632,9 +1683,8 @@ class AppRepository {
     if (chatId.isEmpty) {
       throw Exception('Unable to create direct chat.');
     }
-    final String routeId = summary.shareId.trim().isNotEmpty
-        ? summary.shareId.trim()
-        : summary.id;
+    final String routeId =
+        summary.shareId.trim().isNotEmpty ? summary.shareId.trim() : summary.id;
     String prefix = '';
     if (Uri.base.host.toLowerCase().endsWith('github.io')) {
       final List<String> segments =
@@ -1687,7 +1737,7 @@ class AppRepository {
         .from('collections')
         .select('*')
         .eq('published', true)
-        .order('updated_at', ascending: false)
+        .order('created_at', ascending: false)
         .limit(limit);
     return _hydrateCollectionSummaries(rows);
   }
@@ -1700,7 +1750,7 @@ class AppRepository {
         .from('collections')
         .select('*')
         .eq('user_id', user.id)
-        .order('updated_at', ascending: false);
+        .order('created_at', ascending: false);
     return _hydrateCollectionSummaries(rows);
   }
 
@@ -2117,8 +2167,7 @@ class AppRepository {
           .eq('user_id', user.id)
           .inFilter('collection_id', collectionIds);
       for (final dynamic row in saveRows) {
-        savedCollectionIds
-            .add((row as Map)['collection_id']?.toString() ?? '');
+        savedCollectionIds.add((row as Map)['collection_id']?.toString() ?? '');
       }
 
       final List<dynamic> watchRows = await _client
@@ -2331,8 +2380,9 @@ class AppRepository {
             bytes,
             fileOptions: FileOptions(
               upsert: true,
-              contentType:
-                  contentType.isEmpty ? 'application/octet-stream' : contentType,
+              contentType: contentType.isEmpty
+                  ? 'application/octet-stream'
+                  : contentType,
             ),
           );
       return _client.storage.from(bucket).getPublicUrl(path);
@@ -2343,7 +2393,8 @@ class AppRepository {
           'Upload failed: storage bucket "$bucket" is missing.',
         );
       }
-      if (message.contains('row-level security') || message.contains('policy')) {
+      if (message.contains('row-level security') ||
+          message.contains('policy')) {
         throw Exception(
           'Upload failed: storage policy blocked this file. Verify RLS for bucket "$bucket".',
         );
