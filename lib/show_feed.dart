@@ -1700,6 +1700,16 @@ class _HomeFeedTab extends StatefulWidget {
   State<_HomeFeedTab> createState() => _HomeFeedTabState();
 }
 
+const double _kGridPreviewAspectRatio = 16 / 9;
+const double _kFeedCardTitleRowHeight = 40;
+const double _kFeedCardAuthorRowHeight = 18;
+const double _kFeedCardMetaRowHeight = 16;
+const double _kFeedCardMetaSpacingHeight = 13;
+const double _kFeedCardFixedMetaHeight = _kFeedCardTitleRowHeight +
+    _kFeedCardAuthorRowHeight +
+    _kFeedCardMetaRowHeight +
+    _kFeedCardMetaSpacingHeight;
+
 class _HomeFeedTabState extends State<_HomeFeedTab> {
   final AppRepository _repository = AppRepository.instance;
   static const double _chipRailTop = 56;
@@ -1718,6 +1728,20 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
   String? _error;
   final List<FeedPost> _posts = <FeedPost>[];
   String _selectedHomeChip = _homeFeedChips.first;
+
+  double _feedGridCardAspectRatio({
+    required double width,
+    required int crossAxisCount,
+  }) {
+    const double horizontalPadding = 14 * 2;
+    const double crossAxisSpacing = 12;
+    final double itemWidth =
+        (width - horizontalPadding - ((crossAxisCount - 1) * crossAxisSpacing)) /
+            crossAxisCount;
+    final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
+    final double cardHeight = previewHeight + _kFeedCardFixedMetaHeight;
+    return itemWidth / cardHeight;
+  }
 
   @override
   void initState() {
@@ -1764,6 +1788,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     await Navigator.push(
       context,
       MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/editor/card-update'),
         builder: (_) => _PostCardComposerPage.single(
           name: post.preset.name,
           mode: post.preset.mode,
@@ -2186,7 +2211,10 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
                     crossAxisCount: crossAxisCount,
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
-                    childAspectRatio: 1.18,
+                    childAspectRatio: _feedGridCardAspectRatio(
+                      width: width,
+                      crossAxisCount: crossAxisCount,
+                    ),
                   ),
                   itemBuilder: (context, index) {
                     final post = visiblePosts[index];
@@ -2257,6 +2285,20 @@ class _CollectionTabState extends State<_CollectionTab> {
   String? _error;
   final List<CollectionSummary> _collections = <CollectionSummary>[];
   String _selectedCollectionChip = _collectionChips.first;
+
+  double _collectionGridCardAspectRatio({
+    required double width,
+    required int crossAxisCount,
+  }) {
+    const double horizontalPadding = 14 * 2;
+    const double crossAxisSpacing = 12;
+    final double itemWidth =
+        (width - horizontalPadding - ((crossAxisCount - 1) * crossAxisSpacing)) /
+            crossAxisCount;
+    final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
+    final double cardHeight = previewHeight + _kFeedCardFixedMetaHeight;
+    return itemWidth / cardHeight;
+  }
 
   @override
   void initState() {
@@ -2392,6 +2434,7 @@ class _CollectionTabState extends State<_CollectionTab> {
     final updated = await Navigator.push(
       context,
       MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/editor/collection-card-update'),
         builder: (_) => _PostCardComposerPage.collection(
           collectionId: summary.id,
           collectionName: summary.name,
@@ -2785,7 +2828,10 @@ class _CollectionTabState extends State<_CollectionTab> {
                     crossAxisCount: crossAxisCount,
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
-                    childAspectRatio: 1.18,
+                    childAspectRatio: _collectionGridCardAspectRatio(
+                      width: width,
+                      crossAxisCount: crossAxisCount,
+                    ),
                   ),
                   itemBuilder: (context, index) {
                     final summary = visibleCollections[index];
@@ -2879,6 +2925,7 @@ class _CollectionFeedTile extends StatelessWidget {
             payload: previewPayload,
             borderRadius: cardRadius,
             enableOutsideOverlay: true,
+            outsideOverflowMax: 100,
           );
     return Material(
       color: Colors.transparent,
@@ -2981,39 +3028,57 @@ class _CollectionFeedTile extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              summary.name.isNotEmpty ? summary.name : 'Untitled collection',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
+            SizedBox(
+              height: _kFeedCardTitleRowHeight,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  summary.name.isNotEmpty ? summary.name : 'Untitled collection',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: cs.onSurface,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: 3),
-            InkWell(
-              onTap: onOpenAuthorProfile,
-              child: Text(
-                summary.author?.displayName ?? 'Unknown creator',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: cs.onSurfaceVariant,
-                  fontSize: 12,
-                  decoration: TextDecoration.underline,
-                  decorationColor: cs.onSurfaceVariant.withValues(alpha: 0.5),
+            SizedBox(
+              height: _kFeedCardAuthorRowHeight,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: InkWell(
+                  onTap: onOpenAuthorProfile,
+                  child: Text(
+                    summary.author?.displayName ?? 'Unknown creator',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 12,
+                      decoration: TextDecoration.underline,
+                      decorationColor: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                    ),
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 2),
-            Text(
-              '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: cs.onSurfaceVariant,
-                fontSize: 11,
+            SizedBox(
+              height: _kFeedCardMetaRowHeight,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: cs.onSurfaceVariant,
+                    fontSize: 11,
+                  ),
+                ),
               ),
             ),
           ],
@@ -3066,6 +3131,7 @@ class _FeedTile extends StatelessWidget {
       payload: previewPayload,
       borderRadius: cardRadius,
       enableOutsideOverlay: true,
+      outsideOverflowMax: 100,
     );
 
     return Material(
@@ -3170,41 +3236,59 @@ class _FeedTile extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              post.preset.title.isNotEmpty
-                  ? post.preset.title
-                  : post.preset.name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
+            SizedBox(
+              height: _kFeedCardTitleRowHeight,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  post.preset.title.isNotEmpty
+                      ? post.preset.title
+                      : post.preset.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: cs.onSurface,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: 3),
-            InkWell(
-              onTap: onOpenAuthorProfile,
-              child: Text(
-                post.author?.displayName ?? 'Unknown creator',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: cs.onSurfaceVariant,
-                  fontSize: 12,
-                  decoration: TextDecoration.underline,
-                  decorationColor: cs.onSurfaceVariant.withValues(alpha: 0.5),
+            SizedBox(
+              height: _kFeedCardAuthorRowHeight,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: InkWell(
+                  onTap: onOpenAuthorProfile,
+                  child: Text(
+                    post.author?.displayName ?? 'Unknown creator',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 12,
+                      decoration: TextDecoration.underline,
+                      decorationColor: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                    ),
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 2),
-            Text(
-              '${_friendlyCount(post.viewsCount)} views · ${_friendlyTime(post.preset.createdAt)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: cs.onSurfaceVariant,
-                fontSize: 11,
+            SizedBox(
+              height: _kFeedCardMetaRowHeight,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${_friendlyCount(post.viewsCount)} views · ${_friendlyTime(post.preset.createdAt)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: cs.onSurfaceVariant,
+                    fontSize: 11,
+                  ),
+                ),
               ),
             ),
           ],
@@ -3227,6 +3311,7 @@ class _OverlayParallaxPreview extends StatefulWidget {
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.pointerPassthrough = true,
     this.enableOutsideOverlay = false,
+    this.outsideOverflowMax = 100,
   });
 
   final String mode;
@@ -3234,6 +3319,7 @@ class _OverlayParallaxPreview extends StatefulWidget {
   final BorderRadius borderRadius;
   final bool pointerPassthrough;
   final bool enableOutsideOverlay;
+  final double outsideOverflowMax;
 
   @override
   State<_OverlayParallaxPreview> createState() => _OverlayParallaxPreviewState();
@@ -3275,7 +3361,7 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.enableOutsideOverlay) return;
       if (_outsideOverlayEntry != null) return;
-      final overlay = Overlay.maybeOf(context, rootOverlay: true);
+      final overlay = Overlay.maybeOf(context);
       if (overlay == null) return;
       _outsideOverlayEntry = OverlayEntry(
         builder: (context) {
@@ -3297,6 +3383,7 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
                   borderRadius: BorderRadius.zero,
                   pointerPassthrough: true,
                   layerMode: _GridPresetPreviewLayerMode.outsideOnly,
+                  outsideOverflowMax: widget.outsideOverflowMax,
                 ),
               ),
             ),
@@ -3329,6 +3416,7 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
         payload: widget.payload,
         borderRadius: widget.borderRadius,
         pointerPassthrough: widget.pointerPassthrough,
+        outsideOverflowMax: widget.outsideOverflowMax,
       );
     }
     _ensureOutsideOverlay();
@@ -3343,6 +3431,7 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
             borderRadius: widget.borderRadius,
             pointerPassthrough: widget.pointerPassthrough,
             layerMode: _GridPresetPreviewLayerMode.insideOnly,
+            outsideOverflowMax: widget.outsideOverflowMax,
           ),
         );
       },
@@ -3357,6 +3446,7 @@ class _GridPresetPreview extends StatelessWidget {
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.pointerPassthrough = true,
     this.layerMode = _GridPresetPreviewLayerMode.combined,
+    this.outsideOverflowMax = 100,
   });
 
   final String mode;
@@ -3364,6 +3454,7 @@ class _GridPresetPreview extends StatelessWidget {
   final BorderRadius borderRadius;
   final bool pointerPassthrough;
   final _GridPresetPreviewLayerMode layerMode;
+  final double outsideOverflowMax;
 
   @override
   Widget build(BuildContext context) {
@@ -3408,6 +3499,7 @@ class _GridPresetPreview extends StatelessWidget {
         payload: adapted.toMap(),
         borderRadius: borderRadius,
         layerMode: resolvedLayerMode,
+        outsideOverflowMax: outsideOverflowMax,
       );
     }
 
@@ -3455,10 +3547,10 @@ class _GridPresetPreview extends StatelessWidget {
     );
 
     final Widget outside = Positioned(
-      left: -50,
-      right: -50,
-      top: -50,
-      bottom: -50,
+      left: -outsideOverflowMax,
+      right: -outsideOverflowMax,
+      top: -outsideOverflowMax,
+      bottom: -outsideOverflowMax,
       child: IgnorePointer(
         child: PresetViewer(
           mode: adapted.mode,
@@ -3608,6 +3700,7 @@ Future<void> _openDetailFullscreenViewer(
 }) async {
   await Navigator.of(context).push<void>(
     PageRouteBuilder<void>(
+      settings: const RouteSettings(name: '/post/detail/fullscreen'),
       opaque: true,
       transitionDuration: const Duration(milliseconds: 360),
       reverseTransitionDuration: const Duration(milliseconds: 320),
@@ -4077,6 +4170,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     final updated = await Navigator.push(
       context,
       MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/editor/detail-update'),
         builder: (_) => _PostCardComposerPage.single(
           name: _post.preset.name,
           mode: _post.preset.mode,
@@ -4309,49 +4403,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
       );
     }
 
-    Widget buildHeader() {
-      return Container(
-        height: 62,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.black.withValues(alpha: 0.8),
-              Colors.transparent,
-            ],
-          ),
-        ),
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-        child: Row(
-          children: [
-            IconButton.filledTonal(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back_ios_new_rounded),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              'DeepX',
-              style: GoogleFonts.orbitron(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 24,
-              ),
-            ),
-            const Spacer(),
-            IconButton(
-              tooltip: 'Fullscreen',
-              onPressed: _openFullscreenViewer,
-              icon: const Icon(
-                Icons.fullscreen,
-                color: Colors.white,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
     Widget buildAmbientUnderlay() {
       if (ambientUrl == null || ambientUrl.isEmpty) {
         return Container(
@@ -4382,154 +4433,138 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
       );
     }
 
-    Widget buildCompactMetaOverlay() {
+    Widget buildBelowPreviewMeta() {
       final String title =
           _post.preset.title.isNotEmpty ? _post.preset.title : _post.preset.name;
-      return Positioned(
-        left: 0,
-        right: 0,
-        bottom: 0,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 34, 12, 10),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [
-                  Colors.black.withValues(alpha: 0.88),
-                  Colors.black.withValues(alpha: 0.56),
-                  Colors.transparent,
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          margin: const EdgeInsets.only(top: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '${_friendlyCount(_post.viewsCount)} views · ${_friendlyTime(_post.preset.createdAt)}',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.84),
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => _openPublicProfileRoute(context, _post.author),
+                    child: CircleAvatar(
+                      radius: 13,
+                      backgroundImage: (_post.author?.avatarUrl != null &&
+                              _post.author!.avatarUrl!.isNotEmpty)
+                          ? NetworkImage(_post.author!.avatarUrl!)
+                          : null,
+                      child: (_post.author?.avatarUrl == null ||
+                              _post.author!.avatarUrl!.isEmpty)
+                          ? const Icon(Icons.person, size: 14)
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _openPublicProfileRoute(context, _post.author),
+                      child: Text(
+                        _post.author?.displayName ?? 'Unknown creator',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (!_mine)
+                    SizedBox(
+                      height: 28,
+                      child: FilledButton.tonal(
+                        onPressed: _toggleFollow,
+                        child: Text(
+                          _post.isFollowingAuthor ? 'Following' : 'Follow',
+                        ),
+                      ),
+                    ),
                 ],
               ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${_friendlyCount(_post.viewsCount)} views · ${_friendlyTime(_post.preset.createdAt)}',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.84),
-                    fontSize: 11.5,
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Row(
+              const SizedBox(height: 6),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
                   children: [
-                    GestureDetector(
-                      onTap: () => _openPublicProfileRoute(context, _post.author),
-                      child: CircleAvatar(
-                        radius: 12,
-                        backgroundImage: (_post.author?.avatarUrl != null &&
-                                _post.author!.avatarUrl!.isNotEmpty)
-                            ? NetworkImage(_post.author!.avatarUrl!)
-                            : null,
-                        child: (_post.author?.avatarUrl == null ||
-                                _post.author!.avatarUrl!.isEmpty)
-                            ? const Icon(Icons.person, size: 14)
-                            : null,
-                      ),
+                    _engagementButton(
+                      icon: _post.myReaction == 1
+                          ? Icons.thumb_up_alt
+                          : Icons.thumb_up_alt_outlined,
+                      active: _post.myReaction == 1,
+                      activeColor: cs.primary,
+                      label: _friendlyCount(_post.likesCount),
+                      onTap: () => _toggleReaction(1),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () =>
-                            _openPublicProfileRoute(context, _post.author),
-                        child: Text(
-                          _post.author?.displayName ?? 'Unknown creator',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
+                    _engagementButton(
+                      icon: _post.myReaction == -1
+                          ? Icons.thumb_down_alt
+                          : Icons.thumb_down_alt_outlined,
+                      active: _post.myReaction == -1,
+                      activeColor: Colors.redAccent,
+                      label: _friendlyCount(_post.dislikesCount),
+                      onTap: () => _toggleReaction(-1),
                     ),
-                    if (!_mine)
-                      SizedBox(
-                        height: 28,
-                        child: FilledButton.tonal(
-                          onPressed: _toggleFollow,
-                          child: Text(
-                            _post.isFollowingAuthor ? 'Following' : 'Follow',
-                          ),
-                        ),
-                      ),
+                    _engagementButton(
+                      icon: Icons.send_outlined,
+                      active: false,
+                      activeColor: cs.primary,
+                      label: '',
+                      onTap: _openShareSheet,
+                    ),
+                    _engagementButton(
+                      icon: Icons.mode_comment_outlined,
+                      active: _commentsOpen,
+                      activeColor: cs.primary,
+                      label: _friendlyCount(_post.commentsCount),
+                      onTap: () => setState(() => _commentsOpen = true),
+                    ),
+                    _engagementButton(
+                      icon: _post.isSaved ? Icons.bookmark : Icons.bookmark_border,
+                      active: _post.isSaved,
+                      activeColor: Colors.amberAccent,
+                      label: _friendlyCount(_post.savesCount),
+                      onTap: _toggleSave,
+                    ),
+                    _engagementButton(
+                      icon: _post.isWatchLater
+                          ? Icons.watch_later
+                          : Icons.watch_later_outlined,
+                      active: _post.isWatchLater,
+                      activeColor: Colors.tealAccent,
+                      label: '',
+                      onTap: _toggleWatchLater,
+                    ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _engagementButton(
-                        icon: _post.myReaction == 1
-                            ? Icons.thumb_up_alt
-                            : Icons.thumb_up_alt_outlined,
-                        active: _post.myReaction == 1,
-                        activeColor: cs.primary,
-                        label: _friendlyCount(_post.likesCount),
-                        onTap: () => _toggleReaction(1),
-                      ),
-                      _engagementButton(
-                        icon: _post.myReaction == -1
-                            ? Icons.thumb_down_alt
-                            : Icons.thumb_down_alt_outlined,
-                        active: _post.myReaction == -1,
-                        activeColor: Colors.redAccent,
-                        label: _friendlyCount(_post.dislikesCount),
-                        onTap: () => _toggleReaction(-1),
-                      ),
-                      _engagementButton(
-                        icon: Icons.send_outlined,
-                        active: false,
-                        activeColor: cs.primary,
-                        label: '',
-                        onTap: _openShareSheet,
-                      ),
-                      _engagementButton(
-                        icon: Icons.mode_comment_outlined,
-                        active: _commentsOpen,
-                        activeColor: cs.primary,
-                        label: _friendlyCount(_post.commentsCount),
-                        onTap: () => setState(() => _commentsOpen = true),
-                      ),
-                      _engagementButton(
-                        icon: _post.isSaved ? Icons.bookmark : Icons.bookmark_border,
-                        active: _post.isSaved,
-                        activeColor: Colors.amberAccent,
-                        label: _friendlyCount(_post.savesCount),
-                        onTap: _toggleSave,
-                      ),
-                      _engagementButton(
-                        icon: _post.isWatchLater
-                            ? Icons.watch_later
-                            : Icons.watch_later_outlined,
-                        active: _post.isWatchLater,
-                        activeColor: Colors.tealAccent,
-                        label: '',
-                        onTap: _toggleWatchLater,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       );
@@ -4554,10 +4589,26 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                     payload: previewPayload,
                     borderRadius: BorderRadius.zero,
                     enableOutsideOverlay: true,
+                    outsideOverflowMax: 100,
                     pointerPassthrough: true,
                   ),
                 ),
-                buildCompactMetaOverlay(),
+                Positioned(
+                  top: 8,
+                  left: 8,
+                  child: IconButton.filledTonal(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                  ),
+                ),
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: IconButton.filledTonal(
+                    onPressed: _openFullscreenViewer,
+                    icon: const Icon(Icons.fullscreen, size: 20),
+                  ),
+                ),
               ],
             ),
           ),
@@ -4586,16 +4637,97 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
 
     Widget buildDetailMetaPanel(double width) {
       final bool narrow = width < 1140;
-      return Container(
-        width: narrow ? double.infinity : 360,
-        constraints: const BoxConstraints(minHeight: 420),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.58),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Column(
+      Widget buildCommentsPanel() {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Comments',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Close comments',
+                  onPressed: () => setState(() => _commentsOpen = false),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _loadingComments
+                  ? const _TopEdgeLoadingPane(
+                      label: 'Loading comments...',
+                      backgroundColor: Colors.transparent,
+                      minHeight: 2,
+                    )
+                  : _comments.isEmpty
+                      ? Center(
+                          child: Text(
+                            'No comments yet',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.68),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _comments.length,
+                          itemBuilder: (context, index) {
+                            final c = _comments[index];
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: RichText(
+                                text: TextSpan(
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.78),
+                                  ),
+                                  children: [
+                                    TextSpan(
+                                      text: '${c.author?.displayName ?? 'User'}: ',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    TextSpan(text: c.content),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _commentController,
+                    decoration: const InputDecoration(
+                      hintText: 'Write a comment...',
+                      filled: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _sendingComment ? null : _sendComment,
+                  child: Text(_sendingComment ? '...' : 'Send'),
+                ),
+              ],
+            ),
+          ],
+        );
+      }
+
+      Widget buildDetailDiscoveryPanel() {
+        return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -4640,8 +4772,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             const SizedBox(height: 12),
             GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: () =>
-                  setState(() => _descriptionExpanded = !_descriptionExpanded),
+              onTap: () => setState(() => _descriptionExpanded = !_descriptionExpanded),
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
@@ -4718,177 +4849,97 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: _commentsOpen
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Text(
-                              'Comments',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const Spacer(),
-                            IconButton(
-                              tooltip: 'Close comments',
-                              onPressed: () => setState(() => _commentsOpen = false),
-                              icon: const Icon(Icons.close_rounded,
-                                  color: Colors.white70, size: 18),
-                            ),
-                          ],
-                        ),
-                        Expanded(
-                          child: _loadingComments
-                              ? const _TopEdgeLoadingPane(
-                                  label: 'Loading comments...',
-                                  backgroundColor: Colors.transparent,
-                                  minHeight: 2,
-                                )
-                              : _comments.isEmpty
-                                  ? Center(
-                                      child: Text(
-                                        'No comments yet',
-                                        style: TextStyle(
-                                          color: Colors.white.withValues(alpha: 0.68),
-                                        ),
-                                      ),
-                                    )
-                                  : ListView.builder(
-                                      itemCount: _comments.length,
-                                      itemBuilder: (context, index) {
-                                        final c = _comments[index];
-                                        return Padding(
-                                          padding:
-                                              const EdgeInsets.symmetric(vertical: 6),
-                                          child: RichText(
-                                            text: TextSpan(
-                                              style: TextStyle(
-                                                color: Colors.white.withValues(alpha: 0.78),
-                                              ),
-                                              children: [
-                                                TextSpan(
-                                                  text:
-                                                      '${c.author?.displayName ?? 'User'}: ',
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontWeight: FontWeight.w700,
-                                                  ),
-                                                ),
-                                                TextSpan(text: c.content),
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      },
+              child: _loadingSuggestions
+                  ? const _TopEdgeLoadingPane(
+                      label: 'Loading suggestions...',
+                      backgroundColor: Colors.transparent,
+                      minHeight: 2,
+                    )
+                  : ListView.separated(
+                      itemCount: suggestions.length.clamp(0, 24),
+                      separatorBuilder: (_, __) =>
+                          const Divider(color: Colors.white24, height: 14),
+                      itemBuilder: (context, index) {
+                        final item = suggestions[index];
+                        return InkWell(
+                          onTap: () => _openSuggestedPost(item),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 140,
+                                height: 78,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: IgnorePointer(
+                                    child: _GridPresetPreview(
+                                      mode: item.preset.thumbnailMode ??
+                                          item.preset.mode,
+                                      payload: item.preset.thumbnailPayload.isNotEmpty
+                                          ? item.preset.thumbnailPayload
+                                          : item.preset.payload,
+                                      pointerPassthrough: true,
                                     ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _commentController,
-                                decoration: const InputDecoration(
-                                  hintText: 'Write a comment...',
-                                  filled: true,
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            FilledButton(
-                              onPressed: _sendingComment ? null : _sendComment,
-                              child: Text(_sendingComment ? '...' : 'Send'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    )
-                  : _loadingSuggestions
-                      ? const _TopEdgeLoadingPane(
-                          label: 'Loading suggestions...',
-                          backgroundColor: Colors.transparent,
-                          minHeight: 2,
-                        )
-                      : ListView.separated(
-                          itemCount: suggestions.length.clamp(0, 24),
-                          separatorBuilder: (_, __) => const Divider(
-                            color: Colors.white24,
-                            height: 14,
-                          ),
-                          itemBuilder: (context, index) {
-                            final item = suggestions[index];
-                            return InkWell(
-                              onTap: () => _openSuggestedPost(item),
-                              child: Row(
-                                children: [
-                                  SizedBox(
-                                    width: 140,
-                                    height: 78,
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(10),
-                                      child: IgnorePointer(
-                                        child: _GridPresetPreview(
-                                          mode: item.preset.thumbnailMode ??
-                                              item.preset.mode,
-                                          payload:
-                                              item.preset.thumbnailPayload.isNotEmpty
-                                                  ? item.preset.thumbnailPayload
-                                                  : item.preset.payload,
-                                          pointerPassthrough: true,
-                                        ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.preset.title.isNotEmpty
+                                          ? item.preset.title
+                                          : item.preset.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.preset.title.isNotEmpty
-                                              ? item.preset.title
-                                              : item.preset.name,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 3),
-                                        Text(
-                                          item.author?.displayName ??
-                                              'Unknown creator',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: Colors.white.withValues(alpha: 0.75),
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                        Text(
-                                          '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.preset.createdAt)}',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: Colors.white.withValues(alpha: 0.62),
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ],
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      item.author?.displayName ?? 'Unknown creator',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.75),
+                                        fontSize: 12,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                    Text(
+                                      '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.preset.createdAt)}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.62),
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            );
-                          },
-                        ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
+        );
+      }
+
+      return Container(
+        width: narrow ? double.infinity : 360,
+        constraints: const BoxConstraints(minHeight: 420),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.58),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white24),
         ),
+        child: _commentsOpen ? buildCommentsPanel() : buildDetailDiscoveryPanel(),
       );
     }
 
@@ -4906,15 +4957,20 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         child: Stack(
           children: [
             Positioned.fill(child: buildBackdrop()),
-            Positioned(top: 0, left: 0, right: 0, child: buildHeader()),
             Positioned.fill(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 66, 14, 14),
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
                 child: LayoutBuilder(
                   key: const ValueKey<String>('compact-post-detail'),
                   builder: (context, constraints) {
                     final bool narrow = constraints.maxWidth < 1140;
-                    final Widget previewCard = buildPreviewSurface();
+                    final Widget previewCard = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        buildPreviewSurface(),
+                        buildBelowPreviewMeta(),
+                      ],
+                    );
                     final Widget metaPanel = buildDetailMetaPanel(constraints.maxWidth);
                     if (narrow) {
                       return SingleChildScrollView(
@@ -5330,6 +5386,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/studio/publish-collection'),
         builder: (_) => _PostCardComposerPage.collection(
           collectionId: _collectionId,
           collectionName: _collectionNameController.text.trim(),
@@ -5378,6 +5435,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/studio/publish-single'),
         builder: (_) => _PostCardComposerPage.single(
           name: name,
           mode: _modeIndex == 0 ? '2d' : '3d',
@@ -5412,6 +5470,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     await Navigator.push(
       context,
       MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/studio/collection-preview'),
         builder: (_) => _CollectionPreviewPage(items: List.from(_draftItems)),
       ),
     );
@@ -6366,11 +6425,9 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 ),
               ),
             const SizedBox(height: 8),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                     if (selectedLayer != null) ...[
                       Text(
                         'Layer: ${_studioSelected2dLayerKey ?? ''}',
@@ -6624,8 +6681,6 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       label: const Text('Recenter'),
                     ),
                   ],
-                ),
-              ),
             ),
           ],
         ),
@@ -6790,11 +6845,9 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 },
               ),
             ),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
                   if (selectedEntity != null && selectedToken != null) ...[
                     const SizedBox(height: 10),
                     Text(
@@ -7404,8 +7457,6 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                     ),
                   ],
                 ],
-              ),
-            ),
           ),
         ],
       ),
@@ -7643,11 +7694,12 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
             ),
           ),
-          child: Column(
+          child: ListView(
+            padding: EdgeInsets.zero,
             children: [
               studioTopRail,
               Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
-              Expanded(child: _buildStudioControlsPanel(context)),
+              _buildStudioControlsPanel(context),
             ],
           ),
         ),
@@ -8275,6 +8327,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     final bool updated = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
+            settings: const RouteSettings(name: '/post/editor/collection-detail-update'),
             builder: (_) => _PostCardComposerPage.collection(
               collectionId: detail.summary.id,
               collectionName: detail.summary.name,
@@ -8654,6 +8707,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             borderRadius: BorderRadius.zero,
             pointerPassthrough: true,
             enableOutsideOverlay: enableOutsideOverlay,
+            outsideOverflowMax: 100,
           ),
         ),
       ],
@@ -8693,51 +8747,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       );
     }
 
-    Widget buildHeader() {
-      return Container(
-        height: 62,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.black.withValues(alpha: 0.8),
-              Colors.transparent,
-            ],
-          ),
-        ),
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-        child: Row(
-          children: [
-            IconButton.filledTonal(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back_ios_new_rounded),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              'DeepX',
-              style: GoogleFonts.orbitron(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 24,
-              ),
-            ),
-            const Spacer(),
-            IconButton(
-              tooltip: 'Fullscreen',
-              onPressed: hasItems && activeItem != null
-                  ? () => _openCollectionFullscreen(activeItem, _index)
-                  : null,
-              icon: const Icon(
-                Icons.fullscreen,
-                color: Colors.white,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
     Widget buildAmbientUnderlay() {
       if (ambientUrl == null || ambientUrl.isEmpty) {
         return Container(
@@ -8768,148 +8777,170 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       );
     }
 
-    Widget buildCompactMetaOverlay() {
+    Widget buildBelowPreviewMeta() {
       if (summary == null) return const SizedBox.shrink();
-      return Positioned(
-        left: 0,
-        right: 0,
-        bottom: 0,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 34, 12, 10),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [
-                  Colors.black.withValues(alpha: 0.88),
-                  Colors.black.withValues(alpha: 0.56),
-                  Colors.transparent,
-                ],
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          margin: const EdgeInsets.only(top: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                summary.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
               ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  summary.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
+              const SizedBox(height: 3),
+              Text(
+                '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.84),
+                  fontSize: 12,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.84),
-                    fontSize: 11.5,
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () => _openPublicProfileRoute(context, summary.author),
-                      child: CircleAvatar(
-                        radius: 12,
-                        backgroundImage: (summary.author?.avatarUrl != null &&
-                                summary.author!.avatarUrl!.isNotEmpty)
-                            ? NetworkImage(summary.author!.avatarUrl!)
-                            : null,
-                        child: (summary.author?.avatarUrl == null ||
-                                summary.author!.avatarUrl!.isEmpty)
-                            ? const Icon(Icons.person, size: 14)
-                            : null,
-                      ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => _openPublicProfileRoute(context, summary.author),
+                    child: CircleAvatar(
+                      radius: 13,
+                      backgroundImage: (summary.author?.avatarUrl != null &&
+                              summary.author!.avatarUrl!.isNotEmpty)
+                          ? NetworkImage(summary.author!.avatarUrl!)
+                          : null,
+                      child: (summary.author?.avatarUrl == null ||
+                              summary.author!.avatarUrl!.isEmpty)
+                          ? const Icon(Icons.person, size: 14)
+                          : null,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () =>
-                            _openPublicProfileRoute(context, summary.author),
-                        child: Text(
-                          summary.author?.displayName ?? 'Unknown creator',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                          ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _openPublicProfileRoute(context, summary.author),
+                      child: Text(
+                        summary.author?.displayName ?? 'Unknown creator',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
                         ),
                       ),
                     ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _collectionEngagementButton(
+                      icon: summary.myReaction == 1
+                          ? Icons.thumb_up_alt
+                          : Icons.thumb_up_alt_outlined,
+                      active: summary.myReaction == 1,
+                      activeColor: cs.primary,
+                      label: _friendlyCount(summary.likesCount),
+                      onTap: () => _toggleCollectionReaction(1),
+                    ),
+                    _collectionEngagementButton(
+                      icon: summary.myReaction == -1
+                          ? Icons.thumb_down_alt
+                          : Icons.thumb_down_alt_outlined,
+                      active: summary.myReaction == -1,
+                      activeColor: Colors.redAccent,
+                      label: _friendlyCount(summary.dislikesCount),
+                      onTap: () => _toggleCollectionReaction(-1),
+                    ),
+                    _collectionEngagementButton(
+                      icon: Icons.send_outlined,
+                      active: false,
+                      activeColor: cs.primary,
+                      label: '',
+                      onTap: _openCollectionShareSheet,
+                    ),
+                    _collectionEngagementButton(
+                      icon: Icons.mode_comment_outlined,
+                      active: _commentsOpen,
+                      activeColor: cs.primary,
+                      label: _friendlyCount(summary.commentsCount),
+                      onTap: () async {
+                        setState(() => _commentsOpen = true);
+                        await _loadCollectionComments();
+                      },
+                    ),
+                    _collectionEngagementButton(
+                      icon: summary.isSavedByCurrentUser
+                          ? Icons.bookmark
+                          : Icons.bookmark_border,
+                      active: summary.isSavedByCurrentUser,
+                      activeColor: Colors.amberAccent,
+                      label: _friendlyCount(summary.savesCount),
+                      onTap: _toggleCollectionSave,
+                    ),
+                    _collectionEngagementButton(
+                      icon: summary.isWatchLater
+                          ? Icons.watch_later
+                          : Icons.watch_later_outlined,
+                      active: summary.isWatchLater,
+                      activeColor: Colors.tealAccent,
+                      label: '',
+                      onTap: _toggleCollectionWatchLater,
+                    ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _collectionEngagementButton(
-                        icon: summary.myReaction == 1
-                            ? Icons.thumb_up_alt
-                            : Icons.thumb_up_alt_outlined,
-                        active: summary.myReaction == 1,
-                        activeColor: cs.primary,
-                        label: _friendlyCount(summary.likesCount),
-                        onTap: () => _toggleCollectionReaction(1),
-                      ),
-                      _collectionEngagementButton(
-                        icon: summary.myReaction == -1
-                            ? Icons.thumb_down_alt
-                            : Icons.thumb_down_alt_outlined,
-                        active: summary.myReaction == -1,
-                        activeColor: Colors.redAccent,
-                        label: _friendlyCount(summary.dislikesCount),
-                        onTap: () => _toggleCollectionReaction(-1),
-                      ),
-                      _collectionEngagementButton(
-                        icon: Icons.send_outlined,
-                        active: false,
-                        activeColor: cs.primary,
-                        label: '',
-                        onTap: _openCollectionShareSheet,
-                      ),
-                      _collectionEngagementButton(
-                        icon: Icons.mode_comment_outlined,
-                        active: _commentsOpen,
-                        activeColor: cs.primary,
-                        label: _friendlyCount(summary.commentsCount),
-                        onTap: () async {
-                          setState(() => _commentsOpen = true);
-                          await _loadCollectionComments();
-                        },
-                      ),
-                      _collectionEngagementButton(
-                        icon: summary.isSavedByCurrentUser
-                            ? Icons.bookmark
-                            : Icons.bookmark_border,
-                        active: summary.isSavedByCurrentUser,
-                        activeColor: Colors.amberAccent,
-                        label: _friendlyCount(summary.savesCount),
-                        onTap: _toggleCollectionSave,
-                      ),
-                      _collectionEngagementButton(
-                        icon: summary.isWatchLater
-                            ? Icons.watch_later
-                            : Icons.watch_later_outlined,
-                        active: summary.isWatchLater,
-                        activeColor: Colors.tealAccent,
-                        label: '',
-                        onTap: _toggleCollectionWatchLater,
-                      ),
-                    ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text(
+                    '${_index + 1}/${detail?.items.length ?? 0}',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.78),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
-            ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Previous',
+                    onPressed: () => _swipeByDirection(SwipeDirection.left),
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                  ),
+                  IconButton(
+                    tooltip: 'Up',
+                    onPressed: () => _swipeByDirection(SwipeDirection.up),
+                    icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 20),
+                  ),
+                  IconButton(
+                    tooltip: 'Revert swipe',
+                    onPressed: _stackController.canRewind ? _rewindSwipe : null,
+                    icon: const Icon(Icons.undo_rounded, size: 18),
+                  ),
+                  IconButton(
+                    tooltip: 'Down',
+                    onPressed: () => _swipeByDirection(SwipeDirection.down),
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+                  ),
+                  IconButton(
+                    tooltip: 'Next',
+                    onPressed: () => _swipeByDirection(SwipeDirection.right),
+                    icon: const Icon(Icons.arrow_forward_ios_rounded, size: 18),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       );
@@ -8927,7 +8958,12 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: _commentsOpen ? () => setState(() => _commentsOpen = false) : null,
-        onDoubleTap: () => _openCollectionFullscreen(activeItem, _index),
+        onDoubleTap: () {
+          final activeDetail = _detail;
+          if (activeDetail == null || activeDetail.items.isEmpty) return;
+          final int current = _index.clamp(0, activeDetail.items.length - 1);
+          _openCollectionFullscreen(activeDetail.items[current], current);
+        },
         child: Stack(
           children: [
             Positioned.fill(
@@ -8948,15 +8984,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   }
                   final item = detail.items[props.index];
                   final bool active = props.index == _index;
-                  final Widget card = Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _buildCard(
-                        item,
-                        enableOutsideOverlay: active,
-                      ),
-                      if (active) buildCompactMetaOverlay(),
-                    ],
+                  final Widget card = _buildCard(
+                    item,
+                    enableOutsideOverlay: active,
                   );
                   if (!active) return card;
                   return Hero(
@@ -8966,83 +8996,20 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                 },
               ),
             ),
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onPanEnd: (details) {
-                  final velocity = details.velocity.pixelsPerSecond;
-                  final double absX = velocity.dx.abs();
-                  final double absY = velocity.dy.abs();
-                  if (absX < 240 && absY < 240) return;
-                  if (absX >= absY) {
-                    _swipeByDirection(
-                      velocity.dx < 0 ? SwipeDirection.left : SwipeDirection.right,
-                    );
-                  } else {
-                    _swipeByDirection(
-                      velocity.dy < 0 ? SwipeDirection.up : SwipeDirection.down,
-                    );
-                  }
-                },
+            Positioned(
+              top: 8,
+              left: 8,
+              child: IconButton.filledTonal(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
               ),
             ),
             Positioned(
               right: 8,
-              top: 8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  '${_index + 1}/${detail.items.length}',
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                ),
-              ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 10,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'Swipe left',
-                        onPressed: () => _swipeByDirection(SwipeDirection.left),
-                        icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                      ),
-                      IconButton(
-                        tooltip: 'Swipe up',
-                        onPressed: () => _swipeByDirection(SwipeDirection.up),
-                        icon: const Icon(Icons.keyboard_arrow_up_rounded),
-                      ),
-                      IconButton(
-                        tooltip: 'Revert swipe',
-                        onPressed: _stackController.canRewind ? _rewindSwipe : null,
-                        icon: const Icon(Icons.undo_rounded),
-                      ),
-                      IconButton(
-                        tooltip: 'Swipe down',
-                        onPressed: () => _swipeByDirection(SwipeDirection.down),
-                        icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                      ),
-                      IconButton(
-                        tooltip: 'Swipe right',
-                        onPressed: () => _swipeByDirection(SwipeDirection.right),
-                        icon: const Icon(Icons.arrow_forward_ios_rounded),
-                      ),
-                    ],
-                  ),
-                ),
+              bottom: 8,
+              child: IconButton.filledTonal(
+                onPressed: () => _openCollectionFullscreen(activeItem, _index),
+                icon: const Icon(Icons.fullscreen, size: 20),
               ),
             ),
           ],
@@ -9077,16 +9044,103 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         return const SizedBox.shrink();
       }
       final bool narrow = width < 1140;
-      return Container(
-        width: narrow ? double.infinity : 360,
-        constraints: const BoxConstraints(minHeight: 420),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.58),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Column(
+
+      Widget buildCommentsPanel() {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Comments',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Close comments',
+                  onPressed: () => setState(() => _commentsOpen = false),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _collectionComments.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No comments yet',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.68),
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _collectionComments.length,
+                      itemBuilder: (context, index) {
+                        final comment = _collectionComments[index];
+                        return ListTile(
+                          dense: true,
+                          title: Text(
+                            comment.author?.displayName ?? 'User',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          subtitle: Text(
+                            comment.content,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.78),
+                            ),
+                          ),
+                          trailing: Text(
+                            _friendlyTime(comment.createdAt),
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.64),
+                              fontSize: 11,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _collectionCommentController,
+                    decoration: const InputDecoration(
+                      hintText: 'Write a comment...',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () async {
+                    if (!await _requireAuthAction()) return;
+                    final summary = _detail?.summary;
+                    if (summary == null) return;
+                    final String text = _collectionCommentController.text.trim();
+                    if (text.isEmpty) return;
+                    await _repository.addCollectionComment(
+                      collectionId: summary.id,
+                      content: text,
+                    );
+                    _collectionCommentController.clear();
+                    await _loadCollectionComments();
+                  },
+                  child: const Text('Send'),
+                ),
+              ],
+            ),
+          ],
+        );
+      }
+
+      Widget buildDetailDiscoveryPanel() {
+        return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -9207,184 +9261,102 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: _commentsOpen
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Text(
-                              'Comments',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const Spacer(),
-                            IconButton(
-                              onPressed: () => setState(() => _commentsOpen = false),
-                              icon: const Icon(Icons.close_rounded,
-                                  color: Colors.white70, size: 18),
-                            ),
-                          ],
-                        ),
-                        Expanded(
-                          child: _collectionComments.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    'No comments yet',
-                                    style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.68),
-                                    ),
-                                  ),
-                                )
-                              : ListView.builder(
-                                  itemCount: _collectionComments.length,
-                                  itemBuilder: (context, index) {
-                                    final comment = _collectionComments[index];
-                                    return ListTile(
-                                      dense: true,
-                                      title: Text(
-                                        comment.author?.displayName ?? 'User',
-                                        style: const TextStyle(color: Colors.white),
-                                      ),
-                                      subtitle: Text(
-                                        comment.content,
-                                        style: TextStyle(
-                                            color: Colors.white.withValues(alpha: 0.78)),
-                                      ),
-                                      trailing: Text(
-                                        _friendlyTime(comment.createdAt),
-                                        style: TextStyle(
-                                          color: Colors.white.withValues(alpha: 0.64),
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _collectionCommentController,
-                                decoration: const InputDecoration(
-                                  hintText: 'Write a comment...',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            FilledButton(
-                              onPressed: () async {
-                                if (!await _requireAuthAction()) return;
-                                final summary = _detail?.summary;
-                                if (summary == null) return;
-                                final String text =
-                                    _collectionCommentController.text.trim();
-                                if (text.isEmpty) return;
-                                await _repository.addCollectionComment(
-                                  collectionId: summary.id,
-                                  content: text,
-                                );
-                                _collectionCommentController.clear();
-                                await _loadCollectionComments();
-                              },
-                              child: const Text('Send'),
-                            ),
-                          ],
-                        ),
-                      ],
+              child: _loadingSuggestions
+                  ? const _TopEdgeLoadingPane(
+                      label: 'Loading suggestions...',
+                      backgroundColor: Colors.transparent,
+                      minHeight: 2,
                     )
-                  : _loadingSuggestions
-                      ? const _TopEdgeLoadingPane(
-                          label: 'Loading suggestions...',
-                          backgroundColor: Colors.transparent,
-                          minHeight: 2,
-                        )
-                      : ListView.separated(
-                          itemCount: suggestions.length.clamp(0, 24),
-                          separatorBuilder: (_, __) => const Divider(
-                            color: Colors.white24,
-                            height: 14,
+                  : ListView.separated(
+                      itemCount: suggestions.length.clamp(0, 24),
+                      separatorBuilder: (_, __) => const Divider(
+                        color: Colors.white24,
+                        height: 14,
+                      ),
+                      itemBuilder: (context, index) {
+                        final item = suggestions[index];
+                        return InkWell(
+                          onTap: () => Navigator.pushReplacementNamed(
+                            context,
+                            buildCollectionRoutePathForSummary(item),
                           ),
-                          itemBuilder: (context, index) {
-                            final item = suggestions[index];
-                            return InkWell(
-                              onTap: () => Navigator.pushReplacementNamed(
-                                context,
-                                buildCollectionRoutePathForSummary(item),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 140,
+                                height: 78,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: IgnorePointer(
+                                    child: _GridPresetPreview(
+                                      mode: item.thumbnailMode ??
+                                          item.firstItem?.mode ??
+                                          '2d',
+                                      payload: item.thumbnailPayload.isNotEmpty
+                                          ? item.thumbnailPayload
+                                          : (item.firstItem?.snapshot ??
+                                              const <String, dynamic>{}),
+                                      pointerPassthrough: true,
+                                    ),
+                                  ),
+                                ),
                               ),
-                              child: Row(
-                                children: [
-                                  SizedBox(
-                                    width: 140,
-                                    height: 78,
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(10),
-                                      child: IgnorePointer(
-                                        child: _GridPresetPreview(
-                                          mode: item.thumbnailMode ??
-                                              item.firstItem?.mode ??
-                                              '2d',
-                                          payload: item.thumbnailPayload.isNotEmpty
-                                              ? item.thumbnailPayload
-                                              : (item.firstItem?.snapshot ??
-                                                  const <String, dynamic>{}),
-                                          pointerPassthrough: true,
-                                        ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.name,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 3),
-                                        Text(
-                                          item.author?.displayName ??
-                                              'Unknown creator',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color:
-                                                Colors.white.withValues(alpha: 0.75),
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                        Text(
-                                          '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.createdAt)}',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color:
-                                                Colors.white.withValues(alpha: 0.62),
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ],
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      item.author?.displayName ?? 'Unknown creator',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.75),
+                                        fontSize: 12,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                    Text(
+                                      '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.createdAt)}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.62),
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            );
-                          },
-                        ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
+        );
+      }
+
+      return Container(
+        width: narrow ? double.infinity : 360,
+        constraints: const BoxConstraints(minHeight: 420),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.58),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white24),
         ),
+        child: _commentsOpen ? buildCommentsPanel() : buildDetailDiscoveryPanel(),
       );
     }
 
@@ -9413,7 +9385,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         child: Stack(
           children: [
             Positioned.fill(child: buildBackdrop()),
-            Positioned(top: 0, left: 0, right: 0, child: buildHeader()),
             if (_loading)
               const Positioned.fill(
                 child: _TopEdgeLoadingPane(label: 'Loading collection...'),
@@ -9429,19 +9400,25 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             else
               Positioned.fill(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 66, 14, 14),
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
                   child: LayoutBuilder(
                     key: const ValueKey<String>('compact-collection-detail'),
                     builder: (context, constraints) {
                       final bool narrow = constraints.maxWidth < 1140;
-                      final Widget preview = buildPreviewSurface();
+                      final Widget previewCard = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          buildPreviewSurface(),
+                          buildBelowPreviewMeta(),
+                        ],
+                      );
                       final Widget meta = buildMetaPanel(constraints.maxWidth);
                       if (narrow) {
                         return SingleChildScrollView(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              preview,
+                              previewCard,
                               const SizedBox(height: 12),
                               SizedBox(
                                 height: 640,
@@ -9454,7 +9431,12 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                       return Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(child: preview),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [previewCard],
+                            ),
+                          ),
                           const SizedBox(width: 12),
                           SizedBox(width: 360, child: meta),
                         ],
@@ -9527,6 +9509,11 @@ enum _SavedGridFilter {
 
 class _ProfileTabState extends State<_ProfileTab> {
   final AppRepository _repository = AppRepository.instance;
+  static const double _profileTitleRowHeight = 34;
+  static const double _profileMetaRowHeight = 16;
+  static const double _profileCardExtraHeight = 4 +
+      _profileTitleRowHeight +
+      _profileMetaRowHeight;
 
   bool _loading = true;
   String? _error;
@@ -9745,6 +9732,20 @@ class _ProfileTabState extends State<_ProfileTab> {
     return 1;
   }
 
+  double _profileGridAspectRatio({
+    required double width,
+    required int crossAxisCount,
+  }) {
+    const double horizontalPadding = 12 * 2;
+    const double crossAxisSpacing = 10;
+    final double itemWidth =
+        (width - horizontalPadding - ((crossAxisCount - 1) * crossAxisSpacing)) /
+            crossAxisCount;
+    final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
+    final double cardHeight = previewHeight + _profileCardExtraHeight;
+    return itemWidth / cardHeight;
+  }
+
   Widget _buildPresetGridTab({
     required List<RenderPreset> presets,
     required String emptyMessage,
@@ -9768,7 +9769,10 @@ class _ProfileTabState extends State<_ProfileTab> {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            childAspectRatio: 0.9,
+            childAspectRatio: _profileGridAspectRatio(
+              width: constraints.maxWidth,
+              crossAxisCount: crossAxisCount,
+            ),
           ),
           itemBuilder: (context, index) {
             final preset = presets[index];
@@ -9789,8 +9793,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                   border: Border.all(
                     color: cs.outline.withValues(alpha: 0.2),
                   ),
-                ),
-                padding: const EdgeInsets.all(8),
+                  ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -9803,28 +9806,47 @@ class _ProfileTabState extends State<_ProfileTab> {
                           payload: payload,
                           borderRadius: BorderRadius.circular(8),
                           pointerPassthrough: true,
+                          enableOutsideOverlay: true,
+                          outsideOverflowMax: 100,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurface,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      height: _profileTitleRowHeight,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Align(
+                          alignment: Alignment.topLeft,
+                          child: Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: cs.onSurface,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${preset.mode.toUpperCase()} · ${_friendlyTime(preset.createdAt)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurfaceVariant,
-                        fontSize: 11,
+                    SizedBox(
+                      height: _profileMetaRowHeight,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '${preset.mode.toUpperCase()} · ${_friendlyTime(preset.createdAt)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: cs.onSurfaceVariant,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -9939,7 +9961,10 @@ class _ProfileTabState extends State<_ProfileTab> {
                         crossAxisCount: crossAxisCount,
                         crossAxisSpacing: 10,
                         mainAxisSpacing: 10,
-                        childAspectRatio: 0.9,
+                        childAspectRatio: _profileGridAspectRatio(
+                          width: constraints.maxWidth,
+                          crossAxisCount: crossAxisCount,
+                        ),
                       ),
                       itemBuilder: (context, index) {
                         final entry = entries[index];
@@ -9995,7 +10020,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                                 color: cs.outline.withValues(alpha: 0.2),
                               ),
                             ),
-                            padding: const EdgeInsets.all(8),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -10008,28 +10032,47 @@ class _ProfileTabState extends State<_ProfileTab> {
                                       payload: payload,
                                       borderRadius: BorderRadius.circular(8),
                                       pointerPassthrough: true,
+                                      enableOutsideOverlay: true,
+                                      outsideOverflowMax: 100,
                                     ),
                                   ),
                                 ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: cs.onSurface,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
+                                const SizedBox(height: 4),
+                                SizedBox(
+                                  height: _profileTitleRowHeight,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    child: Align(
+                                      alignment: Alignment.topLeft,
+                                      child: Text(
+                                        title,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: cs.onSurface,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '$meta · ${_friendlyTime(entry['createdAt'] as DateTime)}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: cs.onSurfaceVariant,
-                                    fontSize: 11,
+                                SizedBox(
+                                  height: _profileMetaRowHeight,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    child: Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: Text(
+                                        '$meta · ${_friendlyTime(entry['createdAt'] as DateTime)}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: cs.onSurfaceVariant,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],

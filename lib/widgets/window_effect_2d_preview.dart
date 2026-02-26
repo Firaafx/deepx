@@ -20,13 +20,14 @@ class WindowEffect2DPreview extends StatelessWidget {
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.layerMode = WindowEffectLayerMode.combined,
+    this.outsideOverflowMax = 100,
   });
 
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
   final WindowEffectLayerMode layerMode;
-  static const double _outsideOverflowMax = 50;
+  final double outsideOverflowMax;
 
   @override
   Widget build(BuildContext context) {
@@ -94,10 +95,10 @@ class WindowEffect2DPreview extends StatelessWidget {
                 fit: StackFit.expand,
                 children: <Widget>[
                   Positioned(
-                    left: -_outsideOverflowMax,
-                    right: -_outsideOverflowMax,
-                    top: -_outsideOverflowMax,
-                    bottom: -_outsideOverflowMax,
+                    left: -outsideOverflowMax,
+                    right: -outsideOverflowMax,
+                    top: -outsideOverflowMax,
+                    bottom: -outsideOverflowMax,
                     child: IgnorePointer(
                       child: Stack(
                         clipBehavior: Clip.none,
@@ -127,10 +128,10 @@ class WindowEffect2DPreview extends StatelessWidget {
                 ),
                 if (outside.isNotEmpty)
                   Positioned(
-                    left: -_outsideOverflowMax,
-                    right: -_outsideOverflowMax,
-                    top: -_outsideOverflowMax,
-                    bottom: -_outsideOverflowMax,
+                    left: -outsideOverflowMax,
+                    right: -outsideOverflowMax,
+                    top: -outsideOverflowMax,
+                    bottom: -outsideOverflowMax,
                     child: IgnorePointer(
                       child: ClipRect(
                         child: Stack(
@@ -220,7 +221,7 @@ class WindowEffect2DPreview extends StatelessWidget {
     final double devX = frame.headX - controls.anchorHeadX;
     final double devY = frame.headY - controls.anchorHeadY;
 
-    final double shiftX = layer.canShift
+    final double targetShiftX = layer.canShift
         ? ((devX *
                     controls.shiftSens *
                     effectiveDepth *
@@ -243,22 +244,33 @@ class WindowEffect2DPreview extends StatelessWidget {
                 layer.y)
             .clamp(layer.minY, layer.maxY)
         : layer.y;
+
     final double shiftScale = _responsiveShiftScale(
       canvasSize: canvasSize,
       selectedAspect: controls.selectedAspect,
     );
-    final double adjustedShiftX =
-        (shiftX * shiftScale).clamp(-3000.0, 3000.0).toDouble();
-    final double adjustedShiftY =
+    final double baseShiftX =
+        (layer.x * shiftScale).clamp(-3000.0, 3000.0).toDouble();
+    final double baseShiftY =
+        (layer.y * shiftScale).clamp(-3000.0, 3000.0).toDouble();
+    final double targetScaledShiftX =
+        (targetShiftX * shiftScale).clamp(-3000.0, 3000.0).toDouble();
+    final double targetScaledShiftY =
         (shiftY * shiftScale).clamp(-3000.0, 3000.0).toDouble();
-    final double boundedShiftX = isOutsideLayer
-        ? adjustedShiftX.clamp(-_outsideOverflowMax, _outsideOverflowMax)
+    final double trackedShiftDeltaX = targetScaledShiftX - baseShiftX;
+    final double trackedShiftDeltaY = targetScaledShiftY - baseShiftY;
+    final double boundedShiftDeltaX = isOutsideLayer
+        ? trackedShiftDeltaX.clamp(-outsideOverflowMax, outsideOverflowMax)
             .toDouble()
-        : adjustedShiftX;
-    final double boundedShiftY = isOutsideLayer
-        ? adjustedShiftY.clamp(-_outsideOverflowMax, _outsideOverflowMax)
+        : trackedShiftDeltaX;
+    final double boundedShiftDeltaY = isOutsideLayer
+        ? trackedShiftDeltaY.clamp(-outsideOverflowMax, outsideOverflowMax)
             .toDouble()
-        : adjustedShiftY;
+        : trackedShiftDeltaY;
+    final double finalShiftX =
+        (baseShiftX + boundedShiftDeltaX).clamp(-3000.0, 3000.0).toDouble();
+    final double finalShiftY =
+        (baseShiftY + boundedShiftDeltaY).clamp(-3000.0, 3000.0).toDouble();
 
     final double deltaZ = (frame.headZ - controls.zBase) / controls.zBase;
     final double zoomFactor = deltaZ *
@@ -305,7 +317,7 @@ class WindowEffect2DPreview extends StatelessWidget {
             scale: scale,
             alignment: Alignment.center,
             child: Transform.translate(
-              offset: Offset(boundedShiftX, boundedShiftY),
+              offset: Offset(finalShiftX, finalShiftY),
               child: SizedBox.expand(
                 child: Center(
                   child: layer.isText
@@ -386,7 +398,7 @@ class WindowEffect2DPreview extends StatelessWidget {
     if (layer.url == null || layer.url!.isEmpty) {
       return const SizedBox.shrink();
     }
-    final double extra = isOutsideLayer ? _outsideOverflowMax * 2 : 0;
+    final double extra = isOutsideLayer ? outsideOverflowMax * 2 : 0;
     final double width = (canvasSize.width + extra).clamp(1, 100000).toDouble();
     final double height =
         (canvasSize.height + extra).clamp(1, 100000).toDouble();

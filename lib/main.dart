@@ -309,26 +309,44 @@ class _TrackingRouteObserver extends NavigatorObserver {
     return false;
   }
 
-  void _sync(Route<dynamic>? route) {
-    final String name = route?.settings.name?.toString() ?? '';
-    TrackingService.instance.setRouteActive(_isTrackingActiveRoute(name));
+  void _sync(
+    Route<dynamic>? route, {
+    Route<dynamic>? fallbackRoute,
+  }) {
+    final String primaryName = route?.settings.name?.toString().trim() ?? '';
+    if (primaryName.isNotEmpty) {
+      TrackingService.instance.setRouteActive(
+        _isTrackingActiveRoute(primaryName),
+      );
+      return;
+    }
+
+    final String fallbackName =
+        fallbackRoute?.settings.name?.toString().trim() ?? '';
+    if (fallbackName.isNotEmpty && _isTrackingActiveRoute(fallbackName)) {
+      // Preserve tracking for unnamed overlays pushed from tracked routes.
+      TrackingService.instance.setRouteActive(true);
+      return;
+    }
+
+    TrackingService.instance.setRouteActive(false);
   }
 
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
     super.didPush(route, previousRoute);
-    _sync(route);
+    _sync(route, fallbackRoute: previousRoute);
   }
 
   @override
   void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
-    _sync(newRoute);
+    _sync(newRoute, fallbackRoute: oldRoute);
   }
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
     super.didPop(route, previousRoute);
-    _sync(previousRoute);
+    _sync(previousRoute, fallbackRoute: route);
   }
 }

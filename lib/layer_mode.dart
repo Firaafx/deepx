@@ -314,7 +314,7 @@ class _LayerModeState extends State<LayerMode> {
       _globalTrackingListener = () {
         final frame = TrackingService.instance.frameNotifier.value;
         if (!mounted) return;
-        if (!isEditMode && !manualMode) {
+        if (!manualMode && (!isEditMode || widget.embeddedStudio)) {
           setState(() {
             _applyHeadTrackingMap(
               <String, dynamic>{'head': frame.toHeadPoseMap()},
@@ -352,7 +352,7 @@ class _LayerModeState extends State<LayerMode> {
       _globalTrackingListener ??= () {
         final frame = TrackingService.instance.frameNotifier.value;
         if (!mounted) return;
-        if (!isEditMode && !manualMode) {
+        if (!manualMode && (!isEditMode || widget.embeddedStudio)) {
           setState(() {
             _applyHeadTrackingMap(
               <String, dynamic>{'head': frame.toHeadPoseMap()},
@@ -450,7 +450,7 @@ class _LayerModeState extends State<LayerMode> {
     });
 
     _trackingDataSubscription = _dataController.stream.listen((data) {
-      if (!isEditMode && !manualMode) {
+      if (!manualMode && (!isEditMode || widget.embeddedStudio)) {
         setState(() => _applyHeadTrackingMap(data));
       }
     });
