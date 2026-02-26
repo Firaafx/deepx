@@ -480,6 +480,24 @@ class AppRepository {
     );
   }
 
+  Future<Map<String, dynamic>?> fetchPostStudioDraftState() {
+    return fetchModeState('post_studio_draft');
+  }
+
+  Future<void> upsertPostStudioDraftState(Map<String, dynamic> state) {
+    return upsertModeState(mode: 'post_studio_draft', state: state);
+  }
+
+  Future<void> clearPostStudioDraftState() async {
+    final user = currentUser;
+    if (user == null) return;
+    await _client
+        .from('mode_states')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('mode', 'post_studio_draft');
+  }
+
   Future<List<RenderPreset>> fetchUserPresets({String? mode}) async {
     final user = currentUser;
     if (user == null) return const <RenderPreset>[];

@@ -7,17 +7,25 @@ import '../models/preset_payload_v2.dart';
 import '../models/tracking_frame.dart';
 import '../services/tracking_service.dart';
 
+enum WindowEffectLayerMode {
+  combined,
+  insideOnly,
+  outsideOnly,
+}
+
 class WindowEffect2DPreview extends StatelessWidget {
   const WindowEffect2DPreview({
     super.key,
     required this.mode,
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
+    this.layerMode = WindowEffectLayerMode.combined,
   });
 
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
+  final WindowEffectLayerMode layerMode;
   static const double _outsideOverflowMax = 50;
 
   @override
@@ -65,6 +73,43 @@ class WindowEffect2DPreview extends StatelessWidget {
                 inside.add(item);
               }
             }
+            if (layerMode == WindowEffectLayerMode.insideOnly) {
+              return ClipRRect(
+                borderRadius: borderRadius,
+                child: ColoredBox(
+                  color: Colors.black,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    fit: StackFit.expand,
+                    children: inside,
+                  ),
+                ),
+              );
+            }
+
+            if (layerMode == WindowEffectLayerMode.outsideOnly) {
+              if (outside.isEmpty) return const SizedBox.shrink();
+              return Stack(
+                clipBehavior: Clip.none,
+                fit: StackFit.expand,
+                children: <Widget>[
+                  Positioned(
+                    left: -_outsideOverflowMax,
+                    right: -_outsideOverflowMax,
+                    top: -_outsideOverflowMax,
+                    bottom: -_outsideOverflowMax,
+                    child: IgnorePointer(
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        fit: StackFit.expand,
+                        children: outside,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }
+
             return Stack(
               clipBehavior: Clip.none,
               fit: StackFit.expand,

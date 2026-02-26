@@ -358,7 +358,7 @@ class TrackingService {
       final int height = (html.window.innerHeight ?? 1).clamp(1, 1000000);
       _mouseCursorX = event.client.x.clamp(0, width - 1).toDouble();
       _mouseCursorY = event.client.y.clamp(0, height - 1).toDouble();
-      final double normX = ((_mouseCursorX / width) - 0.5) * 2;
+      final double normX = -(((_mouseCursorX / width) - 0.5) * 2);
       final double normY = ((_mouseCursorY / height) - 0.5) * 2;
       _mouseHeadX = normX.clamp(-1.0, 1.0);
       _mouseHeadY = normY.clamp(-1.0, 1.0);

@@ -132,6 +132,21 @@ class _MyAppState extends State<MyApp> {
         ),
         scaffoldBackgroundColor: const Color(0xFFF7F7F7),
         cardColor: Colors.white,
+        progressIndicatorTheme: const ProgressIndicatorThemeData(
+          color: Colors.white,
+          linearTrackColor: Colors.transparent,
+        ),
+        chipTheme: const ChipThemeData(
+          selectedColor: Colors.white,
+          secondarySelectedColor: Colors.white,
+          checkmarkColor: Colors.black,
+          side: BorderSide(color: Color(0x33000000)),
+          labelStyle: TextStyle(fontWeight: FontWeight.w600),
+          secondaryLabelStyle: TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
@@ -149,6 +164,21 @@ class _MyAppState extends State<MyApp> {
         ),
         scaffoldBackgroundColor: const Color(0xFF000000),
         cardColor: const Color(0xFF121212),
+        progressIndicatorTheme: const ProgressIndicatorThemeData(
+          color: Colors.white,
+          linearTrackColor: Colors.transparent,
+        ),
+        chipTheme: const ChipThemeData(
+          selectedColor: Colors.white,
+          secondarySelectedColor: Colors.white,
+          checkmarkColor: Colors.black,
+          side: BorderSide(color: Color(0x33FFFFFF)),
+          labelStyle: TextStyle(fontWeight: FontWeight.w600),
+          secondaryLabelStyle: TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: const Color(0xFF141414),

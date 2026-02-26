@@ -29,9 +29,11 @@ import 'models/render_preset.dart';
 import 'models/tracker_runtime_config.dart';
 import 'models/watch_later_item.dart';
 import 'services/app_repository.dart';
+import 'services/query_guard.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
 import 'widgets/preset_viewer.dart';
+import 'widgets/query_feedback.dart';
 import 'widgets/window_effect_2d_preview.dart';
 
 enum _ShellTab {
@@ -155,7 +157,6 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane> {
     if (overlay == null) return;
     _loadingOverlayEntry = OverlayEntry(
       builder: (context) {
-        final ColorScheme cs = Theme.of(context).colorScheme;
         return IgnorePointer(
           child: Align(
             alignment: Alignment.topCenter,
@@ -166,7 +167,7 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane> {
                 child: LinearProgressIndicator(
                   minHeight: widget.minHeight,
                   backgroundColor: Colors.transparent,
-                  color: cs.primary,
+                  color: Colors.white,
                 ),
               ),
             ),
@@ -231,12 +232,14 @@ class _StandalonePostRoutePageState extends State<StandalonePostRoutePage> {
       return;
     }
     try {
-      final post = await _repository.fetchFeedPostByRouteId(routeId);
+      final post = await QueryGuard.run(
+        () => _repository.fetchFeedPostByRouteId(routeId),
+      );
       if (!mounted) return;
       if (post == null) {
         setState(() {
           _loading = false;
-          _error = 'Post not found.';
+          _error = 'Unable to load post.';
         });
         return;
       }
@@ -245,10 +248,11 @@ class _StandalonePostRoutePageState extends State<StandalonePostRoutePage> {
         _loading = false;
       });
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Failed to load post: $e';
+        _error = failure.message;
       });
     }
   }
@@ -264,21 +268,10 @@ class _StandalonePostRoutePageState extends State<StandalonePostRoutePage> {
     if (_error != null) {
       return Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        body: Stack(
-          children: [
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: LinearProgressIndicator(minHeight: 3, value: 1),
-            ),
-            Center(
-              child: Text(
-                _error!,
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ],
+        body: QueryRetryPane(
+          title: _error,
+          offline: _isOfflineErrorText(_error!),
+          onRetry: _load,
         ),
       );
     }
@@ -323,12 +316,14 @@ class _StandaloneCollectionRoutePageState
       return;
     }
     try {
-      final detail = await _repository.fetchCollectionByRouteId(routeId);
+      final detail = await QueryGuard.run(
+        () => _repository.fetchCollectionByRouteId(routeId),
+      );
       if (!mounted) return;
       if (detail == null) {
         setState(() {
           _loading = false;
-          _error = 'Collection not found.';
+          _error = 'Unable to load collection.';
         });
         return;
       }
@@ -337,10 +332,11 @@ class _StandaloneCollectionRoutePageState
         _loading = false;
       });
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Failed to load collection: $e';
+        _error = failure.message;
       });
     }
   }
@@ -356,21 +352,10 @@ class _StandaloneCollectionRoutePageState
     if (_error != null) {
       return Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        body: Stack(
-          children: [
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: LinearProgressIndicator(minHeight: 3, value: 1),
-            ),
-            Center(
-              child: Text(
-                _error!,
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ],
+        body: QueryRetryPane(
+          title: _error,
+          offline: _isOfflineErrorText(_error!),
+          onRetry: _load,
         ),
       );
     }
@@ -424,20 +409,24 @@ class _StandalonePublicProfileRoutePageState
       return;
     }
     try {
-      final profile = await _repository.fetchProfileByUsername(username);
+      final profile = await QueryGuard.run(
+        () => _repository.fetchProfileByUsername(username),
+      );
       if (profile == null) {
         if (!mounted) return;
         setState(() {
           _loading = false;
-          _error = 'Profile not found.';
+          _error = 'Unable to load profile.';
         });
         return;
       }
-      final results = await Future.wait<dynamic>([
-        _repository.fetchProfileStats(profile.userId),
-        _repository.fetchPublicPostsForUser(profile.userId, limit: 90),
-        _repository.fetchPublicCollectionsForUser(profile.userId, limit: 60),
-      ]);
+      final results = await QueryGuard.run(
+        () => Future.wait<dynamic>([
+          _repository.fetchProfileStats(profile.userId),
+          _repository.fetchPublicPostsForUser(profile.userId, limit: 90),
+          _repository.fetchPublicCollectionsForUser(profile.userId, limit: 60),
+        ]),
+      );
       if (!mounted) return;
       setState(() {
         _profile = profile;
@@ -447,10 +436,11 @@ class _StandalonePublicProfileRoutePageState
         _loading = false;
       });
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Failed to load profile: $e';
+        _error = failure.message;
       });
     }
   }
@@ -466,11 +456,11 @@ class _StandalonePublicProfileRoutePageState
     if (_error != null || _profile == null) {
       return Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        body: Center(
-          child: Text(
-            _error ?? 'Profile unavailable.',
-            textAlign: TextAlign.center,
-          ),
+        body: QueryRetryPane(
+          title: _error ?? 'Profile unavailable.',
+          offline:
+              _error != null ? _isOfflineErrorText(_error!) : false,
+          onRetry: _load,
         ),
       );
     }
@@ -631,21 +621,51 @@ class _StandalonePublicProfileRoutePageState
                     children: [
                       ChoiceChip(
                         selected: _filter == _PublicProfileFilter.all,
-                        label: const Text('All'),
+                        label: Text(
+                          'All',
+                          style: TextStyle(
+                            color: _filter == _PublicProfileFilter.all
+                                ? Colors.black
+                                : cs.onSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        selectedColor: Colors.white,
+                        checkmarkColor: Colors.black,
                         onSelected: (_) =>
                             setState(() => _filter = _PublicProfileFilter.all),
                       ),
                       const SizedBox(width: 8),
                       ChoiceChip(
                         selected: _filter == _PublicProfileFilter.posts,
-                        label: const Text('Posts'),
+                        label: Text(
+                          'Posts',
+                          style: TextStyle(
+                            color: _filter == _PublicProfileFilter.posts
+                                ? Colors.black
+                                : cs.onSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        selectedColor: Colors.white,
+                        checkmarkColor: Colors.black,
                         onSelected: (_) => setState(
                             () => _filter = _PublicProfileFilter.posts),
                       ),
                       const SizedBox(width: 8),
                       ChoiceChip(
                         selected: _filter == _PublicProfileFilter.collections,
-                        label: const Text('Collections'),
+                        label: Text(
+                          'Collections',
+                          style: TextStyle(
+                            color: _filter == _PublicProfileFilter.collections
+                                ? Colors.black
+                                : cs.onSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        selectedColor: Colors.white,
+                        checkmarkColor: Colors.black,
                         onSelected: (_) => setState(
                           () => _filter = _PublicProfileFilter.collections,
                         ),
@@ -930,10 +950,17 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
       });
       return;
     }
-    final profile = await _repository.ensureCurrentProfile();
-    if (!mounted) return;
-    setState(() => _currentProfile = profile);
-    unawaited(_loadHeaderNotifications());
+    try {
+      final profile = await QueryGuard.run(
+        () => _repository.ensureCurrentProfile(),
+      );
+      if (!mounted) return;
+      setState(() => _currentProfile = profile);
+      unawaited(_loadHeaderNotifications());
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _currentProfile = null);
+    }
   }
 
   Future<void> _loadHeaderNotifications() async {
@@ -946,12 +973,16 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
       return;
     }
     try {
-      final notifications = await _repository.fetchNotifications(limit: 80);
+      final notifications = await QueryGuard.run(
+        () => _repository.fetchNotifications(limit: 80),
+      );
       final Set<String> actorIds = notifications
           .map((n) => n.actorUserId ?? '')
           .where((id) => id.isNotEmpty)
           .toSet();
-      final actors = await _repository.fetchProfilesByIds(actorIds);
+      final actors = await QueryGuard.run(
+        () => _repository.fetchProfilesByIds(actorIds),
+      );
       if (!mounted) return;
       setState(() {
         _headerNotifications = notifications;
@@ -998,21 +1029,32 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
 
     final String targetId = item.data['preset_id']?.toString() ?? '';
     if (targetId.isEmpty) return;
-    final post = await _repository.fetchFeedPostByRouteId(targetId);
-    if (!mounted) return;
-    if (post != null) {
+    try {
+      final post = await QueryGuard.run(
+        () => _repository.fetchFeedPostByRouteId(targetId),
+      );
+      if (!mounted) return;
+      if (post != null) {
+        await Navigator.pushNamed(
+          context,
+          buildPostRoutePathForPreset(post.preset),
+        );
+        return;
+      }
+      final collection = await QueryGuard.run(
+        () => _repository.fetchCollectionByRouteId(targetId),
+      );
+      if (!mounted || collection == null) return;
       await Navigator.pushNamed(
         context,
-        buildPostRoutePathForPreset(post.preset),
+        buildCollectionRoutePathForSummary(collection.summary),
       );
-      return;
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No internet connection. Retry.')),
+      );
     }
-    final collection = await _repository.fetchCollectionByRouteId(targetId);
-    if (!mounted || collection == null) return;
-    await Navigator.pushNamed(
-      context,
-      buildCollectionRoutePathForSummary(collection.summary),
-    );
   }
 
   Future<void> _openHeaderNotifications() async {
@@ -1056,8 +1098,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
               final String body = item.body.isNotEmpty
                   ? item.body
                   : (item.data['preset_title']?.toString() ?? '');
-              final String meta =
-                  '${_friendlyTime(item.createdAt)} · ${_formatDateTime(item.createdAt)}';
+              final String meta = _friendlyTime(item.createdAt);
               final String subtitleText = body.isEmpty ? meta : '$body\n$meta';
               return ListTile(
                 leading: CircleAvatar(
@@ -1661,6 +1702,8 @@ class _HomeFeedTab extends StatefulWidget {
 
 class _HomeFeedTabState extends State<_HomeFeedTab> {
   final AppRepository _repository = AppRepository.instance;
+  static const double _chipRailTop = 56;
+  static const double _chipRailHeight = 38;
   static const List<String> _homeFeedChips = <String>[
     'All',
     'FYP',
@@ -1689,7 +1732,9 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     });
 
     try {
-      final posts = await _repository.fetchFeedPosts(limit: 120);
+      final posts = await QueryGuard.run(
+        () => _repository.fetchFeedPosts(limit: 120),
+      );
       if (!mounted) return;
       setState(() {
         _posts
@@ -1698,10 +1743,11 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
         _loading = false;
       });
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = failure.message;
       });
     }
   }
@@ -1724,7 +1770,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
           payload: post.preset.payload,
           existingPreset: post.preset,
           editTarget: _ComposerEditTarget.card,
-          startBlankCard: true,
+          startBlankCard: false,
         ),
       ),
     );
@@ -2048,26 +2094,31 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
   }
 
   Widget _buildHomeChipRail(ColorScheme cs) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(14, widget.topInset + 6, 14, 8),
-      child: SizedBox(
-        height: 38,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: _homeFeedChips.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (context, index) {
-            final String chip = _homeFeedChips[index];
-            final bool selected = chip == _selectedHomeChip;
-            return ChoiceChip(
-              selected: selected,
-              label: Text(chip),
-              onSelected: (_) => setState(() => _selectedHomeChip = chip),
-              selectedColor: cs.primary.withValues(alpha: 0.18),
-              side: BorderSide(color: cs.outline.withValues(alpha: 0.22)),
-            );
-          },
-        ),
+    return SizedBox(
+      height: _chipRailHeight,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _homeFeedChips.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final String chip = _homeFeedChips[index];
+          final bool selected = chip == _selectedHomeChip;
+          return ChoiceChip(
+            selected: selected,
+            label: Text(
+              chip,
+              style: TextStyle(
+                color: selected ? Colors.black : cs.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            onSelected: (_) => setState(() => _selectedHomeChip = chip),
+            selectedColor: Colors.white,
+            backgroundColor: Colors.transparent,
+            checkmarkColor: Colors.black,
+            side: BorderSide(color: cs.outline.withValues(alpha: 0.22)),
+          );
+        },
       ),
     );
   }
@@ -2081,12 +2132,10 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     }
 
     if (_error != null) {
-      return Center(
-        child: Text(
-          _error!,
-          style: TextStyle(color: cs.error),
-          textAlign: TextAlign.center,
-        ),
+      return QueryRetryPane(
+        title: _error,
+        offline: _isOfflineErrorText(_error!),
+        onRetry: _loadFeed,
       );
     }
 
@@ -2103,10 +2152,9 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
       );
     }
 
-    return Column(
+    return Stack(
       children: [
-        _buildHomeChipRail(cs),
-        Expanded(
+        Positioned.fill(
           child: NotificationListener<UserScrollNotification>(
             onNotification: (notification) {
               if (notification.direction == ScrollDirection.reverse) {
@@ -2130,7 +2178,9 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
                 }
 
                 return GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14).copyWith(
+                    top: _chipRailTop + _chipRailHeight + 12,
+                  ),
                   itemCount: visiblePosts.length,
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: crossAxisCount,
@@ -2164,6 +2214,12 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
             ),
           ),
         ),
+        Positioned(
+          top: _chipRailTop,
+          left: 14,
+          right: 14,
+          child: _buildHomeChipRail(cs),
+        ),
       ],
     );
   }
@@ -2185,6 +2241,8 @@ class _CollectionTab extends StatefulWidget {
 
 class _CollectionTabState extends State<_CollectionTab> {
   final AppRepository _repository = AppRepository.instance;
+  static const double _chipRailTop = 56;
+  static const double _chipRailHeight = 38;
   static const List<String> _collectionChips = <String>[
     'All',
     'FYP',
@@ -2215,12 +2273,16 @@ class _CollectionTabState extends State<_CollectionTab> {
     try {
       final Map<String, CollectionSummary> merged =
           <String, CollectionSummary>{};
-      final published = await _repository.fetchPublishedCollections(limit: 120);
+      final published = await QueryGuard.run(
+        () => _repository.fetchPublishedCollections(limit: 120),
+      );
       for (final c in published) {
         merged[c.id] = c;
       }
       if (_repository.currentUser != null) {
-        final mine = await _repository.fetchCollectionsForCurrentUser();
+        final mine = await QueryGuard.run(
+          () => _repository.fetchCollectionsForCurrentUser(),
+        );
         for (final c in mine) {
           merged[c.id] = c;
         }
@@ -2235,10 +2297,11 @@ class _CollectionTabState extends State<_CollectionTab> {
         _loading = false;
       });
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = failure.message;
       });
     }
   }
@@ -2312,8 +2375,20 @@ class _CollectionTabState extends State<_CollectionTab> {
   }
 
   Future<void> _updateCollection(CollectionSummary summary) async {
-    final detail = await _repository.fetchCollectionById(summary.id);
+    CollectionDetail? detail;
+    try {
+      detail = await QueryGuard.run(
+        () => _repository.fetchCollectionById(summary.id),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No internet connection. Retry.')),
+      );
+      return;
+    }
     if (!mounted || detail == null) return;
+    final CollectionDetail resolvedDetail = detail;
     final updated = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -2327,8 +2402,8 @@ class _CollectionTabState extends State<_CollectionTab> {
           initialCardPayload: summary.thumbnailPayload,
           initialCardMode: summary.thumbnailMode,
           editTarget: _ComposerEditTarget.card,
-          startBlankCard: true,
-          items: detail.items
+          startBlankCard: false,
+          items: resolvedDetail.items
               .map(
                 (item) => CollectionDraftItem(
                   mode: item.mode,
@@ -2617,26 +2692,31 @@ class _CollectionTabState extends State<_CollectionTab> {
   }
 
   Widget _buildCollectionChipRail(ColorScheme cs) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(14, widget.topInset + 6, 14, 8),
-      child: SizedBox(
-        height: 38,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: _collectionChips.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (context, index) {
-            final String chip = _collectionChips[index];
-            final bool selected = chip == _selectedCollectionChip;
-            return ChoiceChip(
-              selected: selected,
-              label: Text(chip),
-              onSelected: (_) => setState(() => _selectedCollectionChip = chip),
-              selectedColor: cs.primary.withValues(alpha: 0.18),
-              side: BorderSide(color: cs.outline.withValues(alpha: 0.22)),
-            );
-          },
-        ),
+    return SizedBox(
+      height: _chipRailHeight,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _collectionChips.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final String chip = _collectionChips[index];
+          final bool selected = chip == _selectedCollectionChip;
+          return ChoiceChip(
+            selected: selected,
+            label: Text(
+              chip,
+              style: TextStyle(
+                color: selected ? Colors.black : cs.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            onSelected: (_) => setState(() => _selectedCollectionChip = chip),
+            selectedColor: Colors.white,
+            backgroundColor: Colors.transparent,
+            checkmarkColor: Colors.black,
+            side: BorderSide(color: cs.outline.withValues(alpha: 0.22)),
+          );
+        },
       ),
     );
   }
@@ -2651,12 +2731,10 @@ class _CollectionTabState extends State<_CollectionTab> {
     }
 
     if (_error != null) {
-      return Center(
-        child: Text(
-          _error!,
-          style: TextStyle(color: cs.error),
-          textAlign: TextAlign.center,
-        ),
+      return QueryRetryPane(
+        title: _error,
+        offline: _isOfflineErrorText(_error!),
+        onRetry: _loadCollections,
       );
     }
 
@@ -2673,10 +2751,9 @@ class _CollectionTabState extends State<_CollectionTab> {
       );
     }
 
-    return Column(
+    return Stack(
       children: [
-        _buildCollectionChipRail(cs),
-        Expanded(
+        Positioned.fill(
           child: NotificationListener<UserScrollNotification>(
             onNotification: (notification) {
               if (notification.direction == ScrollDirection.reverse) {
@@ -2700,7 +2777,9 @@ class _CollectionTabState extends State<_CollectionTab> {
                 }
 
                 return GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14).copyWith(
+                    top: _chipRailTop + _chipRailHeight + 12,
+                  ),
                   itemCount: visibleCollections.length,
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: crossAxisCount,
@@ -2733,6 +2812,12 @@ class _CollectionTabState extends State<_CollectionTab> {
               },
             ),
           ),
+        ),
+        Positioned(
+          top: _chipRailTop,
+          left: 14,
+          right: 14,
+          child: _buildCollectionChipRail(cs),
         ),
       ],
     );
@@ -2789,10 +2874,11 @@ class _CollectionFeedTile extends StatelessWidget {
               ),
             ),
           )
-        : _GridPresetPreview(
+        : _OverlayParallaxPreview(
             mode: previewMode,
             payload: previewPayload,
             borderRadius: cardRadius,
+            enableOutsideOverlay: true,
           );
     return Material(
       color: Colors.transparent,
@@ -2975,10 +3061,11 @@ class _FeedTile extends StatelessWidget {
         post.preset.thumbnailPayload.isNotEmpty
             ? post.preset.thumbnailPayload
             : post.preset.payload;
-    final Widget preview = _GridPresetPreview(
+    final Widget layeredPreview = _OverlayParallaxPreview(
       mode: previewMode,
       payload: previewPayload,
       borderRadius: cardRadius,
+      enableOutsideOverlay: true,
     );
 
     return Material(
@@ -2996,7 +3083,7 @@ class _FeedTile extends StatelessWidget {
                 clipBehavior: Clip.none,
                 fit: StackFit.expand,
                 children: [
-                  IgnorePointer(child: preview),
+                  IgnorePointer(child: layeredPreview),
                   Positioned(
                     top: 8,
                     right: 8,
@@ -3127,18 +3214,156 @@ class _FeedTile extends StatelessWidget {
   }
 }
 
-class _GridPresetPreview extends StatelessWidget {
-  const _GridPresetPreview({
+enum _GridPresetPreviewLayerMode {
+  combined,
+  insideOnly,
+  outsideOnly,
+}
+
+class _OverlayParallaxPreview extends StatefulWidget {
+  const _OverlayParallaxPreview({
     required this.mode,
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.pointerPassthrough = true,
+    this.enableOutsideOverlay = false,
   });
 
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
   final bool pointerPassthrough;
+  final bool enableOutsideOverlay;
+
+  @override
+  State<_OverlayParallaxPreview> createState() => _OverlayParallaxPreviewState();
+}
+
+class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
+  final LayerLink _link = LayerLink();
+  OverlayEntry? _outsideOverlayEntry;
+  Size _targetSize = Size.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _ensureOutsideOverlay();
+  }
+
+  @override
+  void didUpdateWidget(covariant _OverlayParallaxPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.enableOutsideOverlay && _outsideOverlayEntry != null) {
+      _removeOutsideOverlay();
+      return;
+    }
+    if (widget.enableOutsideOverlay && _outsideOverlayEntry == null) {
+      _ensureOutsideOverlay();
+      return;
+    }
+    _outsideOverlayEntry?.markNeedsBuild();
+  }
+
+  @override
+  void dispose() {
+    _removeOutsideOverlay();
+    super.dispose();
+  }
+
+  void _ensureOutsideOverlay() {
+    if (!widget.enableOutsideOverlay) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.enableOutsideOverlay) return;
+      if (_outsideOverlayEntry != null) return;
+      final overlay = Overlay.maybeOf(context, rootOverlay: true);
+      if (overlay == null) return;
+      _outsideOverlayEntry = OverlayEntry(
+        builder: (context) {
+          if (!widget.enableOutsideOverlay) return const SizedBox.shrink();
+          if (_targetSize.width <= 0 || _targetSize.height <= 0) {
+            return const SizedBox.shrink();
+          }
+          return IgnorePointer(
+            child: CompositedTransformFollower(
+              link: _link,
+              showWhenUnlinked: false,
+              offset: Offset.zero,
+              child: SizedBox(
+                width: _targetSize.width,
+                height: _targetSize.height,
+                child: _GridPresetPreview(
+                  mode: widget.mode,
+                  payload: widget.payload,
+                  borderRadius: BorderRadius.zero,
+                  pointerPassthrough: true,
+                  layerMode: _GridPresetPreviewLayerMode.outsideOnly,
+                ),
+              ),
+            ),
+          );
+        },
+      );
+      overlay.insert(_outsideOverlayEntry!);
+    });
+  }
+
+  void _removeOutsideOverlay() {
+    _outsideOverlayEntry?.remove();
+    _outsideOverlayEntry = null;
+  }
+
+  void _updateTargetSize(Size next) {
+    if ((_targetSize.width - next.width).abs() < 0.01 &&
+        (_targetSize.height - next.height).abs() < 0.01) {
+      return;
+    }
+    _targetSize = next;
+    _outsideOverlayEntry?.markNeedsBuild();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enableOutsideOverlay) {
+      return _GridPresetPreview(
+        mode: widget.mode,
+        payload: widget.payload,
+        borderRadius: widget.borderRadius,
+        pointerPassthrough: widget.pointerPassthrough,
+      );
+    }
+    _ensureOutsideOverlay();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _updateTargetSize(constraints.biggest);
+        return CompositedTransformTarget(
+          link: _link,
+          child: _GridPresetPreview(
+            mode: widget.mode,
+            payload: widget.payload,
+            borderRadius: widget.borderRadius,
+            pointerPassthrough: widget.pointerPassthrough,
+            layerMode: _GridPresetPreviewLayerMode.insideOnly,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GridPresetPreview extends StatelessWidget {
+  const _GridPresetPreview({
+    required this.mode,
+    required this.payload,
+    this.borderRadius = const BorderRadius.all(Radius.circular(16)),
+    this.pointerPassthrough = true,
+    this.layerMode = _GridPresetPreviewLayerMode.combined,
+  });
+
+  final String mode;
+  final Map<String, dynamic> payload;
+  final BorderRadius borderRadius;
+  final bool pointerPassthrough;
+  final _GridPresetPreviewLayerMode layerMode;
 
   @override
   Widget build(BuildContext context) {
@@ -3149,6 +3374,9 @@ class _GridPresetPreview extends StatelessWidget {
     );
 
     if (adapted.scene.isEmpty) {
+      if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
+        return const SizedBox.shrink();
+      }
       return ClipRRect(
         borderRadius: borderRadius,
         child: DecoratedBox(
@@ -3167,10 +3395,19 @@ class _GridPresetPreview extends StatelessWidget {
     }
 
     if (adapted.mode == '2d') {
+      final WindowEffectLayerMode resolvedLayerMode = switch (layerMode) {
+        _GridPresetPreviewLayerMode.combined =>
+          WindowEffectLayerMode.combined,
+        _GridPresetPreviewLayerMode.insideOnly =>
+          WindowEffectLayerMode.insideOnly,
+        _GridPresetPreviewLayerMode.outsideOnly =>
+          WindowEffectLayerMode.outsideOnly,
+      };
       return WindowEffect2DPreview(
         mode: adapted.mode,
         payload: adapted.toMap(),
         borderRadius: borderRadius,
+        layerMode: resolvedLayerMode,
       );
     }
 
@@ -3180,7 +3417,10 @@ class _GridPresetPreview extends StatelessWidget {
   Widget _build3DPreview(PresetPayloadV2 adapted) {
     final bool hasWindowAssignments = _has3DWindowAssignments(adapted.scene);
     if (!hasWindowAssignments) {
-      return PresetViewer(
+      if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
+        return const SizedBox.shrink();
+      }
+      final Widget viewer = PresetViewer(
         mode: adapted.mode,
         payload: adapted.toMap(),
         cleanView: true,
@@ -3189,6 +3429,10 @@ class _GridPresetPreview extends StatelessWidget {
         useGlobalTracking: true,
         pointerPassthrough: pointerPassthrough,
       );
+      if (layerMode == _GridPresetPreviewLayerMode.insideOnly) {
+        return ClipRRect(borderRadius: borderRadius, child: viewer);
+      }
+      return viewer;
     }
 
     final Map<String, dynamic> insidePayload = adapted.toMap()
@@ -3197,40 +3441,55 @@ class _GridPresetPreview extends StatelessWidget {
       ..['scene'] = _filtered3dScene(adapted.scene, 'outside');
     final bool hasOutside = _sceneHasModelsOrLights(outsidePayload['scene']);
 
+    final Widget inside = ClipRRect(
+      borderRadius: borderRadius,
+      child: PresetViewer(
+        mode: adapted.mode,
+        payload: insidePayload,
+        cleanView: true,
+        embedded: true,
+        disableAudio: true,
+        useGlobalTracking: true,
+        pointerPassthrough: pointerPassthrough,
+      ),
+    );
+
+    final Widget outside = Positioned(
+      left: -50,
+      right: -50,
+      top: -50,
+      bottom: -50,
+      child: IgnorePointer(
+        child: PresetViewer(
+          mode: adapted.mode,
+          payload: outsidePayload,
+          cleanView: true,
+          embedded: true,
+          disableAudio: true,
+          useGlobalTracking: true,
+          pointerPassthrough: true,
+        ),
+      ),
+    );
+
+    if (layerMode == _GridPresetPreviewLayerMode.insideOnly) {
+      return inside;
+    }
+    if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
+      if (!hasOutside) return const SizedBox.shrink();
+      return Stack(
+        clipBehavior: Clip.none,
+        fit: StackFit.expand,
+        children: <Widget>[outside],
+      );
+    }
+
     return Stack(
       clipBehavior: Clip.none,
       fit: StackFit.expand,
       children: <Widget>[
-        ClipRRect(
-          borderRadius: borderRadius,
-          child: PresetViewer(
-            mode: adapted.mode,
-            payload: insidePayload,
-            cleanView: true,
-            embedded: true,
-            disableAudio: true,
-            useGlobalTracking: true,
-            pointerPassthrough: pointerPassthrough,
-          ),
-        ),
-        if (hasOutside)
-          Positioned(
-            left: -50,
-            right: -50,
-            top: -50,
-            bottom: -50,
-            child: IgnorePointer(
-              child: PresetViewer(
-                mode: adapted.mode,
-                payload: outsidePayload,
-                cleanView: true,
-                embedded: true,
-                disableAudio: true,
-                useGlobalTracking: true,
-                pointerPassthrough: pointerPassthrough,
-              ),
-            ),
-          ),
+        inside,
+        if (hasOutside) outside,
       ],
     );
   }
@@ -3341,6 +3600,90 @@ class _GridPresetPreview extends StatelessWidget {
   }
 }
 
+Future<void> _openDetailFullscreenViewer(
+  BuildContext context, {
+  required String heroTag,
+  required String mode,
+  required Map<String, dynamic> payload,
+}) async {
+  await Navigator.of(context).push<void>(
+    PageRouteBuilder<void>(
+      opaque: true,
+      transitionDuration: const Duration(milliseconds: 360),
+      reverseTransitionDuration: const Duration(milliseconds: 320),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return _DetailFullscreenViewerPage(
+          heroTag: heroTag,
+          mode: mode,
+          payload: payload,
+        );
+      },
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        return child;
+      },
+    ),
+  );
+}
+
+class _DetailFullscreenViewerPage extends StatelessWidget {
+  const _DetailFullscreenViewerPage({
+    required this.heroTag,
+    required this.mode,
+    required this.payload,
+  });
+
+  final String heroTag;
+  final String mode;
+  final Map<String, dynamic> payload;
+
+  @override
+  Widget build(BuildContext context) {
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          Navigator.maybePop(context);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyF): () {
+          Navigator.maybePop(context);
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onDoubleTap: () => Navigator.pop(context),
+                  child: Hero(
+                    tag: heroTag,
+                    child: _GridPresetPreview(
+                      mode: mode,
+                      payload: payload,
+                      borderRadius: BorderRadius.zero,
+                      pointerPassthrough: true,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 18,
+                left: 14,
+                child: IconButton.filledTonal(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.fullscreen_exit),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PresetDetailPage extends StatefulWidget {
   const _PresetDetailPage({required this.initialPost});
 
@@ -3371,10 +3714,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   bool _loadingComments = true;
   bool _sendingComment = false;
   bool _commentsOpen = false;
-  bool _immersive = false;
   bool _loadingSuggestions = false;
   bool _descriptionExpanded = false;
-  bool? _cursorBeforeImmersive;
   List<PresetComment> _comments = const <PresetComment>[];
   List<FeedPost> _suggestedPosts = const <FeedPost>[];
   String _suggestionFilter = _suggestionFilters.first;
@@ -3406,51 +3747,50 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
 
   @override
   void dispose() {
-    if (_cursorBeforeImmersive != null) {
-      TrackingService.instance.setDartCursorEnabled(_cursorBeforeImmersive!);
-      _cursorBeforeImmersive = null;
-    }
     _immersiveFocusNode.dispose();
     _commentController.dispose();
     super.dispose();
   }
 
-  void _toggleImmersive() {
-    final TrackingService tracking = TrackingService.instance;
-    if (!_immersive) {
-      _cursorBeforeImmersive = tracking.dartCursorEnabled;
-      tracking.setDartCursorEnabled(false);
-      setState(() => _immersive = true);
-      return;
-    }
-    setState(() => _immersive = false);
-    if (_cursorBeforeImmersive != null) {
-      tracking.setDartCursorEnabled(_cursorBeforeImmersive!);
-      _cursorBeforeImmersive = null;
-    }
+  String get _detailHeroTag => 'post-detail-hero-${_post.preset.id}';
+
+  Future<void> _openFullscreenViewer() async {
+    await _openDetailFullscreenViewer(
+      context,
+      heroTag: _detailHeroTag,
+      mode: _post.preset.mode,
+      payload: _post.preset.payload,
+    );
   }
 
   Future<void> _loadComments() async {
     setState(() => _loadingComments = true);
-    final comments = await _repository.fetchPresetComments(_post.preset.id);
-    if (!mounted) return;
-    setState(() {
-      _comments = comments;
-      _loadingComments = false;
-      _post = FeedPost(
-        preset: _post.preset,
-        author: _post.author,
-        likesCount: _post.likesCount,
-        dislikesCount: _post.dislikesCount,
-        commentsCount: comments.length,
-        savesCount: _post.savesCount,
-        myReaction: _post.myReaction,
-        isSaved: _post.isSaved,
-        isFollowingAuthor: _post.isFollowingAuthor,
-        viewsCount: _post.viewsCount,
-        isWatchLater: _post.isWatchLater,
+    try {
+      final comments = await QueryGuard.run(
+        () => _repository.fetchPresetComments(_post.preset.id),
       );
-    });
+      if (!mounted) return;
+      setState(() {
+        _comments = comments;
+        _loadingComments = false;
+        _post = FeedPost(
+          preset: _post.preset,
+          author: _post.author,
+          likesCount: _post.likesCount,
+          dislikesCount: _post.dislikesCount,
+          commentsCount: comments.length,
+          savesCount: _post.savesCount,
+          myReaction: _post.myReaction,
+          isSaved: _post.isSaved,
+          isFollowingAuthor: _post.isFollowingAuthor,
+          viewsCount: _post.viewsCount,
+          isWatchLater: _post.isWatchLater,
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingComments = false);
+    }
   }
 
   Future<void> _toggleReaction(int value) async {
@@ -3841,7 +4181,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     if (_loadingSuggestions) return;
     setState(() => _loadingSuggestions = true);
     try {
-      final posts = await _repository.fetchFeedPosts(limit: 120);
+      final posts = await QueryGuard.run(
+        () => _repository.fetchFeedPosts(limit: 120),
+      );
       if (!mounted) return;
       setState(() {
         _suggestedPosts = posts;
@@ -3927,7 +4269,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         return ao.compareTo(bo);
       });
       if (layers.isEmpty) return null;
-      return (layers.last.value['url'] ?? '').toString().trim();
+      return (layers.first.value['url'] ?? '').toString().trim();
     } catch (_) {
       return null;
     }
@@ -3941,13 +4283,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final viewer = PresetViewer(
-      mode: _post.preset.mode,
-      payload: _post.preset.payload,
-      cleanView: true,
-      embedded: true,
-      disableAudio: true,
-    );
+    final String heroTag = _detailHeroTag;
+    final String previewMode = _post.preset.mode;
+    final Map<String, dynamic> previewPayload = _post.preset.payload;
     final String? ambientUrl = _ambientImageUrlFromPayload(_post.preset.payload);
     final List<FeedPost> suggestions = _filteredSuggestions();
 
@@ -3972,57 +4310,284 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     }
 
     Widget buildHeader() {
-      return AnimatedSlide(
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeInOutCubic,
-        offset: _immersive ? const Offset(0, -1) : Offset.zero,
-        child: Container(
-          height: 62,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.black.withValues(alpha: 0.8),
-                Colors.transparent,
-              ],
-            ),
-          ),
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-          child: Row(
-            children: [
-              IconButton.filledTonal(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back_ios_new_rounded),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                'DeepX',
-                style: GoogleFonts.orbitron(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 24,
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: _immersive ? 'Exit Fullscreen' : 'Fullscreen',
-                onPressed: _toggleImmersive,
-                icon: Icon(
-                  _immersive ? Icons.fullscreen_exit : Icons.fullscreen,
-                  color: Colors.white,
-                ),
-              ),
+      return Container(
+        height: 62,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black.withValues(alpha: 0.8),
+              Colors.transparent,
             ],
           ),
         ),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+        child: Row(
+          children: [
+            IconButton.filledTonal(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_ios_new_rounded),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              'DeepX',
+              style: GoogleFonts.orbitron(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 24,
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              tooltip: 'Fullscreen',
+              onPressed: _openFullscreenViewer,
+              icon: const Icon(
+                Icons.fullscreen,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget buildAmbientUnderlay() {
+      if (ambientUrl == null || ambientUrl.isEmpty) {
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            color: Colors.black.withValues(alpha: 0.45),
+          ),
+        );
+      }
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              ambientUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
+            ),
+            BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Container(color: Colors.black.withValues(alpha: 0.44)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget buildCompactMetaOverlay() {
+      final String title =
+          _post.preset.title.isNotEmpty ? _post.preset.title : _post.preset.name;
+      return Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 34, 12, 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.88),
+                  Colors.black.withValues(alpha: 0.56),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${_friendlyCount(_post.viewsCount)} views · ${_friendlyTime(_post.preset.createdAt)}',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.84),
+                    fontSize: 11.5,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => _openPublicProfileRoute(context, _post.author),
+                      child: CircleAvatar(
+                        radius: 12,
+                        backgroundImage: (_post.author?.avatarUrl != null &&
+                                _post.author!.avatarUrl!.isNotEmpty)
+                            ? NetworkImage(_post.author!.avatarUrl!)
+                            : null,
+                        child: (_post.author?.avatarUrl == null ||
+                                _post.author!.avatarUrl!.isEmpty)
+                            ? const Icon(Icons.person, size: 14)
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () =>
+                            _openPublicProfileRoute(context, _post.author),
+                        child: Text(
+                          _post.author?.displayName ?? 'Unknown creator',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (!_mine)
+                      SizedBox(
+                        height: 28,
+                        child: FilledButton.tonal(
+                          onPressed: _toggleFollow,
+                          child: Text(
+                            _post.isFollowingAuthor ? 'Following' : 'Follow',
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _engagementButton(
+                        icon: _post.myReaction == 1
+                            ? Icons.thumb_up_alt
+                            : Icons.thumb_up_alt_outlined,
+                        active: _post.myReaction == 1,
+                        activeColor: cs.primary,
+                        label: _friendlyCount(_post.likesCount),
+                        onTap: () => _toggleReaction(1),
+                      ),
+                      _engagementButton(
+                        icon: _post.myReaction == -1
+                            ? Icons.thumb_down_alt
+                            : Icons.thumb_down_alt_outlined,
+                        active: _post.myReaction == -1,
+                        activeColor: Colors.redAccent,
+                        label: _friendlyCount(_post.dislikesCount),
+                        onTap: () => _toggleReaction(-1),
+                      ),
+                      _engagementButton(
+                        icon: Icons.send_outlined,
+                        active: false,
+                        activeColor: cs.primary,
+                        label: '',
+                        onTap: _openShareSheet,
+                      ),
+                      _engagementButton(
+                        icon: Icons.mode_comment_outlined,
+                        active: _commentsOpen,
+                        activeColor: cs.primary,
+                        label: _friendlyCount(_post.commentsCount),
+                        onTap: () => setState(() => _commentsOpen = true),
+                      ),
+                      _engagementButton(
+                        icon: _post.isSaved ? Icons.bookmark : Icons.bookmark_border,
+                        active: _post.isSaved,
+                        activeColor: Colors.amberAccent,
+                        label: _friendlyCount(_post.savesCount),
+                        onTap: _toggleSave,
+                      ),
+                      _engagementButton(
+                        icon: _post.isWatchLater
+                            ? Icons.watch_later
+                            : Icons.watch_later_outlined,
+                        active: _post.isWatchLater,
+                        activeColor: Colors.tealAccent,
+                        label: '',
+                        onTap: _toggleWatchLater,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildPreviewCard() {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _commentsOpen ? () => setState(() => _commentsOpen = false) : null,
+        onDoubleTap: _openFullscreenViewer,
+        child: Hero(
+          tag: heroTag,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Stack(
+              clipBehavior: Clip.none,
+              fit: StackFit.expand,
+              children: [
+                Positioned.fill(
+                  child: _OverlayParallaxPreview(
+                    mode: previewMode,
+                    payload: previewPayload,
+                    borderRadius: BorderRadius.zero,
+                    enableOutsideOverlay: true,
+                    pointerPassthrough: true,
+                  ),
+                ),
+                buildCompactMetaOverlay(),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildPreviewSurface() {
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            left: 24,
+            right: 24,
+            top: 26,
+            bottom: -22,
+            child: IgnorePointer(child: buildAmbientUnderlay()),
+          ),
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: buildPreviewCard(),
+          ),
+        ],
       );
     }
 
     Widget buildDetailMetaPanel(double width) {
       final bool narrow = width < 1140;
       return Container(
-        width: narrow ? double.infinity : 420,
+        width: narrow ? double.infinity : 360,
         constraints: const BoxConstraints(minHeight: 420),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -4034,30 +4599,16 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _post.preset.title.isNotEmpty
-                            ? _post.preset.title
-                            : _post.preset.name,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${_friendlyCount(_post.viewsCount)} views · ${_friendlyTime(_post.preset.createdAt)}',
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.72)),
-                      ),
-                    ],
+                const Text(
+                  'Details & Discussion',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
                   ),
                 ),
+                const Spacer(),
                 if (_mine)
                   PopupMenuButton<String>(
                     color: cs.surfaceContainerHighest,
@@ -4084,112 +4635,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                     ],
                     icon: const Icon(Icons.more_vert, color: Colors.white),
                   ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                GestureDetector(
-                  onTap: () => _openPublicProfileRoute(context, _post.author),
-                  child: CircleAvatar(
-                    radius: 18,
-                    backgroundImage: (_post.author?.avatarUrl != null &&
-                            _post.author!.avatarUrl!.isNotEmpty)
-                        ? NetworkImage(_post.author!.avatarUrl!)
-                        : null,
-                    child: (_post.author?.avatarUrl == null ||
-                            _post.author!.avatarUrl!.isEmpty)
-                        ? const Icon(Icons.person, size: 16)
-                        : null,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => _openPublicProfileRoute(context, _post.author),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _post.author?.displayName ?? 'Unknown creator',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          _post.author?.username?.isNotEmpty == true
-                              ? '@${_post.author!.username}'
-                              : 'Creator',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.72),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                if (!_mine)
-                  FilledButton.tonal(
-                    onPressed: _toggleFollow,
-                    child: Text(_post.isFollowingAuthor ? 'Following' : 'Follow'),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _engagementButton(
-                  icon: _post.myReaction == 1
-                      ? Icons.thumb_up_alt
-                      : Icons.thumb_up_alt_outlined,
-                  active: _post.myReaction == 1,
-                  activeColor: cs.primary,
-                  label: _friendlyCount(_post.likesCount),
-                  onTap: () => _toggleReaction(1),
-                ),
-                _engagementButton(
-                  icon: _post.myReaction == -1
-                      ? Icons.thumb_down_alt
-                      : Icons.thumb_down_alt_outlined,
-                  active: _post.myReaction == -1,
-                  activeColor: Colors.redAccent,
-                  label: _friendlyCount(_post.dislikesCount),
-                  onTap: () => _toggleReaction(-1),
-                ),
-                _engagementButton(
-                  icon: Icons.mode_comment_outlined,
-                  active: _commentsOpen,
-                  activeColor: cs.primary,
-                  label: _friendlyCount(_post.commentsCount),
-                  onTap: () => setState(() => _commentsOpen = true),
-                ),
-                _engagementButton(
-                  icon: Icons.send_outlined,
-                  active: false,
-                  activeColor: cs.primary,
-                  label: '',
-                  onTap: _openShareSheet,
-                ),
-                _engagementButton(
-                  icon: _post.isWatchLater
-                      ? Icons.watch_later
-                      : Icons.watch_later_outlined,
-                  active: _post.isWatchLater,
-                  activeColor: Colors.tealAccent,
-                  label: '',
-                  onTap: _toggleWatchLater,
-                ),
-                _engagementButton(
-                  icon: _post.isSaved ? Icons.bookmark : Icons.bookmark_border,
-                  active: _post.isSaved,
-                  activeColor: Colors.amberAccent,
-                  label: _friendlyCount(_post.savesCount),
-                  onTap: _toggleSave,
-                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -4256,9 +4701,16 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   final selected = filter == _suggestionFilter;
                   return ChoiceChip(
                     selected: selected,
-                    label: Text(_displayFilterName(filter)),
-                    selectedColor: cs.primary.withValues(alpha: 0.22),
-                    side: BorderSide(color: Colors.white24),
+                    label: Text(
+                      _displayFilterName(filter),
+                      style: TextStyle(
+                        color: selected ? Colors.black : Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    selectedColor: Colors.white,
+                    checkmarkColor: Colors.black,
+                    side: const BorderSide(color: Colors.white24),
                     onSelected: (_) => setState(() => _suggestionFilter = filter),
                   );
                 },
@@ -4447,9 +4899,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         focusNode: _immersiveFocusNode,
         onKeyEvent: (event) {
           if (event is! KeyDownEvent) return;
-          if (event.logicalKey == LogicalKeyboardKey.keyF ||
-              event.logicalKey == LogicalKeyboardKey.escape) {
-            _toggleImmersive();
+          if (event.logicalKey == LogicalKeyboardKey.keyF) {
+            _openFullscreenViewer();
           }
         },
         child: Stack(
@@ -4457,94 +4908,43 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             Positioned.fill(child: buildBackdrop()),
             Positioned(top: 0, left: 0, right: 0, child: buildHeader()),
             Positioned.fill(
-              child: AnimatedPadding(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.easeInOutCubic,
-                padding: _immersive
-                    ? EdgeInsets.zero
-                    : const EdgeInsets.fromLTRB(14, 66, 14, 14),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 280),
-                  switchInCurve: Curves.easeInOutCubic,
-                  switchOutCurve: Curves.easeInOutCubic,
-                  transitionBuilder: (child, animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: ScaleTransition(
-                        scale: Tween<double>(begin: 0.98, end: 1.0).animate(animation),
-                        child: child,
-                      ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 66, 14, 14),
+                child: LayoutBuilder(
+                  key: const ValueKey<String>('compact-post-detail'),
+                  builder: (context, constraints) {
+                    final bool narrow = constraints.maxWidth < 1140;
+                    final Widget previewCard = buildPreviewSurface();
+                    final Widget metaPanel = buildDetailMetaPanel(constraints.maxWidth);
+                    if (narrow) {
+                      return SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            previewCard,
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              height: 640,
+                              child: metaPanel,
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [previewCard],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        SizedBox(width: 360, child: metaPanel),
+                      ],
                     );
                   },
-                  child: _immersive
-                      ? GestureDetector(
-                          key: const ValueKey<String>('immersive-post-detail'),
-                          behavior: HitTestBehavior.opaque,
-                          onDoubleTap: _toggleImmersive,
-                          child: Stack(
-                            children: [
-                              Positioned.fill(child: viewer),
-                              Positioned(
-                                top: 14,
-                                left: 14,
-                                child: IconButton.filledTonal(
-                                  onPressed: _toggleImmersive,
-                                  icon: const Icon(Icons.fullscreen_exit),
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : LayoutBuilder(
-                          key: const ValueKey<String>('compact-post-detail'),
-                          builder: (context, constraints) {
-                            final bool narrow = constraints.maxWidth < 1140;
-                            final Widget previewCard = GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: _commentsOpen
-                                  ? () => setState(() => _commentsOpen = false)
-                                  : null,
-                              onDoubleTap: _toggleImmersive,
-                              child: AspectRatio(
-                                aspectRatio: 16 / 9,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: viewer,
-                                ),
-                              ),
-                            );
-                            final Widget metaPanel =
-                                buildDetailMetaPanel(constraints.maxWidth);
-                            if (narrow) {
-                              return SingleChildScrollView(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    previewCard,
-                                    const SizedBox(height: 12),
-                                    SizedBox(
-                                      height: 640,
-                                      child: metaPanel,
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-                            return Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [previewCard],
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                SizedBox(width: 420, child: metaPanel),
-                              ],
-                            );
-                          },
-                        ),
                 ),
               ),
             ),
@@ -4613,7 +5013,9 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   bool _studioChromeVisible = true;
   bool _editorFullscreen = false;
   int _studioReanchorToken = 0;
-  Timer? _studioChromeTimer;
+  Timer? _studioDraftDebounce;
+  bool _restoringStudioDraft = false;
+  String _lastStudioDraftDigest = '';
   Map<String, dynamic>? _studioLivePayload;
   String? _studioSelected2dLayerKey;
   String? _studioSelected3dToken;
@@ -4622,26 +5024,145 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   @override
   void initState() {
     super.initState();
-    _wakeStudioChrome();
+    _collectionNameController.addListener(_schedulePersistStudioDraft);
+    unawaited(_restoreStudioDraft());
   }
 
   @override
   void dispose() {
     debugPrint('Disposing PostStudioTab');
+    _collectionNameController.removeListener(_schedulePersistStudioDraft);
+    _studioDraftDebounce?.cancel();
+    unawaited(_persistStudioDraftNow());
     _collectionNameController.dispose();
-    _studioChromeTimer?.cancel();
     super.dispose();
   }
 
-  void _wakeStudioChrome() {
-    _studioChromeTimer?.cancel();
-    if (!_studioChromeVisible && mounted) {
-      setState(() => _studioChromeVisible = true);
+  Future<void> _restoreStudioDraft() async {
+    if (_repository.currentUser == null) return;
+    try {
+      final state = await _repository.fetchPostStudioDraftState();
+      if (!mounted || state == null || state.isEmpty) return;
+      final String digest = jsonEncode(state);
+      final List<CollectionDraftItem> restoredItems = <CollectionDraftItem>[];
+      final dynamic itemsRaw = state['draftItems'];
+      if (itemsRaw is List) {
+        for (final item in itemsRaw) {
+          if (item is! Map) continue;
+          final String mode = (item['mode'] ?? '2d').toString();
+          final String name = (item['name'] ?? '').toString().trim();
+          final dynamic snapshotRaw = item['snapshot'];
+          final Map<String, dynamic> snapshot = snapshotRaw is Map
+              ? Map<String, dynamic>.from(snapshotRaw)
+              : <String, dynamic>{};
+          restoredItems.add(
+            CollectionDraftItem(
+              mode: mode,
+              name: name.isEmpty
+                  ? '${mode.toUpperCase()} Item ${restoredItems.length + 1}'
+                  : name,
+              snapshot: snapshot,
+            ),
+          );
+        }
+      }
+
+      final dynamic payloadRaw = state['studioLivePayload'];
+      final Map<String, dynamic>? restoredPayload =
+          payloadRaw is Map ? Map<String, dynamic>.from(payloadRaw) : null;
+      final int restoredMode = ((state['modeIndex'] as num?)?.toInt() ?? 0)
+          .clamp(0, 1)
+          .toInt();
+      final int restoredPostType =
+          ((state['postTypeIndex'] as num?)?.toInt() ?? 0).clamp(0, 1).toInt();
+      int restoredSelectedIndex =
+          (state['selectedItemIndex'] as num?)?.toInt() ?? -1;
+      if (restoredSelectedIndex >= restoredItems.length) {
+        restoredSelectedIndex = restoredItems.isEmpty ? -1 : 0;
+      }
+
+      _restoringStudioDraft = true;
+      setState(() {
+        _modeIndex = restoredMode;
+        _postTypeIndex = restoredPostType;
+        _collectionId = state['collectionId']?.toString();
+        _selectedItemIndex = restoredSelectedIndex;
+        _studioLivePayload = restoredPayload;
+        _studioSelected2dLayerKey =
+            state['studioSelected2dLayerKey']?.toString();
+        _studioSelected3dToken = state['studioSelected3dToken']?.toString();
+        _draftItems
+          ..clear()
+          ..addAll(restoredItems);
+        _studioChromeVisible = state['studioChromeVisible'] != false;
+        _editorFullscreen = state['editorFullscreen'] == true;
+        _editorSeed++;
+      });
+      final String collectionName =
+          (state['collectionName'] ?? '').toString().trim();
+      if (collectionName.isNotEmpty) {
+        _collectionNameController.text = collectionName;
+      }
+      _lastStudioDraftDigest = digest;
+    } catch (_) {
+      // Keep studio usable even if persisted draft read fails.
+    } finally {
+      _restoringStudioDraft = false;
     }
-    _studioChromeTimer = Timer(const Duration(milliseconds: 2600), () {
-      if (!mounted) return;
-      setState(() => _studioChromeVisible = false);
+  }
+
+  void _schedulePersistStudioDraft() {
+    if (_restoringStudioDraft) return;
+    _studioDraftDebounce?.cancel();
+    _studioDraftDebounce = Timer(const Duration(milliseconds: 900), () {
+      unawaited(_persistStudioDraftNow());
     });
+  }
+
+  Map<String, dynamic> _serializeStudioDraftState() {
+    return <String, dynamic>{
+      'modeIndex': _modeIndex,
+      'postTypeIndex': _postTypeIndex,
+      'collectionId': _collectionId,
+      'collectionName': _collectionNameController.text.trim(),
+      'selectedItemIndex': _selectedItemIndex,
+      'studioLivePayload': _studioLivePayload,
+      'studioSelected2dLayerKey': _studioSelected2dLayerKey,
+      'studioSelected3dToken': _studioSelected3dToken,
+      'studioChromeVisible': _studioChromeVisible,
+      'editorFullscreen': _editorFullscreen,
+      'draftItems': _draftItems
+          .map(
+            (item) => <String, dynamic>{
+              'mode': item.mode,
+              'name': item.name,
+              'snapshot': item.snapshot,
+            },
+          )
+          .toList(),
+    };
+  }
+
+  Future<void> _persistStudioDraftNow() async {
+    if (_restoringStudioDraft || _repository.currentUser == null) return;
+    final Map<String, dynamic> state = _serializeStudioDraftState();
+    final String digest = jsonEncode(state);
+    if (digest == _lastStudioDraftDigest) return;
+    _lastStudioDraftDigest = digest;
+    try {
+      await _repository.upsertPostStudioDraftState(state);
+    } catch (_) {
+      // Non-blocking: editing should continue when persistence fails.
+    }
+  }
+
+  Future<void> _clearPersistedStudioDraft() async {
+    _lastStudioDraftDigest = '';
+    try {
+      await _repository.clearPostStudioDraftState();
+    } catch (_) {
+      // Ignore cleanup failures.
+    }
   }
 
   void _onStudioLivePayloadChanged(Map<String, dynamic> payload) {
@@ -4660,6 +5181,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         );
       }
     });
+    _schedulePersistStudioDraft();
   }
 
   void _saveCurrentStudioItemToCollection() {
@@ -4690,6 +5212,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         _selectedItemIndex = _draftItems.length - 1;
       }
     });
+    _schedulePersistStudioDraft();
     messenger.showSnackBar(
       const SnackBar(
           content: Text('Editor snapshot saved to collection item.')),
@@ -4732,6 +5255,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         _selectedItemIndex = _draftItems.length - 1;
       }
     });
+    _schedulePersistStudioDraft();
   }
 
   void _selectCollectionItem(int index) {
@@ -4743,6 +5267,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       _studioLivePayload = item.snapshot;
       _editorSeed++;
     });
+    _schedulePersistStudioDraft();
   }
 
   void _removeCollectionItem(int index) {
@@ -4758,6 +5283,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       }
       _editorSeed++;
     });
+    _schedulePersistStudioDraft();
   }
 
   void _duplicateCollectionItem(int index) {
@@ -4776,6 +5302,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       _studioLivePayload = _draftItems[_selectedItemIndex].snapshot;
       _editorSeed++;
     });
+    _schedulePersistStudioDraft();
   }
 
   void _createNewCollectionItem() {
@@ -4784,6 +5311,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       _studioLivePayload = null;
       _editorSeed++;
     });
+    _schedulePersistStudioDraft();
   }
 
   Future<void> _publishCollection() async {
@@ -4821,6 +5349,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     }
     if (result == true && mounted) {
       await _resetEditorDraftState();
+      await _clearPersistedStudioDraft();
       if (!mounted) return;
       setState(() {
         _collectionId = null;
@@ -4829,6 +5358,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         _studioLivePayload = null;
         _editorSeed++;
       });
+      _schedulePersistStudioDraft();
       messenger.showSnackBar(
         const SnackBar(content: Text('Collection published successfully.')),
       );
@@ -4863,12 +5393,14 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     }
     if (result == true && mounted) {
       await _resetEditorDraftState();
+      await _clearPersistedStudioDraft();
       if (!mounted) return;
       setState(() {
         _selectedItemIndex = -1;
         _studioLivePayload = null;
         _editorSeed++;
       });
+      _schedulePersistStudioDraft();
       messenger.showSnackBar(
         const SnackBar(content: Text('Post published successfully.')),
       );
@@ -5000,6 +5532,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       }
       if (remount) _editorSeed++;
     });
+    _schedulePersistStudioDraft();
   }
 
   Map<String, dynamic> _studio2DScene() {
@@ -5645,7 +6178,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     final scene = _studio3DScene();
     final dynamic raw = scene[field];
     final List<double> next = <double>[
-      fallback.length > 0 ? fallback[0] : 0,
+      fallback.isNotEmpty ? fallback[0] : 0,
       fallback.length > 1 ? fallback[1] : 0,
       fallback.length > 2 ? fallback[2] : 0,
     ];
@@ -6032,6 +6565,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       ),
                     ],
                     DropdownButtonFormField<String>(
+                      // ignore: deprecated_member_use
                       value: (() {
                         final String selectedAspect =
                             (controls['selectedAspect'] ?? '').toString();
@@ -6609,6 +7143,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                         _studioSet3DSceneField('bloomIntensity', value),
                   ),
                   DropdownButtonFormField<String>(
+                    // ignore: deprecated_member_use
                     value: shadowQuality,
                     decoration:
                         const InputDecoration(labelText: 'Shadow Quality'),
@@ -6735,6 +7270,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   const Text('Tracking',
                       style: TextStyle(fontWeight: FontWeight.w700)),
                   DropdownButtonFormField<String>(
+                    // ignore: deprecated_member_use
                     value: () {
                       const modes = <String>{'orbit', 'fps', 'free'};
                       final String raw = (controls['camera-mode'] ?? 'orbit')
@@ -6947,6 +7483,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       : null;
                 }
               });
+              _schedulePersistStudioDraft();
             },
           ),
           const SizedBox(height: 8),
@@ -6958,6 +7495,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
             selected: <int>{_postTypeIndex},
             onSelectionChanged: (values) {
               setState(() => _postTypeIndex = values.first);
+              _schedulePersistStudioDraft();
             },
           ),
           const SizedBox(height: 8),
@@ -6983,6 +7521,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 onPressed: () {
                   setState(() => _studioReanchorToken++);
                   TrackingService.instance.remapHeadBaselineToCurrentFrame();
+                  _schedulePersistStudioDraft();
                 },
                 icon: const Icon(Icons.gps_fixed),
                 label: const Text('Recenter'),
@@ -6990,6 +7529,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               OutlinedButton.icon(
                 onPressed: () {
                   setState(() => _editorFullscreen = !_editorFullscreen);
+                  _schedulePersistStudioDraft();
                 },
                 icon: Icon(
                   _editorFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
@@ -7074,7 +7614,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                         label: Text(
                           '${index + 1}. ${item.name}',
                           overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: active ? Colors.black : cs.onSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
+                        selectedColor: Colors.white,
+                        checkmarkColor: Colors.black,
                         onSelected: (_) => _selectCollectionItem(index),
                       ),
                     );
@@ -7087,29 +7633,72 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       ),
     );
 
+    Widget buildPanel({required bool overlay}) {
+      return SizedBox(
+        width: 360,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: overlay ? Colors.black.withValues(alpha: 0.5) : cs.surface,
+            border: Border(
+              left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
+            ),
+          ),
+          child: Column(
+            children: [
+              studioTopRail,
+              Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
+              Expanded(child: _buildStudioControlsPanel(context)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_editorFullscreen) {
+      return Padding(
+        padding: EdgeInsets.only(top: widget.topInset),
+        child: Stack(
+          children: [
+            Positioned.fill(child: previewPane),
+            Positioned(
+              right: 10,
+              top: 10,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: Colors.black.withValues(alpha: 0.5),
+                ),
+                onPressed: () {
+                  setState(() => _studioChromeVisible = !_studioChromeVisible);
+                  _schedulePersistStudioDraft();
+                },
+                icon: Icon(
+                  _studioChromeVisible
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  color: Colors.white,
+                ),
+                label: Text(
+                  _studioChromeVisible ? 'Hide Panel' : 'Show Panel',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+            if (_studioChromeVisible)
+              Align(
+                alignment: Alignment.centerRight,
+                child: buildPanel(overlay: true),
+              ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: EdgeInsets.only(top: widget.topInset),
       child: Row(
         children: [
           Expanded(child: previewPane),
-          SizedBox(
-            width: 430,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: cs.surface,
-                border: Border(
-                  left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
-                ),
-              ),
-              child: Column(
-                children: [
-                  studioTopRail,
-                  Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
-                  Expanded(child: _buildStudioControlsPanel(context)),
-                ],
-              ),
-            ),
-          ),
+          buildPanel(overlay: false),
         ],
       ),
     );
@@ -7314,7 +7903,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   String? _error;
   CollectionDetail? _detail;
   int _index = 0;
-  bool _immersive = false;
   bool _commentsOpen = false;
   bool _descriptionExpanded = false;
   bool _loadingSuggestions = false;
@@ -7438,12 +8026,14 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       _error = null;
     });
     try {
-      final detail = await _repository.fetchCollectionById(widget.collectionId);
+      final detail = await QueryGuard.run(
+        () => _repository.fetchCollectionById(widget.collectionId),
+      );
       if (!mounted) return;
       if (detail == null) {
         setState(() {
           _loading = false;
-          _error = 'Collection not found.';
+          _error = 'Unable to load collection.';
         });
         return;
       }
@@ -7453,10 +8043,11 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       });
       unawaited(_repository.recordCollectionView(detail.summary.id));
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = failure.message;
       });
     }
   }
@@ -7525,16 +8116,21 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   Future<void> _loadCollectionComments() async {
     final summary = _detail?.summary;
     if (summary == null) return;
-    final comments = await _repository.fetchCollectionComments(summary.id);
-    if (!mounted) return;
-    setState(() {
-      _collectionComments = comments;
-    });
-    _updateSummary(
-      (current) => _copySummary(current, commentsCount: comments.length),
-    );
+    try {
+      final comments = await QueryGuard.run(
+        () => _repository.fetchCollectionComments(summary.id),
+      );
+      if (!mounted) return;
+      setState(() {
+        _collectionComments = comments;
+      });
+      _updateSummary(
+        (current) => _copySummary(current, commentsCount: comments.length),
+      );
+    } catch (_) {}
   }
 
+  // ignore: unused_element
   Future<void> _openCollectionCommentsSheet() async {
     await _loadCollectionComments();
     if (!mounted) return;
@@ -7772,7 +8368,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     if (_loadingSuggestions) return;
     setState(() => _loadingSuggestions = true);
     try {
-      final collections = await _repository.fetchPublishedCollections(limit: 120);
+      final collections = await QueryGuard.run(
+        () => _repository.fetchPublishedCollections(limit: 120),
+      );
       if (!mounted) return;
       setState(() {
         _suggestedCollections = collections;
@@ -7854,7 +8452,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         return ao.compareTo(bo);
       });
       if (layers.isEmpty) return null;
-      return (layers.last.value['url'] ?? '').toString().trim();
+      return (layers.first.value['url'] ?? '').toString().trim();
     } catch (_) {
       return null;
     }
@@ -8024,7 +8622,25 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     );
   }
 
-  Widget _buildCard(CollectionItemSnapshot item) {
+  String _collectionHeroTag(int index) =>
+      'collection-detail-hero-${widget.collectionId}-$index';
+
+  Future<void> _openCollectionFullscreen(
+    CollectionItemSnapshot item,
+    int index,
+  ) async {
+    await _openDetailFullscreenViewer(
+      context,
+      heroTag: _collectionHeroTag(index),
+      mode: item.mode,
+      payload: item.snapshot,
+    );
+  }
+
+  Widget _buildCard(
+    CollectionItemSnapshot item, {
+    bool enableOutsideOverlay = false,
+  }) {
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -8032,13 +8648,12 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           child: ColoredBox(color: Colors.transparent),
         ),
         IgnorePointer(
-          child: PresetViewer(
+          child: _OverlayParallaxPreview(
             mode: item.mode,
             payload: item.snapshot,
-            cleanView: true,
-            embedded: true,
-            disableAudio: true,
+            borderRadius: BorderRadius.zero,
             pointerPassthrough: true,
+            enableOutsideOverlay: enableOutsideOverlay,
           ),
         ),
       ],
@@ -8079,54 +8694,228 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     }
 
     Widget buildHeader() {
-      return AnimatedSlide(
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeInOutCubic,
-        offset: _immersive ? const Offset(0, -1) : Offset.zero,
-        child: Container(
-          height: 62,
+      return Container(
+        height: 62,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black.withValues(alpha: 0.8),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+        child: Row(
+          children: [
+            IconButton.filledTonal(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_ios_new_rounded),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              'DeepX',
+              style: GoogleFonts.orbitron(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 24,
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              tooltip: 'Fullscreen',
+              onPressed: hasItems && activeItem != null
+                  ? () => _openCollectionFullscreen(activeItem, _index)
+                  : null,
+              icon: const Icon(
+                Icons.fullscreen,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget buildAmbientUnderlay() {
+      if (ambientUrl == null || ambientUrl.isEmpty) {
+        return Container(
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.black.withValues(alpha: 0.8),
-                Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            color: Colors.black.withValues(alpha: 0.45),
+          ),
+        );
+      }
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              ambientUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
+            ),
+            BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Container(color: Colors.black.withValues(alpha: 0.44)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget buildCompactMetaOverlay() {
+      if (summary == null) return const SizedBox.shrink();
+      return Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 34, 12, 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.88),
+                  Colors.black.withValues(alpha: 0.56),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  summary.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.84),
+                    fontSize: 11.5,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => _openPublicProfileRoute(context, summary.author),
+                      child: CircleAvatar(
+                        radius: 12,
+                        backgroundImage: (summary.author?.avatarUrl != null &&
+                                summary.author!.avatarUrl!.isNotEmpty)
+                            ? NetworkImage(summary.author!.avatarUrl!)
+                            : null,
+                        child: (summary.author?.avatarUrl == null ||
+                                summary.author!.avatarUrl!.isEmpty)
+                            ? const Icon(Icons.person, size: 14)
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () =>
+                            _openPublicProfileRoute(context, summary.author),
+                        child: Text(
+                          summary.author?.displayName ?? 'Unknown creator',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _collectionEngagementButton(
+                        icon: summary.myReaction == 1
+                            ? Icons.thumb_up_alt
+                            : Icons.thumb_up_alt_outlined,
+                        active: summary.myReaction == 1,
+                        activeColor: cs.primary,
+                        label: _friendlyCount(summary.likesCount),
+                        onTap: () => _toggleCollectionReaction(1),
+                      ),
+                      _collectionEngagementButton(
+                        icon: summary.myReaction == -1
+                            ? Icons.thumb_down_alt
+                            : Icons.thumb_down_alt_outlined,
+                        active: summary.myReaction == -1,
+                        activeColor: Colors.redAccent,
+                        label: _friendlyCount(summary.dislikesCount),
+                        onTap: () => _toggleCollectionReaction(-1),
+                      ),
+                      _collectionEngagementButton(
+                        icon: Icons.send_outlined,
+                        active: false,
+                        activeColor: cs.primary,
+                        label: '',
+                        onTap: _openCollectionShareSheet,
+                      ),
+                      _collectionEngagementButton(
+                        icon: Icons.mode_comment_outlined,
+                        active: _commentsOpen,
+                        activeColor: cs.primary,
+                        label: _friendlyCount(summary.commentsCount),
+                        onTap: () async {
+                          setState(() => _commentsOpen = true);
+                          await _loadCollectionComments();
+                        },
+                      ),
+                      _collectionEngagementButton(
+                        icon: summary.isSavedByCurrentUser
+                            ? Icons.bookmark
+                            : Icons.bookmark_border,
+                        active: summary.isSavedByCurrentUser,
+                        activeColor: Colors.amberAccent,
+                        label: _friendlyCount(summary.savesCount),
+                        onTap: _toggleCollectionSave,
+                      ),
+                      _collectionEngagementButton(
+                        icon: summary.isWatchLater
+                            ? Icons.watch_later
+                            : Icons.watch_later_outlined,
+                        active: summary.isWatchLater,
+                        activeColor: Colors.tealAccent,
+                        label: '',
+                        onTap: _toggleCollectionWatchLater,
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
-          ),
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-          child: Row(
-            children: [
-              IconButton.filledTonal(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back_ios_new_rounded),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                'DeepX',
-                style: GoogleFonts.orbitron(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 24,
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: _immersive ? 'Exit Fullscreen' : 'Fullscreen',
-                onPressed: () => setState(() => _immersive = !_immersive),
-                icon: Icon(
-                  _immersive ? Icons.fullscreen_exit : Icons.fullscreen,
-                  color: Colors.white,
-                ),
-              ),
-            ],
           ),
         ),
       );
     }
 
-    Widget buildPreviewDeck({required bool immersive}) {
+    Widget buildPreviewDeck() {
       if (!hasItems || activeItem == null) {
         return Center(
           child: Text(
@@ -8135,17 +8924,10 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           ),
         );
       }
-      if (immersive) {
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onDoubleTap: () => setState(() => _immersive = false),
-          child: _buildCard(activeItem),
-        );
-      }
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: _commentsOpen ? () => setState(() => _commentsOpen = false) : null,
-        onDoubleTap: () => setState(() => _immersive = true),
+        onDoubleTap: () => _openCollectionFullscreen(activeItem, _index),
         child: Stack(
           children: [
             Positioned.fill(
@@ -8164,7 +8946,23 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   if (props.index >= detail.items.length) {
                     return const SizedBox.shrink();
                   }
-                  return _buildCard(detail.items[props.index]);
+                  final item = detail.items[props.index];
+                  final bool active = props.index == _index;
+                  final Widget card = Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _buildCard(
+                        item,
+                        enableOutsideOverlay: active,
+                      ),
+                      if (active) buildCompactMetaOverlay(),
+                    ],
+                  );
+                  if (!active) return card;
+                  return Hero(
+                    tag: _collectionHeroTag(props.index),
+                    child: card,
+                  );
                 },
               ),
             ),
@@ -8252,13 +9050,35 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       );
     }
 
+    Widget buildPreviewSurface() {
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            left: 24,
+            right: 24,
+            top: 26,
+            bottom: -22,
+            child: IgnorePointer(child: buildAmbientUnderlay()),
+          ),
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: buildPreviewDeck(),
+            ),
+          ),
+        ],
+      );
+    }
+
     Widget buildMetaPanel(double width) {
       if (summary == null) {
         return const SizedBox.shrink();
       }
       final bool narrow = width < 1140;
       return Container(
-        width: narrow ? double.infinity : 420,
+        width: narrow ? double.infinity : 360,
         constraints: const BoxConstraints(minHeight: 420),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -8270,28 +9090,16 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        summary.name,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.72)),
-                      ),
-                    ],
+                const Text(
+                  'Details & Discussion',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
                   ),
                 ),
+                const Spacer(),
                 if (_mine)
                   PopupMenuButton<String>(
                     color: cs.surfaceContainerHighest,
@@ -8316,112 +9124,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                     ],
                     icon: const Icon(Icons.more_vert, color: Colors.white),
                   ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                GestureDetector(
-                  onTap: () => _openPublicProfileRoute(context, summary.author),
-                  child: CircleAvatar(
-                    radius: 18,
-                    backgroundImage: (summary.author?.avatarUrl != null &&
-                            summary.author!.avatarUrl!.isNotEmpty)
-                        ? NetworkImage(summary.author!.avatarUrl!)
-                        : null,
-                    child: (summary.author?.avatarUrl == null ||
-                            summary.author!.avatarUrl!.isEmpty)
-                        ? const Icon(Icons.person, size: 16)
-                        : null,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => _openPublicProfileRoute(context, summary.author),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          summary.author?.displayName ?? 'Unknown creator',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          summary.author?.username?.isNotEmpty == true
-                              ? '@${summary.author!.username}'
-                              : 'Creator',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.72),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _collectionEngagementButton(
-                  icon: summary.myReaction == 1
-                      ? Icons.thumb_up_alt
-                      : Icons.thumb_up_alt_outlined,
-                  active: summary.myReaction == 1,
-                  activeColor: cs.primary,
-                  label: _friendlyCount(summary.likesCount),
-                  onTap: () => _toggleCollectionReaction(1),
-                ),
-                _collectionEngagementButton(
-                  icon: summary.myReaction == -1
-                      ? Icons.thumb_down_alt
-                      : Icons.thumb_down_alt_outlined,
-                  active: summary.myReaction == -1,
-                  activeColor: Colors.redAccent,
-                  label: _friendlyCount(summary.dislikesCount),
-                  onTap: () => _toggleCollectionReaction(-1),
-                ),
-                _collectionEngagementButton(
-                  icon: Icons.mode_comment_outlined,
-                  active: _commentsOpen,
-                  activeColor: cs.primary,
-                  label: _friendlyCount(summary.commentsCount),
-                  onTap: () async {
-                    setState(() => _commentsOpen = true);
-                    await _loadCollectionComments();
-                  },
-                ),
-                _collectionEngagementButton(
-                  icon: summary.isSavedByCurrentUser
-                      ? Icons.bookmark
-                      : Icons.bookmark_border,
-                  active: summary.isSavedByCurrentUser,
-                  activeColor: Colors.amberAccent,
-                  label: _friendlyCount(summary.savesCount),
-                  onTap: _toggleCollectionSave,
-                ),
-                _collectionEngagementButton(
-                  icon: summary.isWatchLater
-                      ? Icons.watch_later
-                      : Icons.watch_later_outlined,
-                  active: summary.isWatchLater,
-                  activeColor: Colors.tealAccent,
-                  label: '',
-                  onTap: _toggleCollectionWatchLater,
-                ),
-                _collectionEngagementButton(
-                  icon: Icons.send_outlined,
-                  active: false,
-                  activeColor: cs.primary,
-                  label: '',
-                  onTap: _openCollectionShareSheet,
-                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -8488,9 +9190,16 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   final selected = filter == _suggestionFilter;
                   return ChoiceChip(
                     selected: selected,
-                    label: Text(_displayFilterName(filter)),
-                    selectedColor: cs.primary.withValues(alpha: 0.22),
-                    side: BorderSide(color: Colors.white24),
+                    label: Text(
+                      _displayFilterName(filter),
+                      style: TextStyle(
+                        color: selected ? Colors.black : Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    selectedColor: Colors.white,
+                    checkmarkColor: Colors.black,
+                    side: const BorderSide(color: Colors.white24),
                     onSelected: (_) => setState(() => _suggestionFilter = filter),
                   );
                 },
@@ -8696,9 +9405,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             _swipeByDirection(SwipeDirection.down);
           } else if (event.logicalKey == LogicalKeyboardKey.keyR) {
             _rewindSwipe();
-          } else if (event.logicalKey == LogicalKeyboardKey.keyF ||
-              event.logicalKey == LogicalKeyboardKey.escape) {
-            setState(() => _immersive = !_immersive);
+          } else if (event.logicalKey == LogicalKeyboardKey.keyF &&
+              activeItem != null) {
+            _openCollectionFullscreen(activeItem, _index);
           }
         },
         child: Stack(
@@ -8711,96 +9420,46 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               )
             else if (_error != null)
               Positioned.fill(
-                child: Center(
-                  child: Text(
-                    _error!,
-                    style: TextStyle(color: cs.error),
-                    textAlign: TextAlign.center,
-                  ),
+                child: QueryRetryPane(
+                  title: _error,
+                  offline: _isOfflineErrorText(_error!),
+                  onRetry: _load,
                 ),
               )
             else
               Positioned.fill(
-                child: AnimatedPadding(
-                  duration: const Duration(milliseconds: 280),
-                  curve: Curves.easeInOutCubic,
-                  padding: _immersive
-                      ? EdgeInsets.zero
-                      : const EdgeInsets.fromLTRB(14, 66, 14, 14),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 280),
-                    switchInCurve: Curves.easeInOutCubic,
-                    switchOutCurve: Curves.easeInOutCubic,
-                    transitionBuilder: (child, animation) {
-                      return FadeTransition(
-                        opacity: animation,
-                        child: ScaleTransition(
-                          scale:
-                              Tween<double>(begin: 0.98, end: 1.0).animate(animation),
-                          child: child,
-                        ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 66, 14, 14),
+                  child: LayoutBuilder(
+                    key: const ValueKey<String>('compact-collection-detail'),
+                    builder: (context, constraints) {
+                      final bool narrow = constraints.maxWidth < 1140;
+                      final Widget preview = buildPreviewSurface();
+                      final Widget meta = buildMetaPanel(constraints.maxWidth);
+                      if (narrow) {
+                        return SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              preview,
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                height: 640,
+                                child: meta,
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: preview),
+                          const SizedBox(width: 12),
+                          SizedBox(width: 360, child: meta),
+                        ],
                       );
                     },
-                    child: _immersive
-                        ? GestureDetector(
-                            key: const ValueKey<String>(
-                                'immersive-collection-detail'),
-                            behavior: HitTestBehavior.opaque,
-                            onDoubleTap: () => setState(() => _immersive = false),
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: buildPreviewDeck(immersive: true),
-                                ),
-                                Positioned(
-                                  top: 14,
-                                  left: 14,
-                                  child: IconButton.filledTonal(
-                                    onPressed: () =>
-                                        setState(() => _immersive = false),
-                                    icon: const Icon(Icons.fullscreen_exit),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : LayoutBuilder(
-                            key: const ValueKey<String>('compact-collection-detail'),
-                            builder: (context, constraints) {
-                              final bool narrow = constraints.maxWidth < 1140;
-                              final Widget preview = AspectRatio(
-                                aspectRatio: 16 / 9,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: buildPreviewDeck(immersive: false),
-                                ),
-                              );
-                              final Widget meta = buildMetaPanel(constraints.maxWidth);
-                              if (narrow) {
-                                return SingleChildScrollView(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      preview,
-                                      const SizedBox(height: 12),
-                                      SizedBox(
-                                        height: 640,
-                                        child: meta,
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }
-                              return Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(child: preview),
-                                  const SizedBox(width: 12),
-                                  SizedBox(width: 420, child: meta),
-                                ],
-                              );
-                            },
-                          ),
                   ),
                 ),
               ),
@@ -8870,6 +9529,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   final AppRepository _repository = AppRepository.instance;
 
   bool _loading = true;
+  String? _error;
   AppUserProfile? _profile;
   ProfileStats _stats = const ProfileStats(
     followersCount: 0,
@@ -8893,27 +9553,45 @@ class _ProfileTabState extends State<_ProfileTab> {
     final user = _repository.currentUser;
     if (user == null) return;
 
-    setState(() => _loading = true);
-    final profile = await _repository.ensureCurrentProfile();
-    final stats = await _repository.fetchProfileStats(user.id);
-    final saved = await _repository.fetchSavedPresetsForCurrentUser();
-    final savedCollections =
-        await _repository.fetchSavedCollectionsForCurrentUser();
-    final posts = await _repository.fetchUserPosts(user.id);
-    final history = await _repository.fetchHistoryPresetsForCurrentUser();
-    final watchLater = await _repository.fetchWatchLaterForCurrentUser();
-
-    if (!mounted) return;
     setState(() {
-      _profile = profile;
-      _stats = stats;
-      _saved = saved;
-      _savedCollections = savedCollections;
-      _posts = posts;
-      _history = history;
-      _watchLater = watchLater;
-      _loading = false;
+      _loading = true;
+      _error = null;
     });
+    try {
+      final profile = await QueryGuard.run(() => _repository.ensureCurrentProfile());
+      final stats = await QueryGuard.run(() => _repository.fetchProfileStats(user.id));
+      final saved =
+          await QueryGuard.run(() => _repository.fetchSavedPresetsForCurrentUser());
+      final savedCollections = await QueryGuard.run(
+        () => _repository.fetchSavedCollectionsForCurrentUser(),
+      );
+      final posts = await QueryGuard.run(() => _repository.fetchUserPosts(user.id));
+      final history = await QueryGuard.run(
+        () => _repository.fetchHistoryPresetsForCurrentUser(),
+      );
+      final watchLater = await QueryGuard.run(
+        () => _repository.fetchWatchLaterForCurrentUser(),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _stats = stats;
+        _saved = saved;
+        _savedCollections = savedCollections;
+        _posts = posts;
+        _history = history;
+        _watchLater = watchLater;
+        _loading = false;
+      });
+    } catch (e) {
+      final failure = QueryGuard.classify(e);
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = failure.message;
+      });
+    }
   }
 
   Future<void> _openPost(RenderPreset preset) async {
@@ -9059,22 +9737,112 @@ class _ProfileTabState extends State<_ProfileTab> {
     }
   }
 
+  int _profileGridColumns(double width) {
+    if (width >= 1700) return 5;
+    if (width >= 1360) return 4;
+    if (width >= 1020) return 3;
+    if (width >= 700) return 2;
+    return 1;
+  }
+
+  Widget _buildPresetGridTab({
+    required List<RenderPreset> presets,
+    required String emptyMessage,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    if (presets.isEmpty) {
+      return Center(
+        child: Text(
+          emptyMessage,
+          style: TextStyle(color: cs.onSurfaceVariant),
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final int crossAxisCount = _profileGridColumns(constraints.maxWidth);
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          itemCount: presets.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 0.9,
+          ),
+          itemBuilder: (context, index) {
+            final preset = presets[index];
+            final String title = preset.title.trim().isNotEmpty
+                ? preset.title.trim()
+                : preset.name;
+            final String mode = preset.thumbnailMode ?? preset.mode;
+            final Map<String, dynamic> payload = preset.thumbnailPayload.isNotEmpty
+                ? preset.thumbnailPayload
+                : preset.payload;
+            return InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => _openPost(preset),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: cs.outline.withValues(alpha: 0.2),
+                  ),
+                ),
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: _OverlayParallaxPreview(
+                          mode: mode,
+                          payload: payload,
+                          borderRadius: BorderRadius.circular(8),
+                          pointerPassthrough: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: cs.onSurface,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${preset.mode.toUpperCase()} · ${_friendlyTime(preset.createdAt)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: cs.onSurfaceVariant,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildSavedUnifiedTab() {
     final cs = Theme.of(context).colorScheme;
     final entries = _filteredSavedEntries();
     return LayoutBuilder(
       builder: (context, constraints) {
-        final double width = constraints.maxWidth;
-        int crossAxisCount = 2;
-        if (width >= 1300) {
-          crossAxisCount = 6;
-        } else if (width >= 1000) {
-          crossAxisCount = 5;
-        } else if (width >= 760) {
-          crossAxisCount = 4;
-        } else if (width >= 540) {
-          crossAxisCount = 3;
-        }
+        final int crossAxisCount = _profileGridColumns(constraints.maxWidth);
         return Column(
           children: [
             SingleChildScrollView(
@@ -9083,31 +9851,72 @@ class _ProfileTabState extends State<_ProfileTab> {
               child: Row(
                 children: [
                   ChoiceChip(
-                    label: const Text('All'),
+                    label: Text(
+                      'All',
+                      style: TextStyle(
+                        color: _savedFilter == _SavedGridFilter.all
+                            ? Colors.black
+                            : cs.onSurface,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     selected: _savedFilter == _SavedGridFilter.all,
+                    selectedColor: Colors.white,
+                    checkmarkColor: Colors.black,
                     onSelected: (_) =>
                         setState(() => _savedFilter = _SavedGridFilter.all),
                   ),
                   const SizedBox(width: 8),
                   ChoiceChip(
-                    label: const Text('Saved Posts'),
+                    label: Text(
+                      'Saved Posts',
+                      style: TextStyle(
+                        color: _savedFilter == _SavedGridFilter.savedPosts
+                            ? Colors.black
+                            : cs.onSurface,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     selected: _savedFilter == _SavedGridFilter.savedPosts,
+                    selectedColor: Colors.white,
+                    checkmarkColor: Colors.black,
                     onSelected: (_) => setState(
                       () => _savedFilter = _SavedGridFilter.savedPosts,
                     ),
                   ),
                   const SizedBox(width: 8),
                   ChoiceChip(
-                    label: const Text('Saved Collections'),
+                    label: Text(
+                      'Saved Collections',
+                      style: TextStyle(
+                        color:
+                            _savedFilter == _SavedGridFilter.savedCollections
+                                ? Colors.black
+                                : cs.onSurface,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     selected: _savedFilter == _SavedGridFilter.savedCollections,
+                    selectedColor: Colors.white,
+                    checkmarkColor: Colors.black,
                     onSelected: (_) => setState(
                       () => _savedFilter = _SavedGridFilter.savedCollections,
                     ),
                   ),
                   const SizedBox(width: 8),
                   ChoiceChip(
-                    label: const Text('Watch Later'),
+                    label: Text(
+                      'Watch Later',
+                      style: TextStyle(
+                        color: _savedFilter == _SavedGridFilter.watchLater
+                            ? Colors.black
+                            : cs.onSurface,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     selected: _savedFilter == _SavedGridFilter.watchLater,
+                    selectedColor: Colors.white,
+                    checkmarkColor: Colors.black,
                     onSelected: (_) => setState(
                       () => _savedFilter = _SavedGridFilter.watchLater,
                     ),
@@ -9130,7 +9939,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                         crossAxisCount: crossAxisCount,
                         crossAxisSpacing: 10,
                         mainAxisSpacing: 10,
-                        childAspectRatio: 1,
+                        childAspectRatio: 0.9,
                       ),
                       itemBuilder: (context, index) {
                         final entry = entries[index];
@@ -9190,13 +9999,15 @@ class _ProfileTabState extends State<_ProfileTab> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Expanded(
+                                AspectRatio(
+                                  aspectRatio: 16 / 9,
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(8),
-                                    child: _GridPresetPreview(
+                                    child: _OverlayParallaxPreview(
                                       mode: mode,
                                       payload: payload,
                                       borderRadius: BorderRadius.circular(8),
+                                      pointerPassthrough: true,
                                     ),
                                   ),
                                 ),
@@ -9242,6 +10053,13 @@ class _ProfileTabState extends State<_ProfileTab> {
         isDark ? const Color(0xFF1E1E1E) : cs.surface;
     if (_loading) {
       return const _TopEdgeLoadingPane(label: 'Loading profile...');
+    }
+    if (_error != null) {
+      return QueryRetryPane(
+        title: _error,
+        offline: _isOfflineErrorText(_error!),
+        onRetry: _load,
+      );
     }
 
     if (_profile == null) {
@@ -9364,15 +10182,13 @@ class _ProfileTabState extends State<_ProfileTab> {
               child: TabBarView(
                 children: [
                   _buildSavedUnifiedTab(),
-                  _PresetListView(
+                  _buildPresetGridTab(
                     presets: _posts,
                     emptyMessage: 'No posts yet.',
-                    onTap: _openPost,
                   ),
-                  _PresetListView(
+                  _buildPresetGridTab(
                     presets: _history,
                     emptyMessage: 'No history yet.',
-                    onTap: _openPost,
                   ),
                 ],
               ),
@@ -9398,113 +10214,6 @@ class _ProfileTabState extends State<_ProfileTab> {
             style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ],
-    );
-  }
-}
-
-class _PresetListView extends StatelessWidget {
-  const _PresetListView({
-    required this.presets,
-    required this.emptyMessage,
-    required this.onTap,
-  });
-
-  final List<RenderPreset> presets;
-  final String emptyMessage;
-  final Future<void> Function(RenderPreset preset) onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    if (presets.isEmpty) {
-      return Center(
-        child: Text(emptyMessage, style: TextStyle(color: cs.onSurfaceVariant)),
-      );
-    }
-
-    return ListView.separated(
-      padding: const EdgeInsets.all(12),
-      itemCount: presets.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final preset = presets[index];
-        return ListTile(
-          tileColor: cs.surfaceContainerLow,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          title: Text(preset.name, style: TextStyle(color: cs.onSurface)),
-          subtitle: Text(
-            '${preset.mode.toUpperCase()} · ${_friendlyTime(preset.createdAt)}',
-            style: TextStyle(color: cs.onSurfaceVariant),
-          ),
-          trailing: Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
-          onTap: () => onTap(preset),
-        );
-      },
-    );
-  }
-}
-
-class _WatchLaterListView extends StatelessWidget {
-  const _WatchLaterListView({
-    required this.items,
-    required this.onOpenPost,
-    required this.onOpenCollection,
-  });
-
-  final List<WatchLaterItem> items;
-  final Future<void> Function(RenderPreset preset) onOpenPost;
-  final Future<void> Function(CollectionSummary summary) onOpenCollection;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    if (items.isEmpty) {
-      return Center(
-        child: Text(
-          'Watch Later is empty.',
-          style: TextStyle(color: cs.onSurfaceVariant),
-        ),
-      );
-    }
-    return ListView.separated(
-      padding: const EdgeInsets.all(12),
-      itemCount: items.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final item = items[index];
-        final bool isCollection = item.type == WatchLaterTargetType.collection;
-        final String title = isCollection
-            ? (item.collection?.name ?? 'Collection')
-            : (item.post?.title.isNotEmpty == true
-                ? item.post!.title
-                : (item.post?.name ?? 'Post'));
-        final String subtitle = isCollection
-            ? 'Collection · ${_friendlyTime(item.createdAt)}'
-            : '${item.post?.mode.toUpperCase() ?? 'POST'} · ${_friendlyTime(item.createdAt)}';
-        return ListTile(
-          tileColor: cs.surfaceContainerLow,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          leading: Icon(
-            isCollection
-                ? Icons.collections_bookmark_outlined
-                : Icons.play_circle_outline,
-            color: cs.onSurfaceVariant,
-          ),
-          title: Text(title, style: TextStyle(color: cs.onSurface)),
-          subtitle:
-              Text(subtitle, style: TextStyle(color: cs.onSurfaceVariant)),
-          trailing: Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
-          onTap: () {
-            if (isCollection && item.collection != null) {
-              onOpenCollection(item.collection!);
-            } else if (!isCollection && item.post != null) {
-              onOpenPost(item.post!);
-            }
-          },
-        );
-      },
     );
   }
 }
@@ -9738,15 +10447,23 @@ class _ChatTabState extends State<_ChatTab> {
       _error = null;
     });
     try {
-      final chats = await _repository.fetchChatsForCurrentUser();
-      final shareables = await _repository.fetchRecentViewedPresetsForSharing();
+      final chats = await QueryGuard.run(
+        () => _repository.fetchChatsForCurrentUser(),
+      );
+      final shareables = await QueryGuard.run(
+        () => _repository.fetchRecentViewedPresetsForSharing(),
+      );
 
       ChatSummary? active;
       List<AppUserProfile> members = const <AppUserProfile>[];
       if (chats.isNotEmpty) {
         final String? currentId = preferredChatId ?? _activeChat?.id;
-        active = _chatById(chats, currentId) ?? chats.first;
-        members = await _repository.fetchChatMembers(active.id);
+        final ChatSummary selected =
+            _chatById(chats, currentId) ?? chats.first;
+        active = selected;
+        members = await QueryGuard.run(
+          () => _repository.fetchChatMembers(selected.id),
+        );
       }
 
       if (!mounted) return;
@@ -9758,10 +10475,11 @@ class _ChatTabState extends State<_ChatTab> {
         _loading = false;
       });
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = failure.message;
       });
     }
   }
@@ -9798,12 +10516,21 @@ class _ChatTabState extends State<_ChatTab> {
   }
 
   Future<void> _selectChat(ChatSummary chat) async {
-    final members = await _repository.fetchChatMembers(chat.id);
-    if (!mounted) return;
-    setState(() {
-      _activeChat = chat;
-      _activeMembers = members;
-    });
+    try {
+      final members = await QueryGuard.run(
+        () => _repository.fetchChatMembers(chat.id),
+      );
+      if (!mounted) return;
+      setState(() {
+        _activeChat = chat;
+        _activeMembers = members;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No internet connection. Retry.')),
+      );
+    }
   }
 
   Future<void> _sendMessage() async {
@@ -9845,16 +10572,25 @@ class _ChatTabState extends State<_ChatTab> {
   }
 
   Future<void> _openSharedPreset(String presetId) async {
-    final preset = await _repository.fetchPresetByRouteId(presetId);
-    if (!mounted) return;
-    if (preset != null) {
-      await Navigator.pushNamed(context, buildPostRoutePathForPreset(preset));
-      return;
+    try {
+      final preset = await QueryGuard.run(
+        () => _repository.fetchPresetByRouteId(presetId),
+      );
+      if (!mounted) return;
+      if (preset != null) {
+        await Navigator.pushNamed(context, buildPostRoutePathForPreset(preset));
+        return;
+      }
+      await Navigator.pushNamed(
+        context,
+        '/post/${Uri.encodeComponent(presetId)}',
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No internet connection. Retry.')),
+      );
     }
-    await Navigator.pushNamed(
-      context,
-      '/post/${Uri.encodeComponent(presetId)}',
-    );
   }
 
   Future<void> _newDirectChat() async {
@@ -9909,22 +10645,10 @@ class _ChatTabState extends State<_ChatTab> {
       return const _TopEdgeLoadingPane(label: 'Loading chats...');
     }
     if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _error!,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: cs.error),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _bootstrap,
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
+      return QueryRetryPane(
+        title: _error,
+        offline: _isOfflineErrorText(_error!),
+        onRetry: _bootstrap,
       );
     }
 
@@ -10265,18 +10989,21 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
       _error = null;
     });
     try {
-      final profiles = await _repository.searchProfiles(_searchController.text);
+      final profiles = await QueryGuard.run(
+        () => _repository.searchProfiles(_searchController.text),
+      );
       if (!mounted || token != _queryToken) return;
       setState(() {
         _profiles = profiles;
         _loading = false;
       });
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted || token != _queryToken) return;
       setState(() {
         _profiles = const <AppUserProfile>[];
         _loading = false;
-        _error = e.toString();
+        _error = failure.message;
       });
     }
   }
@@ -10316,9 +11043,20 @@ class _ProfilePickerDialogState extends State<_ProfilePickerDialog> {
             else if (_error != null)
               Padding(
                 padding: const EdgeInsets.all(14),
-                child: Text(
-                  'Search failed: $_error',
-                  style: TextStyle(color: cs.error),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _error!,
+                      style: TextStyle(color: cs.error),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 10),
+                    FilledButton(
+                      onPressed: _search,
+                      child: const Text('Retry'),
+                    ),
+                  ],
                 ),
               )
             else if (_profiles.isEmpty)
@@ -10420,9 +11158,11 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
       _error = null;
     });
     try {
-      final profiles = await _repository.searchProfiles(
-        _searchController.text,
-        limit: 80,
+      final profiles = await QueryGuard.run(
+        () => _repository.searchProfiles(
+          _searchController.text,
+          limit: 80,
+        ),
       );
       if (!mounted || token != _queryToken) return;
       setState(() {
@@ -10430,11 +11170,12 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
         _loading = false;
       });
     } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted || token != _queryToken) return;
       setState(() {
         _profiles = const <AppUserProfile>[];
         _loading = false;
-        _error = e.toString();
+        _error = failure.message;
       });
     }
   }
@@ -10483,9 +11224,20 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
             else if (_error != null)
               Padding(
                 padding: const EdgeInsets.all(14),
-                child: Text(
-                  'Search failed: $_error',
-                  style: TextStyle(color: cs.error),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _error!,
+                      style: TextStyle(color: cs.error),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 10),
+                    FilledButton(
+                      onPressed: _loadProfiles,
+                      child: const Text('Retry'),
+                    ),
+                  ],
                 ),
               )
             else if (visibleProfiles.isEmpty)
@@ -10794,8 +11546,15 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         _thumbnailMode = sourceMode;
         _thumbnailPayload =
             jsonDecode(jsonEncode(sourcePayload)) as Map<String, dynamic>;
-      } else if (widget.isEdit && widget.startBlankCard) {
-        _thumbnailMode = existing?.thumbnailMode ?? sourceMode;
+      } else if (widget.isEdit) {
+        _thumbnailMode = existing?.thumbnailMode ?? widget.mode;
+        final payload = existing?.thumbnailPayload.isNotEmpty == true
+            ? existing!.thumbnailPayload
+            : widget.payload;
+        _thumbnailPayload =
+            jsonDecode(jsonEncode(payload)) as Map<String, dynamic>;
+      } else if (widget.startBlankCard) {
+        _thumbnailMode = sourceMode;
         _thumbnailPayload = _blankPayloadForMode(_thumbnailMode);
       } else {
         _thumbnailMode = existing?.thumbnailMode ?? widget.mode;
@@ -10835,9 +11594,16 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           _thumbnailPayload = jsonDecode(
             jsonEncode(_editableCollectionItems.first.snapshot),
           ) as Map<String, dynamic>;
-        } else if (widget.isEdit && widget.startBlankCard) {
+        } else if (widget.isEdit) {
           _thumbnailMode =
               widget.initialCardMode ?? _editableCollectionItems.first.mode;
+          final payload = widget.initialCardPayload.isNotEmpty
+              ? widget.initialCardPayload
+              : _editableCollectionItems.first.snapshot;
+          _thumbnailPayload =
+              jsonDecode(jsonEncode(payload)) as Map<String, dynamic>;
+        } else if (widget.startBlankCard) {
+          _thumbnailMode = _editableCollectionItems.first.mode;
           _thumbnailPayload = _blankPayloadForMode(_thumbnailMode);
         } else {
           _thumbnailMode =
@@ -10890,7 +11656,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final int token = ++_mentionToken;
     setState(() => _mentionLoading = true);
     try {
-      final results = await _repository.searchMentionTargets(query, limit: 12);
+      final results = await QueryGuard.run(
+        () => _repository.searchMentionTargets(query, limit: 12),
+      );
       if (!mounted || token != _mentionToken) return;
       setState(() {
         _mentionLoading = false;
@@ -11812,7 +12580,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final scene = _thumbnail3DScene();
     final dynamic raw = scene[field];
     final List<double> next = <double>[
-      fallback.length > 0 ? fallback[0] : 0,
+      fallback.isNotEmpty ? fallback[0] : 0,
       fallback.length > 1 ? fallback[1] : 0,
       fallback.length > 2 ? fallback[2] : 0,
     ];
@@ -12535,6 +13303,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           ),
           DropdownButtonFormField<String>(
             key: ValueKey<String>('shadow-quality-$shadowQuality'),
+            // ignore: deprecated_member_use
             value: shadowQuality,
             decoration: const InputDecoration(labelText: 'Shadow Quality'),
             items: const <String>[
@@ -12671,6 +13440,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             ),
           ),
           DropdownButtonFormField<String>(
+            // ignore: deprecated_member_use
             value: () {
               const modes = <String>{'orbit', 'fps', 'free'};
               final String raw =
@@ -13085,6 +13855,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                           _set2DLayerField(selectedKey!, 'isItalic', v),
                     ),
                     DropdownButtonFormField<String>(
+                      // ignore: deprecated_member_use
                       value: (() {
                         final String font =
                             (selected['fontFamily'] ?? 'Poppins').toString();
@@ -13385,6 +14156,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               ),
             ],
             DropdownButtonFormField<String>(
+              // ignore: deprecated_member_use
               value: (() {
                 final String selectedAspect =
                     (controls['selectedAspect'] ?? '').toString();
@@ -13664,7 +14436,13 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                               selected: active,
                               label: Text(
                                 '${index + 1}. ${_editableCollectionItems[index].name}',
+                                style: TextStyle(
+                                  color: active ? Colors.black : cs.onSurface,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
+                              selectedColor: Colors.white,
+                              checkmarkColor: Colors.black,
                               onSelected: (_) =>
                                   _setThumbnailFromCollectionIndex(index),
                             );
@@ -13771,7 +14549,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                       style: TextStyle(color: cs.onSurfaceVariant),
                     ),
                     const SizedBox(height: 12),
-                    if (_isCardEditor && _pullSourcePayload != null)
+                    if (_isCardEditor &&
+                        !widget.isEdit &&
+                        _pullSourcePayload != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 10),
                         child: OutlinedButton.icon(
@@ -13842,7 +14622,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                     if (_mentionLoading)
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
-                        child: LinearProgressIndicator(),
+                        child: LinearProgressIndicator(color: Colors.white),
                       ),
                     if (_mentionResults.isNotEmpty)
                       Container(
@@ -13962,6 +14742,7 @@ class _SettingsTabState extends State<_SettingsTab> {
   bool _trackerUiVisible = false;
   bool _cursorEnabled = false;
   bool _prefsLoading = true;
+  String? _prefsError;
   TrackerRuntimeConfig _trackerConfig = TrackerRuntimeConfig.defaults;
 
   @override
@@ -13987,10 +14768,19 @@ class _SettingsTabState extends State<_SettingsTab> {
   }
 
   Future<void> _loadTrackerPrefs() async {
+    if (mounted) {
+      setState(() {
+        _prefsLoading = true;
+        _prefsError = null;
+      });
+    }
     try {
-      final prefs = await _repository.fetchTrackerPreferencesForCurrentUser();
-      var config =
-          await _repository.fetchTrackerRuntimeConfigForCurrentUser();
+      final prefs = await QueryGuard.run(
+        () => _repository.fetchTrackerPreferencesForCurrentUser(),
+      );
+      var config = await QueryGuard.run(
+        () => _repository.fetchTrackerRuntimeConfigForCurrentUser(),
+      );
       final normalized = _normalizeInputModeForDevice(config);
       if (normalized.inputMode != config.inputMode) {
         config = normalized;
@@ -14003,11 +14793,16 @@ class _SettingsTabState extends State<_SettingsTab> {
         _trackerConfig = config;
         _cursorEnabled = config.dartCursorEnabled;
         _prefsLoading = false;
+        _prefsError = null;
       });
       TrackingService.instance.setRuntimeConfig(config);
-    } catch (_) {
+    } catch (e) {
+      final failure = QueryGuard.classify(e);
       if (!mounted) return;
-      setState(() => _prefsLoading = false);
+      setState(() {
+        _prefsLoading = false;
+        _prefsError = failure.message;
+      });
     }
   }
 
@@ -14182,6 +14977,15 @@ class _SettingsTabState extends State<_SettingsTab> {
                   height: 60,
                   child:
                       _TopEdgeLoadingPane(label: 'Loading tracker config...'),
+                )
+              else if (_prefsError != null)
+                SizedBox(
+                  height: 160,
+                  child: QueryRetryPane(
+                    title: _prefsError,
+                    offline: _isOfflineErrorText(_prefsError!),
+                    onRetry: _loadTrackerPrefs,
+                  ),
                 )
               else ...[
                 SwitchListTile(
@@ -14945,22 +15749,19 @@ Future<bool> _showSignInRequiredSheet(
   return result == true;
 }
 
+bool _isOfflineErrorText(String value) {
+  return value.toLowerCase().contains('no internet');
+}
+
 String _friendlyTime(DateTime value) {
   final DateTime now = DateTime.now();
   final Duration d = now.difference(value);
-  if (d.inSeconds < 60) return '${d.inSeconds}s ago';
+  if (d.inSeconds < 60) return 'Just now';
   if (d.inMinutes < 60) return '${d.inMinutes}m ago';
   if (d.inHours < 24) return '${d.inHours}h ago';
-  if (d.inDays < 7) return '${d.inDays}d ago';
-  return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
-}
-
-String _formatDateTime(DateTime value) {
-  final String mm = value.month.toString().padLeft(2, '0');
-  final String dd = value.day.toString().padLeft(2, '0');
-  final String hh = value.hour.toString().padLeft(2, '0');
-  final String min = value.minute.toString().padLeft(2, '0');
-  return '${value.year}-$mm-$dd $hh:$min';
+  if (d.inDays < 30) return '${d.inDays}d ago';
+  if (d.inDays < 365) return '${(d.inDays / 30).floor()}mo ago';
+  return '${(d.inDays / 365).floor()}y ago';
 }
 
 String _friendlyCount(int value) {
