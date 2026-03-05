@@ -260,11 +260,13 @@ class WindowEffect2DPreview extends StatelessWidget {
     final double trackedShiftDeltaX = targetScaledShiftX - baseShiftX;
     final double trackedShiftDeltaY = targetScaledShiftY - baseShiftY;
     final double boundedShiftDeltaX = isOutsideLayer
-        ? trackedShiftDeltaX.clamp(-outsideOverflowMax, outsideOverflowMax)
+        ? trackedShiftDeltaX
+            .clamp(-outsideOverflowMax, outsideOverflowMax)
             .toDouble()
         : trackedShiftDeltaX;
     final double boundedShiftDeltaY = isOutsideLayer
-        ? trackedShiftDeltaY.clamp(-outsideOverflowMax, outsideOverflowMax)
+        ? trackedShiftDeltaY
+            .clamp(-outsideOverflowMax, outsideOverflowMax)
             .toDouble()
         : trackedShiftDeltaY;
     final double finalShiftX =
@@ -325,7 +327,6 @@ class WindowEffect2DPreview extends StatelessWidget {
                       : _buildImageLayer(
                           layer,
                           canvasSize: canvasSize,
-                          isOutsideLayer: isOutsideLayer,
                         ),
                 ),
               ),
@@ -393,15 +394,12 @@ class WindowEffect2DPreview extends StatelessWidget {
   Widget _buildImageLayer(
     _LayerNode layer, {
     required Size canvasSize,
-    required bool isOutsideLayer,
   }) {
     if (layer.url == null || layer.url!.isEmpty) {
       return const SizedBox.shrink();
     }
-    final double extra = isOutsideLayer ? outsideOverflowMax * 2 : 0;
-    final double width = (canvasSize.width + extra).clamp(1, 100000).toDouble();
-    final double height =
-        (canvasSize.height + extra).clamp(1, 100000).toDouble();
+    final double width = canvasSize.width.clamp(1, 100000).toDouble();
+    final double height = canvasSize.height.clamp(1, 100000).toDouble();
     return Image.network(
       layer.url!,
       width: width,

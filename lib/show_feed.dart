@@ -129,8 +129,13 @@ class _TopEdgeLoadingPane extends StatefulWidget {
   State<_TopEdgeLoadingPane> createState() => _TopEdgeLoadingPaneState();
 }
 
-class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane> {
+class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane>
+    with SingleTickerProviderStateMixin {
   OverlayEntry? _loadingOverlayEntry;
+  late final AnimationController _shineController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1450),
+  )..repeat();
 
   @override
   void initState() {
@@ -146,6 +151,7 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane> {
 
   @override
   void dispose() {
+    _shineController.dispose();
     _loadingOverlayEntry?.remove();
     _loadingOverlayEntry = null;
     super.dispose();
@@ -164,10 +170,46 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane> {
               width: double.infinity,
               child: Material(
                 color: Colors.transparent,
-                child: LinearProgressIndicator(
-                  minHeight: widget.minHeight,
-                  backgroundColor: Colors.transparent,
-                  color: Colors.white,
+                child: AnimatedBuilder(
+                  animation: _shineController,
+                  builder: (context, _) {
+                    final double travel = (_shineController.value * 2.4) - 1.2;
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        math.max(widget.minHeight * 2.2, 4),
+                      ),
+                      child: SizedBox(
+                        height: widget.minHeight,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ColoredBox(
+                              color: Colors.white.withValues(alpha: 0.88),
+                            ),
+                            Align(
+                              alignment: Alignment(travel, 0),
+                              child: FractionallySizedBox(
+                                widthFactor: 0.34,
+                                heightFactor: 1,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        Colors.white.withValues(alpha: 0),
+                                        Colors.white.withValues(alpha: 0.9),
+                                        Colors.white.withValues(alpha: 0),
+                                      ],
+                                      stops: const [0, 0.5, 1],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -458,8 +500,7 @@ class _StandalonePublicProfileRoutePageState
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: QueryRetryPane(
           title: _error ?? 'Profile unavailable.',
-          offline:
-              _error != null ? _isOfflineErrorText(_error!) : false,
+          offline: _error != null ? _isOfflineErrorText(_error!) : false,
           onRetry: _load,
         ),
       );
@@ -1060,6 +1101,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   Future<void> _openHeaderNotifications() async {
     await showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       backgroundColor: Theme.of(context).colorScheme.surface,
       showDragHandle: true,
       builder: (context) {
@@ -1735,9 +1777,10 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
   }) {
     const double horizontalPadding = 14 * 2;
     const double crossAxisSpacing = 12;
-    final double itemWidth =
-        (width - horizontalPadding - ((crossAxisCount - 1) * crossAxisSpacing)) /
-            crossAxisCount;
+    final double itemWidth = (width -
+            horizontalPadding -
+            ((crossAxisCount - 1) * crossAxisSpacing)) /
+        crossAxisCount;
     final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
     final double cardHeight = previewHeight + _kFeedCardFixedMetaHeight;
     return itemWidth / cardHeight;
@@ -1942,6 +1985,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: ListView(
@@ -2034,6 +2078,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     ];
     final String? reason = await showModalBottomSheet<String>(
       context: context,
+      useRootNavigator: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: ListView(
@@ -2101,7 +2146,8 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
         });
         break;
       case 'Most Used Hashtags':
-        items.sort((a, b) => b.preset.tags.length.compareTo(a.preset.tags.length));
+        items.sort(
+            (a, b) => b.preset.tags.length.compareTo(a.preset.tags.length));
         break;
       case 'Viral':
         items.sort((a, b) {
@@ -2292,9 +2338,10 @@ class _CollectionTabState extends State<_CollectionTab> {
   }) {
     const double horizontalPadding = 14 * 2;
     const double crossAxisSpacing = 12;
-    final double itemWidth =
-        (width - horizontalPadding - ((crossAxisCount - 1) * crossAxisSpacing)) /
-            crossAxisCount;
+    final double itemWidth = (width -
+            horizontalPadding -
+            ((crossAxisCount - 1) * crossAxisSpacing)) /
+        crossAxisCount;
     final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
     final double cardHeight = previewHeight + _kFeedCardFixedMetaHeight;
     return itemWidth / cardHeight;
@@ -2434,7 +2481,8 @@ class _CollectionTabState extends State<_CollectionTab> {
     final updated = await Navigator.push(
       context,
       MaterialPageRoute(
-        settings: const RouteSettings(name: '/post/editor/collection-card-update'),
+        settings:
+            const RouteSettings(name: '/post/editor/collection-card-update'),
         builder: (_) => _PostCardComposerPage.collection(
           collectionId: summary.id,
           collectionName: summary.name,
@@ -2556,6 +2604,7 @@ class _CollectionTabState extends State<_CollectionTab> {
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: ListView(
@@ -2648,6 +2697,7 @@ class _CollectionTabState extends State<_CollectionTab> {
     ];
     final String? reason = await showModalBottomSheet<String>(
       context: context,
+      useRootNavigator: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: ListView(
@@ -2843,15 +2893,18 @@ class _CollectionTabState extends State<_CollectionTab> {
                       onOpenAuthorProfile: () =>
                           _openPublicProfileRoute(context, summary.author),
                       isMine: mine,
-                      onToggleVisibility:
-                          mine ? () => _toggleCollectionVisibility(summary) : null,
+                      onToggleVisibility: mine
+                          ? () => _toggleCollectionVisibility(summary)
+                          : null,
                       onDelete: mine ? () => _deleteCollection(summary) : null,
                       onUpdate: mine ? () => _updateCollection(summary) : null,
                       onWatchLater: () => _toggleCollectionWatchLater(summary),
                       onShare: () => _openCollectionShareSheet(summary),
                       onReport: () => _reportCollection(summary),
-                      onNotInterested: () => _notInterestedInCollection(summary),
-                      onDontRecommend: () => _dontRecommendCollectionUser(summary),
+                      onNotInterested: () =>
+                          _notInterestedInCollection(summary),
+                      onDontRecommend: () =>
+                          _dontRecommendCollectionUser(summary),
                     );
                   },
                 );
@@ -2921,6 +2974,9 @@ class _CollectionFeedTile extends StatelessWidget {
             ),
           )
         : _OverlayParallaxPreview(
+            key: ValueKey<String>(
+              'collection-grid-preview-${summary.id}-${summary.updatedAt.millisecondsSinceEpoch}',
+            ),
             mode: previewMode,
             payload: previewPayload,
             borderRadius: cardRadius,
@@ -3033,7 +3089,9 @@ class _CollectionFeedTile extends StatelessWidget {
               child: Align(
                 alignment: Alignment.topLeft,
                 child: Text(
-                  summary.name.isNotEmpty ? summary.name : 'Untitled collection',
+                  summary.name.isNotEmpty
+                      ? summary.name
+                      : 'Untitled collection',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -3059,7 +3117,8 @@ class _CollectionFeedTile extends StatelessWidget {
                       color: cs.onSurfaceVariant,
                       fontSize: 12,
                       decoration: TextDecoration.underline,
-                      decorationColor: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                      decorationColor:
+                          cs.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
                   ),
                 ),
@@ -3127,6 +3186,9 @@ class _FeedTile extends StatelessWidget {
             ? post.preset.thumbnailPayload
             : post.preset.payload;
     final Widget layeredPreview = _OverlayParallaxPreview(
+      key: ValueKey<String>(
+        'home-grid-preview-${post.preset.id}-${post.preset.updatedAt.millisecondsSinceEpoch}',
+      ),
       mode: previewMode,
       payload: previewPayload,
       borderRadius: cardRadius,
@@ -3269,7 +3331,8 @@ class _FeedTile extends StatelessWidget {
                       color: cs.onSurfaceVariant,
                       fontSize: 12,
                       decoration: TextDecoration.underline,
-                      decorationColor: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                      decorationColor:
+                          cs.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
                   ),
                 ),
@@ -3306,6 +3369,7 @@ enum _GridPresetPreviewLayerMode {
 
 class _OverlayParallaxPreview extends StatefulWidget {
   const _OverlayParallaxPreview({
+    super.key,
     required this.mode,
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
@@ -3322,13 +3386,15 @@ class _OverlayParallaxPreview extends StatefulWidget {
   final double outsideOverflowMax;
 
   @override
-  State<_OverlayParallaxPreview> createState() => _OverlayParallaxPreviewState();
+  State<_OverlayParallaxPreview> createState() =>
+      _OverlayParallaxPreviewState();
 }
 
 class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
   final LayerLink _link = LayerLink();
   OverlayEntry? _outsideOverlayEntry;
   Size _targetSize = Size.zero;
+  ModalRoute<dynamic>? _ownerRoute;
 
   @override
   void initState() {
@@ -3351,6 +3417,16 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final ModalRoute<dynamic>? nextRoute = ModalRoute.of(context);
+    if (nextRoute != _ownerRoute) {
+      _ownerRoute = nextRoute;
+      _outsideOverlayEntry?.markNeedsBuild();
+    }
+  }
+
+  @override
   void dispose() {
     _removeOutsideOverlay();
     super.dispose();
@@ -3361,11 +3437,14 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.enableOutsideOverlay) return;
       if (_outsideOverlayEntry != null) return;
-      final overlay = Overlay.maybeOf(context);
+      final overlay = Overlay.maybeOf(context, rootOverlay: true);
       if (overlay == null) return;
       _outsideOverlayEntry = OverlayEntry(
         builder: (context) {
           if (!widget.enableOutsideOverlay) return const SizedBox.shrink();
+          if (_ownerRoute != null && _ownerRoute!.isCurrent == false) {
+            return const SizedBox.shrink();
+          }
           if (_targetSize.width <= 0 || _targetSize.height <= 0) {
             return const SizedBox.shrink();
           }
@@ -3487,8 +3566,7 @@ class _GridPresetPreview extends StatelessWidget {
 
     if (adapted.mode == '2d') {
       final WindowEffectLayerMode resolvedLayerMode = switch (layerMode) {
-        _GridPresetPreviewLayerMode.combined =>
-          WindowEffectLayerMode.combined,
+        _GridPresetPreviewLayerMode.combined => WindowEffectLayerMode.combined,
         _GridPresetPreviewLayerMode.insideOnly =>
           WindowEffectLayerMode.insideOnly,
         _GridPresetPreviewLayerMode.outsideOnly =>
@@ -3791,6 +3869,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   final TextEditingController _commentController = TextEditingController();
   final FocusNode _immersiveFocusNode =
       FocusNode(debugLabel: 'detail-immersive-focus');
+  final ScrollController _leftPaneScrollController = ScrollController();
+  final ScrollController _rightPaneScrollController = ScrollController();
+  final ScrollController _chipRailScrollController = ScrollController();
   static const List<String> _suggestionFilters = <String>[
     'All',
     'FromUser',
@@ -3842,6 +3923,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   void dispose() {
     _immersiveFocusNode.dispose();
     _commentController.dispose();
+    _leftPaneScrollController.dispose();
+    _rightPaneScrollController.dispose();
+    _chipRailScrollController.dispose();
     super.dispose();
   }
 
@@ -4054,6 +4138,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       showDragHandle: true,
       builder: (context) {
         return SafeArea(
@@ -4294,10 +4379,13 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         .where((item) => item.preset.id != _post.preset.id)
         .toList();
     final String currentUserId = _post.preset.userId;
-    final Set<String> currentTags = _post.preset.tags.map((e) => e.toLowerCase()).toSet();
+    final Set<String> currentTags =
+        _post.preset.tags.map((e) => e.toLowerCase()).toSet();
     switch (_suggestionFilter) {
       case 'FromUser':
-        return candidates.where((item) => item.preset.userId == currentUserId).toList();
+        return candidates
+            .where((item) => item.preset.userId == currentUserId)
+            .toList();
       case 'Related':
         return candidates.where((item) {
           final tags = item.preset.tags.map((e) => e.toLowerCase()).toSet();
@@ -4311,7 +4399,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         });
         return candidates;
       case 'MostUsedHashtags':
-        candidates.sort((a, b) => b.preset.tags.length.compareTo(a.preset.tags.length));
+        candidates.sort(
+            (a, b) => b.preset.tags.length.compareTo(a.preset.tags.length));
         return candidates;
       case 'MostLiked':
         candidates.sort((a, b) => b.likesCount.compareTo(a.likesCount));
@@ -4351,7 +4440,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
       final scene = adapted.scene;
       final layers = scene.entries
           .where((e) => e.value is Map)
-          .map((e) => MapEntry(e.key, Map<String, dynamic>.from(e.value as Map)))
+          .map(
+              (e) => MapEntry(e.key, Map<String, dynamic>.from(e.value as Map)))
           .where((entry) =>
               entry.key != 'turning_point' &&
               entry.value['isVisible'] != false &&
@@ -4380,110 +4470,226 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     final String heroTag = _detailHeroTag;
     final String previewMode = _post.preset.mode;
     final Map<String, dynamic> previewPayload = _post.preset.payload;
-    final String? ambientUrl = _ambientImageUrlFromPayload(_post.preset.payload);
+    final String? ambientUrl =
+        _ambientImageUrlFromPayload(_post.preset.payload);
     final List<FeedPost> suggestions = _filteredSuggestions();
+    final String title =
+        _post.preset.title.isNotEmpty ? _post.preset.title : _post.preset.name;
 
-    Widget buildBackdrop() {
-      if (ambientUrl == null || ambientUrl.isEmpty) {
-        return const ColoredBox(color: Colors.black);
-      }
+    void scrollChipRailBy(double delta) {
+      if (!_chipRailScrollController.hasClients) return;
+      final position = _chipRailScrollController.position;
+      final double target = (_chipRailScrollController.offset + delta)
+          .clamp(0.0, position.maxScrollExtent);
+      _chipRailScrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 170),
+        curve: Curves.easeOutCubic,
+      );
+    }
+
+    Widget buildBackdrop({required bool desktop}) {
+      const Color fallback = Colors.black;
+      final Widget base = ambientUrl == null || ambientUrl.isEmpty
+          ? const ColoredBox(color: fallback)
+          : Image.network(
+              ambientUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const ColoredBox(color: fallback),
+            );
       return Stack(
         fit: StackFit.expand,
         children: [
-          Image.network(
-            ambientUrl,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
-          ),
+          base,
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 56, sigmaY: 56),
             child: Container(color: Colors.black.withValues(alpha: 0.72)),
+          ),
+          IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: desktop
+                      ? const Alignment(-0.44, -0.24)
+                      : const Alignment(0, -0.34),
+                  radius: desktop ? 0.78 : 0.64,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.14),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
           ),
         ],
       );
     }
 
     Widget buildAmbientUnderlay() {
-      if (ambientUrl == null || ambientUrl.isEmpty) {
-        return Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            color: Colors.black.withValues(alpha: 0.45),
-          ),
-        );
-      }
+      final Widget visual = ambientUrl == null || ambientUrl.isEmpty
+          ? Container(color: Colors.black.withValues(alpha: 0.45))
+          : Image.network(
+              ambientUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  Container(color: Colors.black.withValues(alpha: 0.45)),
+            );
       return ClipRRect(
         borderRadius: BorderRadius.circular(20),
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.network(
-              ambientUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                color: Colors.black.withValues(alpha: 0.45),
-              ),
-            ),
+            visual,
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-              child: Container(color: Colors.black.withValues(alpha: 0.44)),
+              child: Container(color: Colors.black.withValues(alpha: 0.42)),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment.center,
+                  radius: 0.88,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.16),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
             ),
           ],
         ),
       );
     }
 
+    Widget buildEngagementRail() {
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _engagementButton(
+              icon: _post.myReaction == 1
+                  ? Icons.thumb_up_alt
+                  : Icons.thumb_up_alt_outlined,
+              active: _post.myReaction == 1,
+              activeColor: cs.primary,
+              label: _friendlyCount(_post.likesCount),
+              onTap: () => _toggleReaction(1),
+            ),
+            _engagementButton(
+              icon: _post.myReaction == -1
+                  ? Icons.thumb_down_alt
+                  : Icons.thumb_down_alt_outlined,
+              active: _post.myReaction == -1,
+              activeColor: Colors.redAccent,
+              label: _friendlyCount(_post.dislikesCount),
+              onTap: () => _toggleReaction(-1),
+            ),
+            _engagementButton(
+              icon: Icons.send_outlined,
+              active: false,
+              activeColor: cs.primary,
+              label: '',
+              onTap: _openShareSheet,
+            ),
+            _engagementButton(
+              icon: Icons.mode_comment_outlined,
+              active: _commentsOpen,
+              activeColor: cs.primary,
+              label: _friendlyCount(_post.commentsCount),
+              onTap: () => setState(() => _commentsOpen = true),
+            ),
+            _engagementButton(
+              icon: _post.isSaved ? Icons.bookmark : Icons.bookmark_border,
+              active: _post.isSaved,
+              activeColor: Colors.amberAccent,
+              label: _friendlyCount(_post.savesCount),
+              onTap: _toggleSave,
+            ),
+            _engagementButton(
+              icon: _post.isWatchLater
+                  ? Icons.watch_later
+                  : Icons.watch_later_outlined,
+              active: _post.isWatchLater,
+              activeColor: Colors.tealAccent,
+              label: '',
+              onTap: _toggleWatchLater,
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget buildDescriptionBox() {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () =>
+            setState(() => _descriptionExpanded = !_descriptionExpanded),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Description',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    _descriptionExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: Colors.white70,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _post.preset.description.trim().isNotEmpty
+                    ? _post.preset.description
+                    : 'No description provided.',
+                maxLines: _descriptionExpanded ? null : 3,
+                overflow: _descriptionExpanded
+                    ? TextOverflow.visible
+                    : TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.86),
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     Widget buildBelowPreviewMeta() {
-      final String title =
-          _post.preset.title.isNotEmpty ? _post.preset.title : _post.preset.name;
       return Material(
         color: Colors.transparent,
         child: Container(
           margin: const EdgeInsets.only(top: 10),
           padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                '${_friendlyCount(_post.viewsCount)} views · ${_friendlyTime(_post.preset.createdAt)}',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.84),
-                  fontSize: 12,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final bool compact = constraints.maxWidth < 760;
+              final Widget usernameCluster = Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  GestureDetector(
-                    onTap: () => _openPublicProfileRoute(context, _post.author),
-                    child: CircleAvatar(
-                      radius: 13,
-                      backgroundImage: (_post.author?.avatarUrl != null &&
-                              _post.author!.avatarUrl!.isNotEmpty)
-                          ? NetworkImage(_post.author!.avatarUrl!)
-                          : null,
-                      child: (_post.author?.avatarUrl == null ||
-                              _post.author!.avatarUrl!.isEmpty)
-                          ? const Icon(Icons.person, size: 14)
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
+                  Flexible(
                     child: GestureDetector(
-                      onTap: () => _openPublicProfileRoute(context, _post.author),
+                      onTap: () =>
+                          _openPublicProfileRoute(context, _post.author),
                       child: Text(
                         _post.author?.displayName ?? 'Unknown creator',
                         maxLines: 1,
@@ -4496,75 +4702,112 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       ),
                     ),
                   ),
-                  if (!_mine)
+                  if (!_mine) ...[
+                    const SizedBox(width: 8),
                     SizedBox(
                       height: 28,
                       child: FilledButton.tonal(
                         onPressed: _toggleFollow,
                         child: Text(
-                          _post.isFollowingAuthor ? 'Following' : 'Follow',
-                        ),
+                            _post.isFollowingAuthor ? 'Following' : 'Follow'),
                       ),
                     ),
+                  ],
                 ],
-              ),
-              const SizedBox(height: 6),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    _engagementButton(
-                      icon: _post.myReaction == 1
-                          ? Icons.thumb_up_alt
-                          : Icons.thumb_up_alt_outlined,
-                      active: _post.myReaction == 1,
-                      activeColor: cs.primary,
-                      label: _friendlyCount(_post.likesCount),
-                      onTap: () => _toggleReaction(1),
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '${_friendlyCount(_post.viewsCount)} views · ${_friendlyTime(_post.preset.createdAt)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.84),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  if (compact) ...[
+                    Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () =>
+                              _openPublicProfileRoute(context, _post.author),
+                          child: CircleAvatar(
+                            radius: 13,
+                            backgroundImage: (_post.author?.avatarUrl != null &&
+                                    _post.author!.avatarUrl!.isNotEmpty)
+                                ? NetworkImage(_post.author!.avatarUrl!)
+                                : null,
+                            child: (_post.author?.avatarUrl == null ||
+                                    _post.author!.avatarUrl!.isEmpty)
+                                ? const Icon(Icons.person, size: 14)
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: usernameCluster),
+                      ],
                     ),
-                    _engagementButton(
-                      icon: _post.myReaction == -1
-                          ? Icons.thumb_down_alt
-                          : Icons.thumb_down_alt_outlined,
-                      active: _post.myReaction == -1,
-                      activeColor: Colors.redAccent,
-                      label: _friendlyCount(_post.dislikesCount),
-                      onTap: () => _toggleReaction(-1),
-                    ),
-                    _engagementButton(
-                      icon: Icons.send_outlined,
-                      active: false,
-                      activeColor: cs.primary,
-                      label: '',
-                      onTap: _openShareSheet,
-                    ),
-                    _engagementButton(
-                      icon: Icons.mode_comment_outlined,
-                      active: _commentsOpen,
-                      activeColor: cs.primary,
-                      label: _friendlyCount(_post.commentsCount),
-                      onTap: () => setState(() => _commentsOpen = true),
-                    ),
-                    _engagementButton(
-                      icon: _post.isSaved ? Icons.bookmark : Icons.bookmark_border,
-                      active: _post.isSaved,
-                      activeColor: Colors.amberAccent,
-                      label: _friendlyCount(_post.savesCount),
-                      onTap: _toggleSave,
-                    ),
-                    _engagementButton(
-                      icon: _post.isWatchLater
-                          ? Icons.watch_later
-                          : Icons.watch_later_outlined,
-                      active: _post.isWatchLater,
-                      activeColor: Colors.tealAccent,
-                      label: '',
-                      onTap: _toggleWatchLater,
+                    const SizedBox(height: 8),
+                    buildEngagementRail(),
+                  ] else ...[
+                    Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () =>
+                              _openPublicProfileRoute(context, _post.author),
+                          child: CircleAvatar(
+                            radius: 13,
+                            backgroundImage: (_post.author?.avatarUrl != null &&
+                                    _post.author!.avatarUrl!.isNotEmpty)
+                                ? NetworkImage(_post.author!.avatarUrl!)
+                                : null,
+                            child: (_post.author?.avatarUrl == null ||
+                                    _post.author!.avatarUrl!.isEmpty)
+                                ? const Icon(Icons.person, size: 14)
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(flex: 4, child: usernameCluster),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 5,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: buildEngagementRail(),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
-                ),
-              ),
-            ],
+                  const SizedBox(height: 10),
+                  buildDescriptionBox(),
+                ],
+              );
+            },
           ),
         ),
       );
@@ -4573,7 +4816,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     Widget buildPreviewCard() {
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: _commentsOpen ? () => setState(() => _commentsOpen = false) : null,
+        onTap:
+            _commentsOpen ? () => setState(() => _commentsOpen = false) : null,
         onDoubleTap: _openFullscreenViewer,
         child: Hero(
           tag: heroTag,
@@ -4598,7 +4842,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   left: 8,
                   child: IconButton.filledTonal(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                    icon:
+                        const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
                   ),
                 ),
                 Positioned(
@@ -4627,319 +4872,303 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             bottom: -22,
             child: IgnorePointer(child: buildAmbientUnderlay()),
           ),
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: buildPreviewCard(),
+          AspectRatio(aspectRatio: 16 / 9, child: buildPreviewCard()),
+        ],
+      );
+    }
+
+    Widget buildFilterRail() {
+      return Listener(
+        onPointerSignal: (event) {
+          if (event is! PointerScrollEvent) return;
+          final double delta =
+              event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+                  ? event.scrollDelta.dx
+                  : event.scrollDelta.dy;
+          if (delta.abs() < 0.1) return;
+          scrollChipRailBy(delta);
+        },
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Scroll filters left',
+              onPressed: () => scrollChipRailBy(-180),
+              icon: const Icon(Icons.chevron_left_rounded),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                controller: _chipRailScrollController,
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children:
+                      List<Widget>.generate(_suggestionFilters.length, (index) {
+                    final filter = _suggestionFilters[index];
+                    final selected = filter == _suggestionFilter;
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        right: index == _suggestionFilters.length - 1 ? 0 : 8,
+                      ),
+                      child: ChoiceChip(
+                        selected: selected,
+                        label: Text(
+                          _displayFilterName(filter),
+                          style: TextStyle(
+                            color: selected ? Colors.black : Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        selectedColor: Colors.white,
+                        checkmarkColor: Colors.black,
+                        side: const BorderSide(color: Colors.white24),
+                        onSelected: (_) =>
+                            setState(() => _suggestionFilter = filter),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Scroll filters right',
+              onPressed: () => scrollChipRailBy(180),
+              icon: const Icon(Icons.chevron_right_rounded),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget buildCommentsPanel() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Comments',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Close comments',
+                onPressed: () => setState(() => _commentsOpen = false),
+                icon: const Icon(Icons.close_rounded,
+                    color: Colors.white70, size: 18),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: _loadingComments
+                ? const _TopEdgeLoadingPane(
+                    label: 'Loading comments...',
+                    backgroundColor: Colors.transparent,
+                    minHeight: 2,
+                  )
+                : _comments.isEmpty
+                    ? Center(
+                        child: Text(
+                          'No comments yet',
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.68)),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _rightPaneScrollController,
+                        itemCount: _comments.length,
+                        itemBuilder: (context, index) {
+                          final c = _comments[index];
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: RichText(
+                              text: TextSpan(
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.78),
+                                ),
+                                children: [
+                                  TextSpan(
+                                    text:
+                                        '${c.author?.displayName ?? 'User'}: ',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  TextSpan(text: c.content),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _commentController,
+                  decoration: const InputDecoration(
+                    hintText: 'Write a comment...',
+                    filled: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _sendingComment ? null : _sendComment,
+                child: Text(_sendingComment ? '...' : 'Send'),
+              ),
+            ],
           ),
         ],
       );
     }
 
-    Widget buildDetailMetaPanel(double width) {
-      final bool narrow = width < 1140;
-      Widget buildCommentsPanel() {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'Comments',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
-                const Spacer(),
-                IconButton(
-                  tooltip: 'Close comments',
-                  onPressed: () => setState(() => _commentsOpen = false),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Expanded(
-              child: _loadingComments
-                  ? const _TopEdgeLoadingPane(
-                      label: 'Loading comments...',
-                      backgroundColor: Colors.transparent,
-                      minHeight: 2,
-                    )
-                  : _comments.isEmpty
-                      ? Center(
-                          child: Text(
-                            'No comments yet',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.68),
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: _comments.length,
-                          itemBuilder: (context, index) {
-                            final c = _comments[index];
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 6),
-                              child: RichText(
-                                text: TextSpan(
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.78),
-                                  ),
-                                  children: [
-                                    TextSpan(
-                                      text: '${c.author?.displayName ?? 'User'}: ',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    TextSpan(text: c.content),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _commentController,
-                    decoration: const InputDecoration(
-                      hintText: 'Write a comment...',
-                      filled: true,
+    Widget buildSuggestionsPanel() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox.shrink(),
+              const Spacer(),
+              if (_mine)
+                PopupMenuButton<String>(
+                  color: cs.surfaceContainerHighest,
+                  onSelected: (value) {
+                    if (value == 'edit') _editOwnPost();
+                    if (value == 'visibility') _toggleOwnVisibility();
+                    if (value == 'delete') _deleteOwnPost();
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem<String>(
+                      value: 'edit',
+                      child: Text('Update'),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: _sendingComment ? null : _sendComment,
-                  child: Text(_sendingComment ? '...' : 'Send'),
-                ),
-              ],
-            ),
-          ],
-        );
-      }
-
-      Widget buildDetailDiscoveryPanel() {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'Details & Discussion',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
-                const Spacer(),
-                if (_mine)
-                  PopupMenuButton<String>(
-                    color: cs.surfaceContainerHighest,
-                    onSelected: (value) {
-                      if (value == 'edit') _editOwnPost();
-                      if (value == 'visibility') _toggleOwnVisibility();
-                      if (value == 'delete') _deleteOwnPost();
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem<String>(
-                        value: 'edit',
-                        child: Text('Update'),
+                    PopupMenuItem<String>(
+                      value: 'visibility',
+                      child: Text(
+                        _post.preset.isPublic ? 'Make Private' : 'Make Public',
                       ),
-                      PopupMenuItem<String>(
-                        value: 'visibility',
-                        child: Text(
-                          _post.preset.isPublic ? 'Make Private' : 'Make Public',
-                        ),
-                      ),
-                      const PopupMenuItem<String>(
-                        value: 'delete',
-                        child: Text('Delete'),
-                      ),
-                    ],
-                    icon: const Icon(Icons.more_vert, color: Colors.white),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _descriptionExpanded = !_descriptionExpanded),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.white24),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text(
-                          'Description',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const Spacer(),
-                        Icon(
-                          _descriptionExpanded
-                              ? Icons.expand_less_rounded
-                              : Icons.expand_more_rounded,
-                          color: Colors.white70,
-                        ),
-                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _post.preset.description.trim().isNotEmpty
-                          ? _post.preset.description
-                          : 'No description provided.',
-                      maxLines: _descriptionExpanded ? null : 2,
-                      overflow: _descriptionExpanded
-                          ? TextOverflow.visible
-                          : TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.86),
-                        fontSize: 13,
-                      ),
+                    const PopupMenuItem<String>(
+                      value: 'delete',
+                      child: Text('Delete'),
                     ),
                   ],
+                  icon: const Icon(Icons.more_vert, color: Colors.white),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 36,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _suggestionFilters.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) {
-                  final filter = _suggestionFilters[index];
-                  final selected = filter == _suggestionFilter;
-                  return ChoiceChip(
-                    selected: selected,
-                    label: Text(
-                      _displayFilterName(filter),
-                      style: TextStyle(
-                        color: selected ? Colors.black : Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    selectedColor: Colors.white,
-                    checkmarkColor: Colors.black,
-                    side: const BorderSide(color: Colors.white24),
-                    onSelected: (_) => setState(() => _suggestionFilter = filter),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: _loadingSuggestions
-                  ? const _TopEdgeLoadingPane(
-                      label: 'Loading suggestions...',
-                      backgroundColor: Colors.transparent,
-                      minHeight: 2,
-                    )
-                  : ListView.separated(
-                      itemCount: suggestions.length.clamp(0, 24),
-                      separatorBuilder: (_, __) =>
-                          const Divider(color: Colors.white24, height: 14),
-                      itemBuilder: (context, index) {
-                        final item = suggestions[index];
-                        return InkWell(
-                          onTap: () => _openSuggestedPost(item),
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 140,
-                                height: 78,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: IgnorePointer(
-                                    child: _GridPresetPreview(
-                                      mode: item.preset.thumbnailMode ??
-                                          item.preset.mode,
-                                      payload: item.preset.thumbnailPayload.isNotEmpty
-                                          ? item.preset.thumbnailPayload
-                                          : item.preset.payload,
-                                      pointerPassthrough: true,
-                                    ),
+            ],
+          ),
+          buildFilterRail(),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _loadingSuggestions
+                ? const _TopEdgeLoadingPane(
+                    label: 'Loading suggestions...',
+                    backgroundColor: Colors.transparent,
+                    minHeight: 2,
+                  )
+                : ListView.separated(
+                    controller: _rightPaneScrollController,
+                    itemCount: suggestions.length.clamp(0, 24),
+                    separatorBuilder: (_, __) =>
+                        const Divider(color: Colors.white24, height: 14),
+                    itemBuilder: (context, index) {
+                      final item = suggestions[index];
+                      return InkWell(
+                        onTap: () => _openSuggestedPost(item),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 140,
+                              height: 78,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: IgnorePointer(
+                                  child: _GridPresetPreview(
+                                    mode: item.preset.thumbnailMode ??
+                                        item.preset.mode,
+                                    payload:
+                                        item.preset.thumbnailPayload.isNotEmpty
+                                            ? item.preset.thumbnailPayload
+                                            : item.preset.payload,
+                                    pointerPassthrough: true,
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      item.preset.title.isNotEmpty
-                                          ? item.preset.title
-                                          : item.preset.name,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                      ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.preset.title.isNotEmpty
+                                        ? item.preset.title
+                                        : item.preset.name,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
                                     ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      item.author?.displayName ?? 'Unknown creator',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.75),
-                                        fontSize: 12,
-                                      ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    item.author?.displayName ??
+                                        'Unknown creator',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.75),
+                                      fontSize: 12,
                                     ),
-                                    Text(
-                                      '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.preset.createdAt)}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.62),
-                                        fontSize: 11,
-                                      ),
+                                  ),
+                                  Text(
+                                    '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.preset.createdAt)}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.62),
+                                      fontSize: 11,
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        );
-      }
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      );
+    }
 
-      return Container(
-        width: narrow ? double.infinity : 360,
-        constraints: const BoxConstraints(minHeight: 420),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.58),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white24),
+    Widget buildRightPanel({
+      required bool desktop,
+      required double viewportHeight,
+    }) {
+      final Widget body =
+          _commentsOpen ? buildCommentsPanel() : buildSuggestionsPanel();
+      final EdgeInsets panelPadding =
+          desktop ? const EdgeInsets.fromLTRB(10, 0, 2, 0) : EdgeInsets.zero;
+      return SizedBox(
+        width: desktop ? 360 : double.infinity,
+        height: desktop ? viewportHeight : 640,
+        child: Padding(
+          padding: panelPadding,
+          child: body,
         ),
-        child: _commentsOpen ? buildCommentsPanel() : buildDetailDiscoveryPanel(),
       );
     }
 
@@ -4954,57 +5183,62 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             _openFullscreenViewer();
           }
         },
-        child: Stack(
-          children: [
-            Positioned.fill(child: buildBackdrop()),
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-                child: LayoutBuilder(
-                  key: const ValueKey<String>('compact-post-detail'),
-                  builder: (context, constraints) {
-                    final bool narrow = constraints.maxWidth < 1140;
-                    final Widget previewCard = Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        buildPreviewSurface(),
-                        buildBelowPreviewMeta(),
-                      ],
-                    );
-                    final Widget metaPanel = buildDetailMetaPanel(constraints.maxWidth);
-                    if (narrow) {
-                      return SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            previewCard,
-                            const SizedBox(height: 12),
-                            SizedBox(
-                              height: 640,
-                              child: metaPanel,
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
+        child: LayoutBuilder(
+          key: const ValueKey<String>('compact-post-detail'),
+          builder: (context, viewport) {
+            final bool desktop = viewport.maxWidth >= 1140;
+            final Widget leftColumn = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                buildPreviewSurface(),
+                buildBelowPreviewMeta(),
+                const SizedBox(height: 16),
+              ],
+            );
+            return Stack(
+              children: [
+                Positioned.fill(child: buildBackdrop(desktop: desktop)),
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                    child: desktop
+                        ? Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [previewCard],
+                            children: [
+                              Expanded(
+                                child: Scrollbar(
+                                  controller: _leftPaneScrollController,
+                                  child: SingleChildScrollView(
+                                    controller: _leftPaneScrollController,
+                                    child: leftColumn,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              buildRightPanel(
+                                desktop: true,
+                                viewportHeight: viewport.maxHeight - 28,
+                              ),
+                            ],
+                          )
+                        : SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                leftColumn,
+                                const SizedBox(height: 12),
+                                buildRightPanel(
+                                  desktop: false,
+                                  viewportHeight: viewport.maxHeight,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        SizedBox(width: 360, child: metaPanel),
-                      ],
-                    );
-                  },
+                  ),
                 ),
-              ),
-            ),
-          ],
+              ],
+            );
+          },
         ),
       ),
     );
@@ -5126,9 +5360,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       final dynamic payloadRaw = state['studioLivePayload'];
       final Map<String, dynamic>? restoredPayload =
           payloadRaw is Map ? Map<String, dynamic>.from(payloadRaw) : null;
-      final int restoredMode = ((state['modeIndex'] as num?)?.toInt() ?? 0)
-          .clamp(0, 1)
-          .toInt();
+      final int restoredMode =
+          ((state['modeIndex'] as num?)?.toInt() ?? 0).clamp(0, 1).toInt();
       final int restoredPostType =
           ((state['postTypeIndex'] as num?)?.toInt() ?? 0).clamp(0, 1).toInt();
       int restoredSelectedIndex =
@@ -6428,259 +6661,251 @@ class _PostStudioTabState extends State<_PostStudioTab> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                    if (selectedLayer != null) ...[
-                      Text(
-                        'Layer: ${_studioSelected2dLayerKey ?? ''}',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                if (selectedLayer != null) ...[
+                  Text(
+                    'Layer: ${_studioSelected2dLayerKey ?? ''}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  if (selectedLayer['isText'] == true)
+                    TextFormField(
+                      initialValue:
+                          (selectedLayer['textValue'] ?? '').toString(),
+                      onChanged: (value) => _studioSet2DLayerField(
+                        _studioSelected2dLayerKey!,
+                        'textValue',
+                        value,
                       ),
-                      const SizedBox(height: 6),
-                      if (selectedLayer['isText'] == true)
-                        TextFormField(
-                          initialValue:
-                              (selectedLayer['textValue'] ?? '').toString(),
-                          onChanged: (value) => _studioSet2DLayerField(
-                            _studioSelected2dLayerKey!,
-                            'textValue',
-                            value,
-                          ),
-                          decoration: const InputDecoration(labelText: 'Text'),
-                        )
-                      else
-                        TextFormField(
-                          initialValue: (selectedLayer['url'] ?? '').toString(),
-                          onChanged: (value) => _studioSet2DLayerField(
-                            _studioSelected2dLayerKey!,
-                            'url',
-                            value.trim(),
-                          ),
-                          decoration:
-                              const InputDecoration(labelText: 'Image URL'),
-                        ),
-                      _studioSlider(
-                        label: 'X',
-                        min: -1500,
-                        max: 1500,
-                        value: _toDouble(selectedLayer['x'], 0),
-                        onChanged: (v) => _studioSet2DLayerField(
-                          _studioSelected2dLayerKey!,
-                          'x',
-                          v,
-                        ),
+                      decoration: const InputDecoration(labelText: 'Text'),
+                    )
+                  else
+                    TextFormField(
+                      initialValue: (selectedLayer['url'] ?? '').toString(),
+                      onChanged: (value) => _studioSet2DLayerField(
+                        _studioSelected2dLayerKey!,
+                        'url',
+                        value.trim(),
                       ),
-                      _studioSlider(
-                        label: 'Y',
-                        min: -1500,
-                        max: 1500,
-                        value: _toDouble(selectedLayer['y'], 0),
-                        onChanged: (v) => _studioSet2DLayerField(
-                          _studioSelected2dLayerKey!,
-                          'y',
-                          v,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Scale',
-                        min: 0.05,
-                        max: 6,
-                        value: _toDouble(selectedLayer['scale'], 1),
-                        onChanged: (v) => _studioSet2DLayerField(
-                          _studioSelected2dLayerKey!,
-                          'scale',
-                          v,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    const Text(
-                      '2D Controls',
-                      style: TextStyle(fontWeight: FontWeight.w700),
+                      decoration: const InputDecoration(labelText: 'Image URL'),
                     ),
-                    const SizedBox(height: 6),
-                    _studioSlider(
-                      label: 'Global Scale',
-                      min: 0.5,
-                      max: 2.5,
-                      value: _toDouble(controls['scale'], 1.2),
-                      onChanged: (v) => _studioSet2DControlField('scale', v),
+                  _studioSlider(
+                    label: 'X',
+                    min: -1500,
+                    max: 1500,
+                    value: _toDouble(selectedLayer['x'], 0),
+                    onChanged: (v) => _studioSet2DLayerField(
+                      _studioSelected2dLayerKey!,
+                      'x',
+                      v,
                     ),
-                    _studioSlider(
-                      label: 'Global Depth',
-                      min: 0,
-                      max: 1,
-                      value: _toDouble(controls['depth'], 0.1),
-                      onChanged: (v) => _studioSet2DControlField('depth', v),
+                  ),
+                  _studioSlider(
+                    label: 'Y',
+                    min: -1500,
+                    max: 1500,
+                    value: _toDouble(selectedLayer['y'], 0),
+                    onChanged: (v) => _studioSet2DLayerField(
+                      _studioSelected2dLayerKey!,
+                      'y',
+                      v,
                     ),
-                    _studioSlider(
-                      label: 'Global Shift',
-                      min: 0,
-                      max: 1,
-                      value: _toDouble(controls['shift'], 0.025),
-                      onChanged: (v) => _studioSet2DControlField('shift', v),
+                  ),
+                  _studioSlider(
+                    label: 'Scale',
+                    min: 0.05,
+                    max: 6,
+                    value: _toDouble(selectedLayer['scale'], 1),
+                    onChanged: (v) => _studioSet2DLayerField(
+                      _studioSelected2dLayerKey!,
+                      'scale',
+                      v,
                     ),
-                    _studioSlider(
-                      label: 'Global Tilt',
-                      min: 0,
-                      max: 1,
-                      value: _toDouble(controls['tilt'], 0),
-                      onChanged: (v) => _studioSet2DControlField('tilt', v),
-                    ),
-                    _studioSlider(
-                      label: 'Dead Zone X',
-                      min: 0,
-                      max: 0.1,
-                      value: _toDouble(controls['deadZoneX'], 0),
-                      onChanged: (v) =>
-                          _studioSet2DControlField('deadZoneX', v),
-                    ),
-                    _studioSlider(
-                      label: 'Dead Zone Y',
-                      min: 0,
-                      max: 0.1,
-                      value: _toDouble(controls['deadZoneY'], 0),
-                      onChanged: (v) =>
-                          _studioSet2DControlField('deadZoneY', v),
-                    ),
-                    _studioSlider(
-                      label: 'Dead Zone Z',
-                      min: 0,
-                      max: 0.1,
-                      value: _toDouble(controls['deadZoneZ'], 0),
-                      onChanged: (v) =>
-                          _studioSet2DControlField('deadZoneZ', v),
-                    ),
-                    _studioSlider(
-                      label: 'Dead Zone Yaw',
-                      min: 0,
-                      max: 10,
-                      value: _toDouble(controls['deadZoneYaw'], 0),
-                      onChanged: (v) =>
-                          _studioSet2DControlField('deadZoneYaw', v),
-                    ),
-                    _studioSlider(
-                      label: 'Dead Zone Pitch',
-                      min: 0,
-                      max: 10,
-                      value: _toDouble(controls['deadZonePitch'], 0),
-                      onChanged: (v) =>
-                          _studioSet2DControlField('deadZonePitch', v),
-                    ),
-                    _studioSlider(
-                      label: 'Z Base',
-                      min: 0.05,
-                      max: 2.0,
-                      value: _toDouble(controls['zBase'], 0.2),
-                      onChanged: (v) => _studioSet2DControlField('zBase', v),
-                    ),
-                    SwitchListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Manual Mode'),
-                      value: controls['manualMode'] == true,
-                      onChanged: (v) =>
-                          _studioSet2DControlField('manualMode', v),
-                    ),
-                    if (controls['manualMode'] == true) ...[
-                      _studioSlider(
-                        label: 'Manual Head X',
-                        min: -1,
-                        max: 1,
-                        value: _toDouble(controls['manualHeadX'], 0),
-                        onChanged: (v) =>
-                            _studioSet2DControlField('manualHeadX', v),
-                      ),
-                      _studioSlider(
-                        label: 'Manual Head Y',
-                        min: -1,
-                        max: 1,
-                        value: _toDouble(controls['manualHeadY'], 0),
-                        onChanged: (v) =>
-                            _studioSet2DControlField('manualHeadY', v),
-                      ),
-                      _studioSlider(
-                        label: 'Manual Head Z',
-                        min: 0.05,
-                        max: 2.0,
-                        value: _toDouble(controls['manualHeadZ'], 0.2),
-                        onChanged: (v) =>
-                            _studioSet2DControlField('manualHeadZ', v),
-                      ),
-                      _studioSlider(
-                        label: 'Manual Yaw',
-                        min: -60,
-                        max: 60,
-                        value: _toDouble(controls['manualYaw'], 0),
-                        onChanged: (v) =>
-                            _studioSet2DControlField('manualYaw', v),
-                      ),
-                      _studioSlider(
-                        label: 'Manual Pitch',
-                        min: -40,
-                        max: 40,
-                        value: _toDouble(controls['manualPitch'], 0),
-                        onChanged: (v) =>
-                            _studioSet2DControlField('manualPitch', v),
-                      ),
-                    ],
-                    DropdownButtonFormField<String>(
-                      // ignore: deprecated_member_use
-                      value: (() {
-                        final String selectedAspect =
-                            (controls['selectedAspect'] ?? '').toString();
-                        const options = <String>[
-                          '16:9 (width:height)',
-                          '18:9 (width:height)',
-                          '21:9 (width:height)',
-                          '4:3 (width:height)',
-                          '1:1 (square)',
-                          '9:16 (height:width)',
-                          '3:4 (height:width)',
-                          '2.35:1 (width:height)',
-                          '1.85:1 (width:height)',
-                          '2.39:1 (width:height)',
-                        ];
-                        return options.contains(selectedAspect)
-                            ? selectedAspect
-                            : null;
-                      })(),
-                      items: const <String>[
-                        '16:9 (width:height)',
-                        '18:9 (width:height)',
-                        '21:9 (width:height)',
-                        '4:3 (width:height)',
-                        '1:1 (square)',
-                        '9:16 (height:width)',
-                        '3:4 (height:width)',
-                        '2.35:1 (width:height)',
-                        '1.85:1 (width:height)',
-                        '2.39:1 (width:height)',
-                      ]
-                          .map((ratio) => DropdownMenuItem<String>(
-                                value: ratio,
-                                child: Text(ratio),
-                              ))
-                          .toList(),
-                      onChanged: (value) =>
-                          _studioSet2DControlField('selectedAspect', value),
-                      decoration:
-                          const InputDecoration(labelText: 'Aspect Ratio'),
-                    ),
-                    _studioSlider(
-                      label: 'Turning Point',
-                      min: -200,
-                      max: 200,
-                      value: _toDouble(turningPoint['order'], 0),
-                      onChanged: (v) => _studioSet2DLayerField(
-                        'turning_point',
-                        'order',
-                        v,
-                      ),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _studioRecenter2DParallax,
-                      icon: const Icon(Icons.gps_fixed, size: 16),
-                      label: const Text('Recenter'),
-                    ),
-                  ],
+                  ),
+                ],
+                const SizedBox(height: 8),
+                const Text(
+                  '2D Controls',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                _studioSlider(
+                  label: 'Global Scale',
+                  min: 0.5,
+                  max: 2.5,
+                  value: _toDouble(controls['scale'], 1.2),
+                  onChanged: (v) => _studioSet2DControlField('scale', v),
+                ),
+                _studioSlider(
+                  label: 'Global Depth',
+                  min: 0,
+                  max: 1,
+                  value: _toDouble(controls['depth'], 0.1),
+                  onChanged: (v) => _studioSet2DControlField('depth', v),
+                ),
+                _studioSlider(
+                  label: 'Global Shift',
+                  min: 0,
+                  max: 1,
+                  value: _toDouble(controls['shift'], 0.025),
+                  onChanged: (v) => _studioSet2DControlField('shift', v),
+                ),
+                _studioSlider(
+                  label: 'Global Tilt',
+                  min: 0,
+                  max: 1,
+                  value: _toDouble(controls['tilt'], 0),
+                  onChanged: (v) => _studioSet2DControlField('tilt', v),
+                ),
+                _studioSlider(
+                  label: 'Dead Zone X',
+                  min: 0,
+                  max: 0.1,
+                  value: _toDouble(controls['deadZoneX'], 0),
+                  onChanged: (v) => _studioSet2DControlField('deadZoneX', v),
+                ),
+                _studioSlider(
+                  label: 'Dead Zone Y',
+                  min: 0,
+                  max: 0.1,
+                  value: _toDouble(controls['deadZoneY'], 0),
+                  onChanged: (v) => _studioSet2DControlField('deadZoneY', v),
+                ),
+                _studioSlider(
+                  label: 'Dead Zone Z',
+                  min: 0,
+                  max: 0.1,
+                  value: _toDouble(controls['deadZoneZ'], 0),
+                  onChanged: (v) => _studioSet2DControlField('deadZoneZ', v),
+                ),
+                _studioSlider(
+                  label: 'Dead Zone Yaw',
+                  min: 0,
+                  max: 10,
+                  value: _toDouble(controls['deadZoneYaw'], 0),
+                  onChanged: (v) => _studioSet2DControlField('deadZoneYaw', v),
+                ),
+                _studioSlider(
+                  label: 'Dead Zone Pitch',
+                  min: 0,
+                  max: 10,
+                  value: _toDouble(controls['deadZonePitch'], 0),
+                  onChanged: (v) =>
+                      _studioSet2DControlField('deadZonePitch', v),
+                ),
+                _studioSlider(
+                  label: 'Z Base',
+                  min: 0.05,
+                  max: 2.0,
+                  value: _toDouble(controls['zBase'], 0.2),
+                  onChanged: (v) => _studioSet2DControlField('zBase', v),
+                ),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Manual Mode'),
+                  value: controls['manualMode'] == true,
+                  onChanged: (v) => _studioSet2DControlField('manualMode', v),
+                ),
+                if (controls['manualMode'] == true) ...[
+                  _studioSlider(
+                    label: 'Manual Head X',
+                    min: -1,
+                    max: 1,
+                    value: _toDouble(controls['manualHeadX'], 0),
+                    onChanged: (v) =>
+                        _studioSet2DControlField('manualHeadX', v),
+                  ),
+                  _studioSlider(
+                    label: 'Manual Head Y',
+                    min: -1,
+                    max: 1,
+                    value: _toDouble(controls['manualHeadY'], 0),
+                    onChanged: (v) =>
+                        _studioSet2DControlField('manualHeadY', v),
+                  ),
+                  _studioSlider(
+                    label: 'Manual Head Z',
+                    min: 0.05,
+                    max: 2.0,
+                    value: _toDouble(controls['manualHeadZ'], 0.2),
+                    onChanged: (v) =>
+                        _studioSet2DControlField('manualHeadZ', v),
+                  ),
+                  _studioSlider(
+                    label: 'Manual Yaw',
+                    min: -60,
+                    max: 60,
+                    value: _toDouble(controls['manualYaw'], 0),
+                    onChanged: (v) => _studioSet2DControlField('manualYaw', v),
+                  ),
+                  _studioSlider(
+                    label: 'Manual Pitch',
+                    min: -40,
+                    max: 40,
+                    value: _toDouble(controls['manualPitch'], 0),
+                    onChanged: (v) =>
+                        _studioSet2DControlField('manualPitch', v),
+                  ),
+                ],
+                DropdownButtonFormField<String>(
+                  // ignore: deprecated_member_use
+                  value: (() {
+                    final String selectedAspect =
+                        (controls['selectedAspect'] ?? '').toString();
+                    const options = <String>[
+                      '16:9 (width:height)',
+                      '18:9 (width:height)',
+                      '21:9 (width:height)',
+                      '4:3 (width:height)',
+                      '1:1 (square)',
+                      '9:16 (height:width)',
+                      '3:4 (height:width)',
+                      '2.35:1 (width:height)',
+                      '1.85:1 (width:height)',
+                      '2.39:1 (width:height)',
+                    ];
+                    return options.contains(selectedAspect)
+                        ? selectedAspect
+                        : null;
+                  })(),
+                  items: const <String>[
+                    '16:9 (width:height)',
+                    '18:9 (width:height)',
+                    '21:9 (width:height)',
+                    '4:3 (width:height)',
+                    '1:1 (square)',
+                    '9:16 (height:width)',
+                    '3:4 (height:width)',
+                    '2.35:1 (width:height)',
+                    '1.85:1 (width:height)',
+                    '2.39:1 (width:height)',
+                  ]
+                      .map((ratio) => DropdownMenuItem<String>(
+                            value: ratio,
+                            child: Text(ratio),
+                          ))
+                      .toList(),
+                  onChanged: (value) =>
+                      _studioSet2DControlField('selectedAspect', value),
+                  decoration: const InputDecoration(labelText: 'Aspect Ratio'),
+                ),
+                _studioSlider(
+                  label: 'Turning Point',
+                  min: -200,
+                  max: 200,
+                  value: _toDouble(turningPoint['order'], 0),
+                  onChanged: (v) => _studioSet2DLayerField(
+                    'turning_point',
+                    'order',
+                    v,
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _studioRecenter2DParallax,
+                  icon: const Icon(Icons.gps_fixed, size: 16),
+                  label: const Text('Recenter'),
+                ),
+              ],
             ),
           ],
         ),
@@ -6848,615 +7073,601 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-                  if (selectedEntity != null && selectedToken != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      'Selected: ${_studioEntityLabel(selectedToken, scene)}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 6),
-                    if (selectedType == 'model')
-                      TextFormField(
-                        key: ValueKey<String>(
-                          'studio-model-name-$selectedToken-${selectedEntity['name'] ?? ''}',
-                        ),
-                        initialValue: (selectedEntity['name'] ?? '').toString(),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'name',
-                          value: value.trim(),
-                        ),
-                        decoration:
-                            const InputDecoration(labelText: 'Model Name'),
-                      ),
-                    if (selectedType == 'model' || selectedType == 'audio') ...[
-                      const SizedBox(height: 6),
-                      TextFormField(
-                        key: ValueKey<String>(
-                          'studio-entity-url-$selectedToken-${selectedEntity['url'] ?? ''}',
-                        ),
-                        initialValue: (selectedEntity['url'] ?? '').toString(),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'url',
-                          value: value.trim(),
-                        ),
-                        decoration: InputDecoration(
-                          labelText: selectedType == 'model'
-                              ? 'Model URL'
-                              : 'Audio URL',
-                        ),
-                      ),
-                    ],
-                    if (selectedType == 'model') ...[
-                      SwitchListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Visible'),
-                        value: asBool(selectedEntity['visible'], true),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'visible',
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos X',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 0, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 0,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos Y',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 1, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 1,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos Z',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 2, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 2,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Rot X',
-                        min: -6.28,
-                        max: 6.28,
-                        value: _studioVectorComponent(
-                            selectedEntity['rotation'], 0, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'rotation',
-                          index: 0,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Rot Y',
-                        min: -6.28,
-                        max: 6.28,
-                        value: _studioVectorComponent(
-                            selectedEntity['rotation'], 1, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'rotation',
-                          index: 1,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Rot Z',
-                        min: -6.28,
-                        max: 6.28,
-                        value: _studioVectorComponent(
-                            selectedEntity['rotation'], 2, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'rotation',
-                          index: 2,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Scale X',
-                        min: 0.01,
-                        max: 10,
-                        value: _studioVectorComponent(
-                            selectedEntity['scale'], 0, 1),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'scale',
-                          index: 0,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Scale Y',
-                        min: 0.01,
-                        max: 10,
-                        value: _studioVectorComponent(
-                            selectedEntity['scale'], 1, 1),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'scale',
-                          index: 1,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Scale Z',
-                        min: 0.01,
-                        max: 10,
-                        value: _studioVectorComponent(
-                            selectedEntity['scale'], 2, 1),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'scale',
-                          index: 2,
-                          value: value,
-                        ),
-                      ),
-                    ] else if (selectedType == 'light') ...[
-                      TextFormField(
-                        key: ValueKey<String>(
-                          'studio-light-color-$selectedToken-${selectedEntity['color'] ?? ''}',
-                        ),
-                        initialValue:
-                            (selectedEntity['color'] ?? 'ffffff').toString(),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'color',
-                          value: value.replaceAll('#', '').trim(),
-                        ),
-                        decoration:
-                            const InputDecoration(labelText: 'Color (hex)'),
-                      ),
-                      _studioSlider(
-                        label: 'Intensity',
-                        min: 0,
-                        max: 50,
-                        value: _toDouble(selectedEntity['intensity'], 10),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'intensity',
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos X',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 0, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 0,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos Y',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 1, 5),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 1,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos Z',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 2, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 2,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Helper Scale',
-                        min: 0.1,
-                        max: 10,
-                        value: _toDouble(selectedEntity['scale'], 1),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'scale',
-                          value: value,
-                        ),
-                      ),
-                      SwitchListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Ghost'),
-                        value: asBool(selectedEntity['ghost']),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'ghost',
-                          value: value,
-                        ),
-                      ),
-                    ] else if (selectedType == 'audio') ...[
-                      _studioSlider(
-                        label: 'Volume',
-                        min: 0,
-                        max: 2,
-                        value: _toDouble(selectedEntity['volume'], 1),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'volume',
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos X',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 0, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 0,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos Y',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 1, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 1,
-                          value: value,
-                        ),
-                      ),
-                      _studioSlider(
-                        label: 'Pos Z',
-                        min: -30,
-                        max: 30,
-                        value: _studioVectorComponent(
-                            selectedEntity['position'], 2, 0),
-                        onChanged: (value) => _studioSet3DEntityVectorComponent(
-                          token: selectedToken,
-                          field: 'position',
-                          index: 2,
-                          value: value,
-                        ),
-                      ),
-                      SwitchListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Ghost'),
-                        value: asBool(selectedEntity['ghost']),
-                        onChanged: (value) => _studioSet3DEntityField(
-                          token: selectedToken,
-                          field: 'ghost',
-                          value: value,
-                        ),
-                      ),
-                    ],
-                  ],
-                  const SizedBox(height: 8),
-                  const Text('World & FX',
-                      style: TextStyle(fontWeight: FontWeight.w700)),
-                  _studioSlider(
-                    label: 'Sun',
-                    min: 0,
-                    max: 10,
-                    value: _toDouble(scene['sunIntensity'], 2.0),
-                    onChanged: (value) =>
-                        _studioSet3DSceneField('sunIntensity', value),
-                  ),
-                  _studioSlider(
-                    label: 'Ambient',
-                    min: 0,
-                    max: 2,
-                    value: _toDouble(scene['ambLight'], 0.5),
-                    onChanged: (value) =>
-                        _studioSet3DSceneField('ambLight', value),
-                  ),
-                  _studioSlider(
-                    label: 'Bloom',
-                    min: 0,
-                    max: 4,
-                    value: _toDouble(scene['bloomIntensity'], 1.0),
-                    onChanged: (value) =>
-                        _studioSet3DSceneField('bloomIntensity', value),
-                  ),
-                  DropdownButtonFormField<String>(
-                    // ignore: deprecated_member_use
-                    value: shadowQuality,
-                    decoration:
-                        const InputDecoration(labelText: 'Shadow Quality'),
-                    items: const <String>['256', '512', '1024', '2048']
-                        .map((value) => DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(value),
-                            ))
-                        .toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      _studioSet3DSceneField('shadowQuality', value);
-                    },
-                  ),
-                  _studioSlider(
-                    label: 'Shadow Softness',
-                    min: 0,
-                    max: 5,
-                    value: _toDouble(scene['shadowSoftness'], 1.0),
-                    onChanged: (value) =>
-                        _studioSet3DSceneField('shadowSoftness', value),
-                  ),
+              if (selectedEntity != null && selectedToken != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'Selected: ${_studioEntityLabel(selectedToken, scene)}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                if (selectedType == 'model')
                   TextFormField(
                     key: ValueKey<String>(
-                        'studio-sky-url-${scene['skyUrl'] ?? ''}'),
-                    initialValue: (scene['skyUrl'] ?? '').toString(),
-                    onChanged: (value) =>
-                        _studioSet3DSceneField('skyUrl', value.trim()),
-                    decoration: const InputDecoration(labelText: 'Sky URL'),
+                      'studio-model-name-$selectedToken-${selectedEntity['name'] ?? ''}',
+                    ),
+                    initialValue: (selectedEntity['name'] ?? '').toString(),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'name',
+                      value: value.trim(),
+                    ),
+                    decoration: const InputDecoration(labelText: 'Model Name'),
                   ),
+                if (selectedType == 'model' || selectedType == 'audio') ...[
                   const SizedBox(height: 6),
                   TextFormField(
                     key: ValueKey<String>(
-                        'studio-env-url-${scene['envUrl'] ?? ''}'),
-                    initialValue: (scene['envUrl'] ?? '').toString(),
-                    onChanged: (value) =>
-                        _studioSet3DSceneField('envUrl', value.trim()),
-                    decoration: const InputDecoration(labelText: 'Env URL'),
-                  ),
-                  _studioSlider(
-                    label: 'Env Rot',
-                    min: -6.28,
-                    max: 6.28,
-                    value: _toDouble(scene['envRot'], 0),
-                    onChanged: (value) =>
-                        _studioSet3DSceneField('envRot', value),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text('Initial Camera',
-                      style: TextStyle(fontWeight: FontWeight.w700)),
-                  _studioSlider(
-                    label: 'Init Pos X',
-                    min: -30,
-                    max: 30,
-                    value: initPos[0],
-                    onChanged: (value) => _studioSet3DSceneVectorComponent(
-                      field: 'initPos',
-                      index: 0,
-                      value: value,
-                      fallback: initPos,
+                      'studio-entity-url-$selectedToken-${selectedEntity['url'] ?? ''}',
+                    ),
+                    initialValue: (selectedEntity['url'] ?? '').toString(),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'url',
+                      value: value.trim(),
+                    ),
+                    decoration: InputDecoration(
+                      labelText:
+                          selectedType == 'model' ? 'Model URL' : 'Audio URL',
                     ),
                   ),
-                  _studioSlider(
-                    label: 'Init Pos Y',
-                    min: -30,
-                    max: 30,
-                    value: initPos[1],
-                    onChanged: (value) => _studioSet3DSceneVectorComponent(
-                      field: 'initPos',
-                      index: 1,
-                      value: value,
-                      fallback: initPos,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Init Pos Z',
-                    min: -30,
-                    max: 30,
-                    value: initPos[2],
-                    onChanged: (value) => _studioSet3DSceneVectorComponent(
-                      field: 'initPos',
-                      index: 2,
-                      value: value,
-                      fallback: initPos,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Init Rot X',
-                    min: -6.28,
-                    max: 6.28,
-                    value: initRot[0],
-                    onChanged: (value) => _studioSet3DSceneVectorComponent(
-                      field: 'initRot',
-                      index: 0,
-                      value: value,
-                      fallback: initRot,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Init Rot Y',
-                    min: -6.28,
-                    max: 6.28,
-                    value: initRot[1],
-                    onChanged: (value) => _studioSet3DSceneVectorComponent(
-                      field: 'initRot',
-                      index: 1,
-                      value: value,
-                      fallback: initRot,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Init Rot Z',
-                    min: -6.28,
-                    max: 6.28,
-                    value: initRot[2],
-                    onChanged: (value) => _studioSet3DSceneVectorComponent(
-                      field: 'initRot',
-                      index: 2,
-                      value: value,
-                      fallback: initRot,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text('Tracking',
-                      style: TextStyle(fontWeight: FontWeight.w700)),
-                  DropdownButtonFormField<String>(
-                    // ignore: deprecated_member_use
-                    value: () {
-                      const modes = <String>{'orbit', 'fps', 'free'};
-                      final String raw = (controls['camera-mode'] ?? 'orbit')
-                          .toString()
-                          .toLowerCase();
-                      return modes.contains(raw) ? raw : 'orbit';
-                    }(),
-                    decoration: const InputDecoration(labelText: 'Camera Mode'),
-                    items: const [
-                      DropdownMenuItem<String>(
-                          value: 'orbit', child: Text('Orbit')),
-                      DropdownMenuItem<String>(
-                          value: 'fps', child: Text('FPS')),
-                      DropdownMenuItem<String>(
-                          value: 'free', child: Text('Free')),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      _studioSet3DControlField('camera-mode', value);
-                    },
-                  ),
-                  SwitchListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Manual Mode'),
-                    value: manualMode,
-                    onChanged: (value) =>
-                        _studioSet3DControlField('manual-mode', value),
-                  ),
-                  SwitchListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Tracker UI'),
-                    value: asBool(controls['show-tracker']),
-                    onChanged: (value) =>
-                        _studioSet3DControlField('show-tracker', value),
-                  ),
-                  _studioSlider(
-                    label: 'Dead Zone X',
-                    min: 0,
-                    max: 0.1,
-                    value: _toDouble(controls['dz-x'], 0),
-                    onChanged: (value) =>
-                        _studioSet3DControlField('dz-x', value),
-                  ),
-                  _studioSlider(
-                    label: 'Dead Zone Y',
-                    min: 0,
-                    max: 0.1,
-                    value: _toDouble(controls['dz-y'], 0),
-                    onChanged: (value) =>
-                        _studioSet3DControlField('dz-y', value),
-                  ),
-                  _studioSlider(
-                    label: 'Dead Zone Z',
-                    min: 0,
-                    max: 0.1,
-                    value: _toDouble(controls['dz-z'], 0),
-                    onChanged: (value) =>
-                        _studioSet3DControlField('dz-z', value),
-                  ),
-                  _studioSlider(
-                    label: 'Dead Zone Yaw',
-                    min: 0,
-                    max: 10,
-                    value: _toDouble(controls['dz-yaw'], 0),
-                    onChanged: (value) =>
-                        _studioSet3DControlField('dz-yaw', value),
-                  ),
-                  _studioSlider(
-                    label: 'Dead Zone Pitch',
-                    min: 0,
-                    max: 10,
-                    value: _toDouble(controls['dz-pitch'], 0),
-                    onChanged: (value) =>
-                        _studioSet3DControlField('dz-pitch', value),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      final frame =
-                          TrackingService.instance.frameNotifier.value;
-                      _studioSet3DControlField('head-x', frame.headX);
-                      _studioSet3DControlField('head-y', frame.headY);
-                      _studioSet3DControlField('z-value', frame.headZ);
-                      _studioSet3DControlField('yaw', frame.yaw);
-                      _studioSet3DControlField('pitch', frame.pitch);
-                    },
-                    icon: const Icon(Icons.gps_fixed, size: 16),
-                    label: const Text('Recenter Manual Anchor'),
-                  ),
-                  if (manualMode) ...[
-                    _studioSlider(
-                      label: 'Manual Head X',
-                      min: -1,
-                      max: 1,
-                      value: _toDouble(controls['head-x'], 0),
-                      onChanged: (value) =>
-                          _studioSet3DControlField('head-x', value),
-                    ),
-                    _studioSlider(
-                      label: 'Manual Head Y',
-                      min: -1,
-                      max: 1,
-                      value: _toDouble(controls['head-y'], 0),
-                      onChanged: (value) =>
-                          _studioSet3DControlField('head-y', value),
-                    ),
-                    _studioSlider(
-                      label: 'Manual Z',
-                      min: 0.05,
-                      max: 2,
-                      value: _toDouble(controls['z-value'], 0.2),
-                      onChanged: (value) =>
-                          _studioSet3DControlField('z-value', value),
-                    ),
-                    _studioSlider(
-                      label: 'Manual Yaw',
-                      min: -60,
-                      max: 60,
-                      value: _toDouble(controls['yaw'], 0),
-                      onChanged: (value) =>
-                          _studioSet3DControlField('yaw', value),
-                    ),
-                    _studioSlider(
-                      label: 'Manual Pitch',
-                      min: -40,
-                      max: 40,
-                      value: _toDouble(controls['pitch'], 0),
-                      onChanged: (value) =>
-                          _studioSet3DControlField('pitch', value),
-                    ),
-                  ],
                 ],
+                if (selectedType == 'model') ...[
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Visible'),
+                    value: asBool(selectedEntity['visible'], true),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'visible',
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos X',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 0, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 0,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos Y',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 1, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 1,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos Z',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 2, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 2,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Rot X',
+                    min: -6.28,
+                    max: 6.28,
+                    value: _studioVectorComponent(
+                        selectedEntity['rotation'], 0, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'rotation',
+                      index: 0,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Rot Y',
+                    min: -6.28,
+                    max: 6.28,
+                    value: _studioVectorComponent(
+                        selectedEntity['rotation'], 1, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'rotation',
+                      index: 1,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Rot Z',
+                    min: -6.28,
+                    max: 6.28,
+                    value: _studioVectorComponent(
+                        selectedEntity['rotation'], 2, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'rotation',
+                      index: 2,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Scale X',
+                    min: 0.01,
+                    max: 10,
+                    value:
+                        _studioVectorComponent(selectedEntity['scale'], 0, 1),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'scale',
+                      index: 0,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Scale Y',
+                    min: 0.01,
+                    max: 10,
+                    value:
+                        _studioVectorComponent(selectedEntity['scale'], 1, 1),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'scale',
+                      index: 1,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Scale Z',
+                    min: 0.01,
+                    max: 10,
+                    value:
+                        _studioVectorComponent(selectedEntity['scale'], 2, 1),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'scale',
+                      index: 2,
+                      value: value,
+                    ),
+                  ),
+                ] else if (selectedType == 'light') ...[
+                  TextFormField(
+                    key: ValueKey<String>(
+                      'studio-light-color-$selectedToken-${selectedEntity['color'] ?? ''}',
+                    ),
+                    initialValue:
+                        (selectedEntity['color'] ?? 'ffffff').toString(),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'color',
+                      value: value.replaceAll('#', '').trim(),
+                    ),
+                    decoration: const InputDecoration(labelText: 'Color (hex)'),
+                  ),
+                  _studioSlider(
+                    label: 'Intensity',
+                    min: 0,
+                    max: 50,
+                    value: _toDouble(selectedEntity['intensity'], 10),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'intensity',
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos X',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 0, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 0,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos Y',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 1, 5),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 1,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos Z',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 2, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 2,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Helper Scale',
+                    min: 0.1,
+                    max: 10,
+                    value: _toDouble(selectedEntity['scale'], 1),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'scale',
+                      value: value,
+                    ),
+                  ),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Ghost'),
+                    value: asBool(selectedEntity['ghost']),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'ghost',
+                      value: value,
+                    ),
+                  ),
+                ] else if (selectedType == 'audio') ...[
+                  _studioSlider(
+                    label: 'Volume',
+                    min: 0,
+                    max: 2,
+                    value: _toDouble(selectedEntity['volume'], 1),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'volume',
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos X',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 0, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 0,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos Y',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 1, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 1,
+                      value: value,
+                    ),
+                  ),
+                  _studioSlider(
+                    label: 'Pos Z',
+                    min: -30,
+                    max: 30,
+                    value: _studioVectorComponent(
+                        selectedEntity['position'], 2, 0),
+                    onChanged: (value) => _studioSet3DEntityVectorComponent(
+                      token: selectedToken,
+                      field: 'position',
+                      index: 2,
+                      value: value,
+                    ),
+                  ),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Ghost'),
+                    value: asBool(selectedEntity['ghost']),
+                    onChanged: (value) => _studioSet3DEntityField(
+                      token: selectedToken,
+                      field: 'ghost',
+                      value: value,
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: 8),
+              const Text('World & FX',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+              _studioSlider(
+                label: 'Sun',
+                min: 0,
+                max: 10,
+                value: _toDouble(scene['sunIntensity'], 2.0),
+                onChanged: (value) =>
+                    _studioSet3DSceneField('sunIntensity', value),
+              ),
+              _studioSlider(
+                label: 'Ambient',
+                min: 0,
+                max: 2,
+                value: _toDouble(scene['ambLight'], 0.5),
+                onChanged: (value) => _studioSet3DSceneField('ambLight', value),
+              ),
+              _studioSlider(
+                label: 'Bloom',
+                min: 0,
+                max: 4,
+                value: _toDouble(scene['bloomIntensity'], 1.0),
+                onChanged: (value) =>
+                    _studioSet3DSceneField('bloomIntensity', value),
+              ),
+              DropdownButtonFormField<String>(
+                // ignore: deprecated_member_use
+                value: shadowQuality,
+                decoration: const InputDecoration(labelText: 'Shadow Quality'),
+                items: const <String>['256', '512', '1024', '2048']
+                    .map((value) => DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(value),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null) return;
+                  _studioSet3DSceneField('shadowQuality', value);
+                },
+              ),
+              _studioSlider(
+                label: 'Shadow Softness',
+                min: 0,
+                max: 5,
+                value: _toDouble(scene['shadowSoftness'], 1.0),
+                onChanged: (value) =>
+                    _studioSet3DSceneField('shadowSoftness', value),
+              ),
+              TextFormField(
+                key:
+                    ValueKey<String>('studio-sky-url-${scene['skyUrl'] ?? ''}'),
+                initialValue: (scene['skyUrl'] ?? '').toString(),
+                onChanged: (value) =>
+                    _studioSet3DSceneField('skyUrl', value.trim()),
+                decoration: const InputDecoration(labelText: 'Sky URL'),
+              ),
+              const SizedBox(height: 6),
+              TextFormField(
+                key:
+                    ValueKey<String>('studio-env-url-${scene['envUrl'] ?? ''}'),
+                initialValue: (scene['envUrl'] ?? '').toString(),
+                onChanged: (value) =>
+                    _studioSet3DSceneField('envUrl', value.trim()),
+                decoration: const InputDecoration(labelText: 'Env URL'),
+              ),
+              _studioSlider(
+                label: 'Env Rot',
+                min: -6.28,
+                max: 6.28,
+                value: _toDouble(scene['envRot'], 0),
+                onChanged: (value) => _studioSet3DSceneField('envRot', value),
+              ),
+              const SizedBox(height: 8),
+              const Text('Initial Camera',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+              _studioSlider(
+                label: 'Init Pos X',
+                min: -30,
+                max: 30,
+                value: initPos[0],
+                onChanged: (value) => _studioSet3DSceneVectorComponent(
+                  field: 'initPos',
+                  index: 0,
+                  value: value,
+                  fallback: initPos,
+                ),
+              ),
+              _studioSlider(
+                label: 'Init Pos Y',
+                min: -30,
+                max: 30,
+                value: initPos[1],
+                onChanged: (value) => _studioSet3DSceneVectorComponent(
+                  field: 'initPos',
+                  index: 1,
+                  value: value,
+                  fallback: initPos,
+                ),
+              ),
+              _studioSlider(
+                label: 'Init Pos Z',
+                min: -30,
+                max: 30,
+                value: initPos[2],
+                onChanged: (value) => _studioSet3DSceneVectorComponent(
+                  field: 'initPos',
+                  index: 2,
+                  value: value,
+                  fallback: initPos,
+                ),
+              ),
+              _studioSlider(
+                label: 'Init Rot X',
+                min: -6.28,
+                max: 6.28,
+                value: initRot[0],
+                onChanged: (value) => _studioSet3DSceneVectorComponent(
+                  field: 'initRot',
+                  index: 0,
+                  value: value,
+                  fallback: initRot,
+                ),
+              ),
+              _studioSlider(
+                label: 'Init Rot Y',
+                min: -6.28,
+                max: 6.28,
+                value: initRot[1],
+                onChanged: (value) => _studioSet3DSceneVectorComponent(
+                  field: 'initRot',
+                  index: 1,
+                  value: value,
+                  fallback: initRot,
+                ),
+              ),
+              _studioSlider(
+                label: 'Init Rot Z',
+                min: -6.28,
+                max: 6.28,
+                value: initRot[2],
+                onChanged: (value) => _studioSet3DSceneVectorComponent(
+                  field: 'initRot',
+                  index: 2,
+                  value: value,
+                  fallback: initRot,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text('Tracking',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+              DropdownButtonFormField<String>(
+                // ignore: deprecated_member_use
+                value: () {
+                  const modes = <String>{'orbit', 'fps', 'free'};
+                  final String raw = (controls['camera-mode'] ?? 'orbit')
+                      .toString()
+                      .toLowerCase();
+                  return modes.contains(raw) ? raw : 'orbit';
+                }(),
+                decoration: const InputDecoration(labelText: 'Camera Mode'),
+                items: const [
+                  DropdownMenuItem<String>(
+                      value: 'orbit', child: Text('Orbit')),
+                  DropdownMenuItem<String>(value: 'fps', child: Text('FPS')),
+                  DropdownMenuItem<String>(value: 'free', child: Text('Free')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  _studioSet3DControlField('camera-mode', value);
+                },
+              ),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Manual Mode'),
+                value: manualMode,
+                onChanged: (value) =>
+                    _studioSet3DControlField('manual-mode', value),
+              ),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Tracker UI'),
+                value: asBool(controls['show-tracker']),
+                onChanged: (value) =>
+                    _studioSet3DControlField('show-tracker', value),
+              ),
+              _studioSlider(
+                label: 'Dead Zone X',
+                min: 0,
+                max: 0.1,
+                value: _toDouble(controls['dz-x'], 0),
+                onChanged: (value) => _studioSet3DControlField('dz-x', value),
+              ),
+              _studioSlider(
+                label: 'Dead Zone Y',
+                min: 0,
+                max: 0.1,
+                value: _toDouble(controls['dz-y'], 0),
+                onChanged: (value) => _studioSet3DControlField('dz-y', value),
+              ),
+              _studioSlider(
+                label: 'Dead Zone Z',
+                min: 0,
+                max: 0.1,
+                value: _toDouble(controls['dz-z'], 0),
+                onChanged: (value) => _studioSet3DControlField('dz-z', value),
+              ),
+              _studioSlider(
+                label: 'Dead Zone Yaw',
+                min: 0,
+                max: 10,
+                value: _toDouble(controls['dz-yaw'], 0),
+                onChanged: (value) => _studioSet3DControlField('dz-yaw', value),
+              ),
+              _studioSlider(
+                label: 'Dead Zone Pitch',
+                min: 0,
+                max: 10,
+                value: _toDouble(controls['dz-pitch'], 0),
+                onChanged: (value) =>
+                    _studioSet3DControlField('dz-pitch', value),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {
+                  final frame = TrackingService.instance.frameNotifier.value;
+                  _studioSet3DControlField('head-x', frame.headX);
+                  _studioSet3DControlField('head-y', frame.headY);
+                  _studioSet3DControlField('z-value', frame.headZ);
+                  _studioSet3DControlField('yaw', frame.yaw);
+                  _studioSet3DControlField('pitch', frame.pitch);
+                },
+                icon: const Icon(Icons.gps_fixed, size: 16),
+                label: const Text('Recenter Manual Anchor'),
+              ),
+              if (manualMode) ...[
+                _studioSlider(
+                  label: 'Manual Head X',
+                  min: -1,
+                  max: 1,
+                  value: _toDouble(controls['head-x'], 0),
+                  onChanged: (value) =>
+                      _studioSet3DControlField('head-x', value),
+                ),
+                _studioSlider(
+                  label: 'Manual Head Y',
+                  min: -1,
+                  max: 1,
+                  value: _toDouble(controls['head-y'], 0),
+                  onChanged: (value) =>
+                      _studioSet3DControlField('head-y', value),
+                ),
+                _studioSlider(
+                  label: 'Manual Z',
+                  min: 0.05,
+                  max: 2,
+                  value: _toDouble(controls['z-value'], 0.2),
+                  onChanged: (value) =>
+                      _studioSet3DControlField('z-value', value),
+                ),
+                _studioSlider(
+                  label: 'Manual Yaw',
+                  min: -60,
+                  max: 60,
+                  value: _toDouble(controls['yaw'], 0),
+                  onChanged: (value) => _studioSet3DControlField('yaw', value),
+                ),
+                _studioSlider(
+                  label: 'Manual Pitch',
+                  min: -40,
+                  max: 40,
+                  value: _toDouble(controls['pitch'], 0),
+                  onChanged: (value) =>
+                      _studioSet3DControlField('pitch', value),
+                ),
+              ],
+            ],
           ),
         ],
       ),
@@ -7502,19 +7713,10 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           );
 
     final Widget studioTopRail = Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Post Studio',
-            style: TextStyle(
-              color: cs.onSurface,
-              fontWeight: FontWeight.w700,
-              fontSize: 18,
-            ),
-          ),
-          const SizedBox(height: 10),
           SegmentedButton<int>(
             segments: const [
               ButtonSegment<int>(value: 0, label: Text('2D')),
@@ -7685,21 +7887,78 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     );
 
     Widget buildPanel({required bool overlay}) {
+      const double panelHeaderHeight = 96;
       return SizedBox(
         width: 360,
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: overlay ? Colors.black.withValues(alpha: 0.5) : cs.surface,
+            color: overlay
+                ? Colors.black.withValues(alpha: 0.56)
+                : cs.surface.withValues(alpha: 0.96),
             border: Border(
               left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
             ),
           ),
-          child: ListView(
-            padding: EdgeInsets.zero,
+          child: Stack(
             children: [
-              studioTopRail,
-              Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
-              _buildStudioControlsPanel(context),
+              Positioned.fill(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                      0, panelHeaderHeight + 8, 0, 12),
+                  children: [
+                    studioTopRail,
+                    Divider(
+                        height: 1, color: cs.outline.withValues(alpha: 0.2)),
+                    _buildStudioControlsPanel(context),
+                  ],
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                height: panelHeaderHeight,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.84),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 14,
+                right: 14,
+                top: 12,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Post Studio',
+                      style: TextStyle(
+                        color: cs.onSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 18,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Edit, compose, and publish from one workflow.',
+                      style: TextStyle(
+                        color: cs.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -7707,52 +7966,56 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     }
 
     if (_editorFullscreen) {
-      return Padding(
-        padding: EdgeInsets.only(top: widget.topInset),
-        child: Stack(
-          children: [
-            Positioned.fill(child: previewPane),
-            Positioned(
-              right: 10,
-              top: 10,
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: Colors.black.withValues(alpha: 0.5),
-                ),
-                onPressed: () {
-                  setState(() => _studioChromeVisible = !_studioChromeVisible);
-                  _schedulePersistStudioDraft();
-                },
-                icon: Icon(
-                  _studioChromeVisible
-                      ? Icons.visibility_off_outlined
-                      : Icons.visibility_outlined,
-                  color: Colors.white,
-                ),
-                label: Text(
-                  _studioChromeVisible ? 'Hide Panel' : 'Show Panel',
-                  style: const TextStyle(color: Colors.white),
-                ),
+      return Stack(
+        children: [
+          Positioned.fill(
+            child: Padding(
+              padding: EdgeInsets.only(top: widget.topInset),
+              child: previewPane,
+            ),
+          ),
+          Positioned(
+            right: 10,
+            top: widget.topInset + 10,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.black.withValues(alpha: 0.5),
+              ),
+              onPressed: () {
+                setState(() => _studioChromeVisible = !_studioChromeVisible);
+                _schedulePersistStudioDraft();
+              },
+              icon: Icon(
+                _studioChromeVisible
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                color: Colors.white,
+              ),
+              label: Text(
+                _studioChromeVisible ? 'Hide Panel' : 'Show Panel',
+                style: const TextStyle(color: Colors.white),
               ),
             ),
-            if (_studioChromeVisible)
-              Align(
-                alignment: Alignment.centerRight,
-                child: buildPanel(overlay: true),
-              ),
-          ],
-        ),
+          ),
+          if (_studioChromeVisible)
+            Align(
+              alignment: Alignment.centerRight,
+              child: buildPanel(overlay: true),
+            ),
+        ],
       );
     }
 
-    return Padding(
-      padding: EdgeInsets.only(top: widget.topInset),
-      child: Row(
-        children: [
-          Expanded(child: previewPane),
-          buildPanel(overlay: false),
-        ],
-      ),
+    return Row(
+      children: [
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(top: widget.topInset),
+            child: previewPane,
+          ),
+        ),
+        buildPanel(overlay: false),
+      ],
     );
   }
 }
@@ -7939,6 +8202,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       TextEditingController();
   final FocusNode _swipeFocusNode =
       FocusNode(debugLabel: 'collection-detail-swipe-focus');
+  final ScrollController _leftPaneScrollController = ScrollController();
+  final ScrollController _rightPaneScrollController = ScrollController();
+  final ScrollController _chipRailScrollController = ScrollController();
   static const List<String> _suggestionFilters = <String>[
     'All',
     'FromUser',
@@ -7961,6 +8227,10 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   String _suggestionFilter = _suggestionFilters.first;
   List<CollectionSummary> _suggestedCollections = const <CollectionSummary>[];
   List<PresetComment> _collectionComments = const <PresetComment>[];
+  int? _swipePointer;
+  Offset? _swipeStartGlobal;
+  DateTime? _swipeStartAt;
+  bool _swipeCaptured = false;
 
   bool get _mine {
     final String? me = _repository.currentUser?.id;
@@ -7983,6 +8253,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   void dispose() {
     _collectionCommentController.dispose();
     _swipeFocusNode.dispose();
+    _leftPaneScrollController.dispose();
+    _rightPaneScrollController.dispose();
+    _chipRailScrollController.dispose();
     _stackController
       ..removeListener(_onStackChanged)
       ..dispose();
@@ -8070,6 +8343,46 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     if (_stackController.canRewind) {
       _stackController.rewind();
     }
+  }
+
+  void _beginGlobalSwipe(PointerDownEvent event) {
+    _swipePointer = event.pointer;
+    _swipeStartGlobal = event.position;
+    _swipeStartAt = DateTime.now();
+    _swipeCaptured = false;
+  }
+
+  void _trackGlobalSwipe(PointerMoveEvent event) {
+    if (_swipePointer != event.pointer) return;
+    if (_swipeCaptured) return;
+    final Offset? start = _swipeStartGlobal;
+    final DateTime? startAt = _swipeStartAt;
+    if (start == null || startAt == null) return;
+    final Duration elapsed = DateTime.now().difference(startAt);
+    if (elapsed.inMilliseconds > 540) return;
+    final double dx = event.position.dx - start.dx;
+    final double dy = event.position.dy - start.dy;
+    final double absDx = dx.abs();
+    final double absDy = dy.abs();
+    const double threshold = 108;
+    const double dominance = 1.55;
+    if (absDx >= threshold && absDx > (absDy * dominance)) {
+      _swipeByDirection(dx < 0 ? SwipeDirection.left : SwipeDirection.right);
+      _swipeCaptured = true;
+      return;
+    }
+    if (absDy >= threshold && absDy > (absDx * dominance)) {
+      _swipeByDirection(dy < 0 ? SwipeDirection.up : SwipeDirection.down);
+      _swipeCaptured = true;
+    }
+  }
+
+  void _endGlobalSwipe(PointerEvent event) {
+    if (_swipePointer != event.pointer) return;
+    _swipePointer = null;
+    _swipeStartGlobal = null;
+    _swipeStartAt = null;
+    _swipeCaptured = false;
   }
 
   Future<void> _load() async {
@@ -8191,6 +8504,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     bool sending = false;
     await showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (context) {
@@ -8327,7 +8641,8 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     final bool updated = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
-            settings: const RouteSettings(name: '/post/editor/collection-detail-update'),
+            settings: const RouteSettings(
+                name: '/post/editor/collection-detail-update'),
             builder: (_) => _PostCardComposerPage.collection(
               collectionId: detail.summary.id,
               collectionName: detail.summary.name,
@@ -8446,7 +8761,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         .toList();
     switch (_suggestionFilter) {
       case 'FromUser':
-        return candidates.where((item) => item.userId == currentUserId).toList();
+        return candidates
+            .where((item) => item.userId == currentUserId)
+            .toList();
       case 'Related':
         return candidates.where((item) {
           final tags = item.tags.map((e) => e.toLowerCase()).toSet();
@@ -8491,17 +8808,16 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       if (adapted.mode != '2d') return null;
       final layers = adapted.scene.entries
           .where((e) => e.value is Map)
-          .map((e) => MapEntry(e.key, Map<String, dynamic>.from(e.value as Map)))
+          .map(
+              (e) => MapEntry(e.key, Map<String, dynamic>.from(e.value as Map)))
           .where((entry) =>
               entry.key != 'turning_point' &&
               entry.value['isVisible'] != false &&
               (entry.value['url'] ?? '').toString().trim().isNotEmpty)
           .toList();
       layers.sort((a, b) {
-        final ao =
-            double.tryParse(a.value['order']?.toString() ?? '0') ?? 0.0;
-        final bo =
-            double.tryParse(b.value['order']?.toString() ?? '0') ?? 0.0;
+        final ao = double.tryParse(a.value['order']?.toString() ?? '0') ?? 0.0;
+        final bo = double.tryParse(b.value['order']?.toString() ?? '0') ?? 0.0;
         return ao.compareTo(bo);
       });
       if (layers.isEmpty) return null;
@@ -8575,6 +8891,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: ListView(
@@ -8726,221 +9043,420 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     final String? ambientUrl =
         activeItem == null ? null : _ambientImageUrlFromItem(activeItem);
     final List<CollectionSummary> suggestions = _filteredSuggestions();
+    if (_loading) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: _TopEdgeLoadingPane(label: 'Loading collection...'),
+      );
+    }
+    if (_error != null) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: QueryRetryPane(
+          title: _error,
+          offline: _isOfflineErrorText(_error!),
+          onRetry: _load,
+        ),
+      );
+    }
+    if (summary == null || detail == null) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Text(
+            'Collection unavailable.',
+            style: TextStyle(color: cs.onSurfaceVariant),
+          ),
+        ),
+      );
+    }
 
-    Widget buildBackdrop() {
-      if (ambientUrl == null || ambientUrl.isEmpty) {
-        return const ColoredBox(color: Colors.black);
-      }
+    void scrollChipRailBy(double delta) {
+      if (!_chipRailScrollController.hasClients) return;
+      final position = _chipRailScrollController.position;
+      final double target = (_chipRailScrollController.offset + delta)
+          .clamp(0.0, position.maxScrollExtent);
+      _chipRailScrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 170),
+        curve: Curves.easeOutCubic,
+      );
+    }
+
+    Widget buildBackdrop({required bool desktop}) {
+      const Color fallback = Colors.black;
+      final Widget base = ambientUrl == null || ambientUrl.isEmpty
+          ? const ColoredBox(color: fallback)
+          : Image.network(
+              ambientUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const ColoredBox(color: fallback),
+            );
       return Stack(
         fit: StackFit.expand,
         children: [
-          Image.network(
-            ambientUrl,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
-          ),
+          base,
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 56, sigmaY: 56),
             child: Container(color: Colors.black.withValues(alpha: 0.72)),
+          ),
+          IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: desktop
+                      ? const Alignment(-0.44, -0.24)
+                      : const Alignment(0, -0.34),
+                  radius: desktop ? 0.78 : 0.64,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.14),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
           ),
         ],
       );
     }
 
     Widget buildAmbientUnderlay() {
-      if (ambientUrl == null || ambientUrl.isEmpty) {
-        return Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            color: Colors.black.withValues(alpha: 0.45),
-          ),
-        );
-      }
+      final Widget visual = ambientUrl == null || ambientUrl.isEmpty
+          ? Container(color: Colors.black.withValues(alpha: 0.45))
+          : Image.network(
+              ambientUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  Container(color: Colors.black.withValues(alpha: 0.45)),
+            );
       return ClipRRect(
         borderRadius: BorderRadius.circular(20),
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.network(
-              ambientUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                color: Colors.black.withValues(alpha: 0.45),
-              ),
-            ),
+            visual,
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-              child: Container(color: Colors.black.withValues(alpha: 0.44)),
+              child: Container(color: Colors.black.withValues(alpha: 0.42)),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment.center,
+                  radius: 0.88,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.16),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
             ),
           ],
         ),
       );
     }
 
+    Widget buildEngagementRail() {
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _collectionEngagementButton(
+              icon: summary.myReaction == 1
+                  ? Icons.thumb_up_alt
+                  : Icons.thumb_up_alt_outlined,
+              active: summary.myReaction == 1,
+              activeColor: cs.primary,
+              label: _friendlyCount(summary.likesCount),
+              onTap: () => _toggleCollectionReaction(1),
+            ),
+            _collectionEngagementButton(
+              icon: summary.myReaction == -1
+                  ? Icons.thumb_down_alt
+                  : Icons.thumb_down_alt_outlined,
+              active: summary.myReaction == -1,
+              activeColor: Colors.redAccent,
+              label: _friendlyCount(summary.dislikesCount),
+              onTap: () => _toggleCollectionReaction(-1),
+            ),
+            _collectionEngagementButton(
+              icon: Icons.send_outlined,
+              active: false,
+              activeColor: cs.primary,
+              label: '',
+              onTap: _openCollectionShareSheet,
+            ),
+            _collectionEngagementButton(
+              icon: Icons.mode_comment_outlined,
+              active: _commentsOpen,
+              activeColor: cs.primary,
+              label: _friendlyCount(summary.commentsCount),
+              onTap: () async {
+                setState(() => _commentsOpen = true);
+                await _loadCollectionComments();
+              },
+            ),
+            _collectionEngagementButton(
+              icon: summary.isSavedByCurrentUser
+                  ? Icons.bookmark
+                  : Icons.bookmark_border,
+              active: summary.isSavedByCurrentUser,
+              activeColor: Colors.amberAccent,
+              label: _friendlyCount(summary.savesCount),
+              onTap: _toggleCollectionSave,
+            ),
+            _collectionEngagementButton(
+              icon: summary.isWatchLater
+                  ? Icons.watch_later
+                  : Icons.watch_later_outlined,
+              active: summary.isWatchLater,
+              activeColor: Colors.tealAccent,
+              label: '',
+              onTap: _toggleCollectionWatchLater,
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget buildDescriptionBox() {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () =>
+            setState(() => _descriptionExpanded = !_descriptionExpanded),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Description',
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    _descriptionExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: Colors.white70,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                summary.description.trim().isNotEmpty
+                    ? summary.description
+                    : 'No description provided.',
+                maxLines: _descriptionExpanded ? null : 3,
+                overflow: _descriptionExpanded
+                    ? TextOverflow.visible
+                    : TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.86),
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget buildSwipeControlRail() {
+      return Row(
+        children: [
+          Text(
+            '${_index + 1}/${detail.items.length}',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.78),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            tooltip: 'Previous',
+            onPressed: () => _swipeByDirection(SwipeDirection.left),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+          ),
+          IconButton(
+            tooltip: 'Up',
+            onPressed: () => _swipeByDirection(SwipeDirection.up),
+            icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 20),
+          ),
+          IconButton(
+            tooltip: 'Revert swipe',
+            onPressed: _stackController.canRewind ? _rewindSwipe : null,
+            icon: const Icon(Icons.undo_rounded, size: 18),
+          ),
+          IconButton(
+            tooltip: 'Down',
+            onPressed: () => _swipeByDirection(SwipeDirection.down),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+          ),
+          IconButton(
+            tooltip: 'Next',
+            onPressed: () => _swipeByDirection(SwipeDirection.right),
+            icon: const Icon(Icons.arrow_forward_ios_rounded, size: 18),
+          ),
+        ],
+      );
+    }
+
     Widget buildBelowPreviewMeta() {
-      if (summary == null) return const SizedBox.shrink();
       return Material(
         color: Colors.transparent,
         child: Container(
           margin: const EdgeInsets.only(top: 10),
           padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                summary.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.84),
-                  fontSize: 12,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final bool compact = constraints.maxWidth < 760;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  GestureDetector(
-                    onTap: () => _openPublicProfileRoute(context, summary.author),
-                    child: CircleAvatar(
-                      radius: 13,
-                      backgroundImage: (summary.author?.avatarUrl != null &&
-                              summary.author!.avatarUrl!.isNotEmpty)
-                          ? NetworkImage(summary.author!.avatarUrl!)
-                          : null,
-                      child: (summary.author?.avatarUrl == null ||
-                              summary.author!.avatarUrl!.isEmpty)
-                          ? const Icon(Icons.person, size: 14)
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => _openPublicProfileRoute(context, summary.author),
-                      child: Text(
-                        summary.author?.displayName ?? 'Unknown creator',
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          summary.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.84),
                           fontSize: 12,
                         ),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${summary.itemsCount} items',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.74),
+                      fontSize: 12,
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    _collectionEngagementButton(
-                      icon: summary.myReaction == 1
-                          ? Icons.thumb_up_alt
-                          : Icons.thumb_up_alt_outlined,
-                      active: summary.myReaction == 1,
-                      activeColor: cs.primary,
-                      label: _friendlyCount(summary.likesCount),
-                      onTap: () => _toggleCollectionReaction(1),
+                  const SizedBox(height: 10),
+                  if (compact) ...[
+                    Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () =>
+                              _openPublicProfileRoute(context, summary.author),
+                          child: CircleAvatar(
+                            radius: 13,
+                            backgroundImage:
+                                (summary.author?.avatarUrl != null &&
+                                        summary.author!.avatarUrl!.isNotEmpty)
+                                    ? NetworkImage(summary.author!.avatarUrl!)
+                                    : null,
+                            child: (summary.author?.avatarUrl == null ||
+                                    summary.author!.avatarUrl!.isEmpty)
+                                ? const Icon(Icons.person, size: 14)
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => _openPublicProfileRoute(
+                                context, summary.author),
+                            child: Text(
+                              summary.author?.displayName ?? 'Unknown creator',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    _collectionEngagementButton(
-                      icon: summary.myReaction == -1
-                          ? Icons.thumb_down_alt
-                          : Icons.thumb_down_alt_outlined,
-                      active: summary.myReaction == -1,
-                      activeColor: Colors.redAccent,
-                      label: _friendlyCount(summary.dislikesCount),
-                      onTap: () => _toggleCollectionReaction(-1),
-                    ),
-                    _collectionEngagementButton(
-                      icon: Icons.send_outlined,
-                      active: false,
-                      activeColor: cs.primary,
-                      label: '',
-                      onTap: _openCollectionShareSheet,
-                    ),
-                    _collectionEngagementButton(
-                      icon: Icons.mode_comment_outlined,
-                      active: _commentsOpen,
-                      activeColor: cs.primary,
-                      label: _friendlyCount(summary.commentsCount),
-                      onTap: () async {
-                        setState(() => _commentsOpen = true);
-                        await _loadCollectionComments();
-                      },
-                    ),
-                    _collectionEngagementButton(
-                      icon: summary.isSavedByCurrentUser
-                          ? Icons.bookmark
-                          : Icons.bookmark_border,
-                      active: summary.isSavedByCurrentUser,
-                      activeColor: Colors.amberAccent,
-                      label: _friendlyCount(summary.savesCount),
-                      onTap: _toggleCollectionSave,
-                    ),
-                    _collectionEngagementButton(
-                      icon: summary.isWatchLater
-                          ? Icons.watch_later
-                          : Icons.watch_later_outlined,
-                      active: summary.isWatchLater,
-                      activeColor: Colors.tealAccent,
-                      label: '',
-                      onTap: _toggleCollectionWatchLater,
+                    const SizedBox(height: 8),
+                    buildEngagementRail(),
+                  ] else ...[
+                    Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () =>
+                              _openPublicProfileRoute(context, summary.author),
+                          child: CircleAvatar(
+                            radius: 13,
+                            backgroundImage:
+                                (summary.author?.avatarUrl != null &&
+                                        summary.author!.avatarUrl!.isNotEmpty)
+                                    ? NetworkImage(summary.author!.avatarUrl!)
+                                    : null,
+                            child: (summary.author?.avatarUrl == null ||
+                                    summary.author!.avatarUrl!.isEmpty)
+                                ? const Icon(Icons.person, size: 14)
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 4,
+                          child: GestureDetector(
+                            onTap: () => _openPublicProfileRoute(
+                                context, summary.author),
+                            child: Text(
+                              summary.author?.displayName ?? 'Unknown creator',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 5,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: buildEngagementRail(),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Text(
-                    '${_index + 1}/${detail?.items.length ?? 0}',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.78),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: 'Previous',
-                    onPressed: () => _swipeByDirection(SwipeDirection.left),
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-                  ),
-                  IconButton(
-                    tooltip: 'Up',
-                    onPressed: () => _swipeByDirection(SwipeDirection.up),
-                    icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 20),
-                  ),
-                  IconButton(
-                    tooltip: 'Revert swipe',
-                    onPressed: _stackController.canRewind ? _rewindSwipe : null,
-                    icon: const Icon(Icons.undo_rounded, size: 18),
-                  ),
-                  IconButton(
-                    tooltip: 'Down',
-                    onPressed: () => _swipeByDirection(SwipeDirection.down),
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
-                  ),
-                  IconButton(
-                    tooltip: 'Next',
-                    onPressed: () => _swipeByDirection(SwipeDirection.right),
-                    icon: const Icon(Icons.arrow_forward_ios_rounded, size: 18),
-                  ),
+                  const SizedBox(height: 10),
+                  buildDescriptionBox(),
+                  const SizedBox(height: 8),
+                  buildSwipeControlRail(),
                 ],
-              ),
-            ],
+              );
+            },
           ),
         ),
       );
@@ -8957,13 +9473,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       }
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: _commentsOpen ? () => setState(() => _commentsOpen = false) : null,
-        onDoubleTap: () {
-          final activeDetail = _detail;
-          if (activeDetail == null || activeDetail.items.isEmpty) return;
-          final int current = _index.clamp(0, activeDetail.items.length - 1);
-          _openCollectionFullscreen(activeDetail.items[current], current);
-        },
+        onTap:
+            _commentsOpen ? () => setState(() => _commentsOpen = false) : null,
+        onDoubleTap: () => _openCollectionFullscreen(activeItem, _index),
         child: Stack(
           children: [
             Positioned.fill(
@@ -9039,324 +9551,303 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       );
     }
 
-    Widget buildMetaPanel(double width) {
-      if (summary == null) {
-        return const SizedBox.shrink();
-      }
-      final bool narrow = width < 1140;
-
-      Widget buildCommentsPanel() {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    Widget buildFilterRail() {
+      return Listener(
+        onPointerSignal: (event) {
+          if (event is! PointerScrollEvent) return;
+          final double delta =
+              event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+                  ? event.scrollDelta.dx
+                  : event.scrollDelta.dy;
+          if (delta.abs() < 0.1) return;
+          scrollChipRailBy(delta);
+        },
+        child: Row(
           children: [
-            Row(
-              children: [
-                const Text(
-                  'Comments',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
-                const Spacer(),
-                IconButton(
-                  tooltip: 'Close comments',
-                  onPressed: () => setState(() => _commentsOpen = false),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
-                ),
-              ],
+            IconButton(
+              tooltip: 'Scroll filters left',
+              onPressed: () => scrollChipRailBy(-180),
+              icon: const Icon(Icons.chevron_left_rounded),
             ),
-            const SizedBox(height: 10),
             Expanded(
-              child: _collectionComments.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No comments yet',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.68),
-                        ),
+              child: SingleChildScrollView(
+                controller: _chipRailScrollController,
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children:
+                      List<Widget>.generate(_suggestionFilters.length, (index) {
+                    final filter = _suggestionFilters[index];
+                    final selected = filter == _suggestionFilter;
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        right: index == _suggestionFilters.length - 1 ? 0 : 8,
                       ),
-                    )
-                  : ListView.builder(
-                      itemCount: _collectionComments.length,
-                      itemBuilder: (context, index) {
-                        final comment = _collectionComments[index];
-                        return ListTile(
-                          dense: true,
-                          title: Text(
-                            comment.author?.displayName ?? 'User',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          subtitle: Text(
-                            comment.content,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.78),
-                            ),
-                          ),
-                          trailing: Text(
-                            _friendlyTime(comment.createdAt),
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.64),
-                              fontSize: 11,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _collectionCommentController,
-                    decoration: const InputDecoration(
-                      hintText: 'Write a comment...',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: () async {
-                    if (!await _requireAuthAction()) return;
-                    final summary = _detail?.summary;
-                    if (summary == null) return;
-                    final String text = _collectionCommentController.text.trim();
-                    if (text.isEmpty) return;
-                    await _repository.addCollectionComment(
-                      collectionId: summary.id,
-                      content: text,
-                    );
-                    _collectionCommentController.clear();
-                    await _loadCollectionComments();
-                  },
-                  child: const Text('Send'),
-                ),
-              ],
-            ),
-          ],
-        );
-      }
-
-      Widget buildDetailDiscoveryPanel() {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'Details & Discussion',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
-                const Spacer(),
-                if (_mine)
-                  PopupMenuButton<String>(
-                    color: cs.surfaceContainerHighest,
-                    onSelected: (value) {
-                      if (value == 'update') _updateCollection();
-                      if (value == 'visibility') _toggleVisibility();
-                      if (value == 'delete') _deleteCollection();
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem<String>(
-                        value: 'update',
-                        child: Text('Update'),
-                      ),
-                      PopupMenuItem<String>(
-                        value: 'visibility',
-                        child: Text(summary.published ? 'Make Private' : 'Make Public'),
-                      ),
-                      const PopupMenuItem<String>(
-                        value: 'delete',
-                        child: Text('Delete'),
-                      ),
-                    ],
-                    icon: const Icon(Icons.more_vert, color: Colors.white),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () =>
-                  setState(() => _descriptionExpanded = !_descriptionExpanded),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.white24),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text(
-                          'Description',
+                      child: ChoiceChip(
+                        selected: selected,
+                        label: Text(
+                          _displayFilterName(filter),
                           style: TextStyle(
-                            color: Colors.white,
+                            color: selected ? Colors.black : Colors.white,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const Spacer(),
-                        Icon(
-                          _descriptionExpanded
-                              ? Icons.expand_less_rounded
-                              : Icons.expand_more_rounded,
-                          color: Colors.white70,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      summary.description.trim().isNotEmpty
-                          ? summary.description
-                          : 'No description provided.',
-                      maxLines: _descriptionExpanded ? null : 2,
-                      overflow: _descriptionExpanded
-                          ? TextOverflow.visible
-                          : TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.86),
-                        fontSize: 13,
+                        selectedColor: Colors.white,
+                        checkmarkColor: Colors.black,
+                        side: const BorderSide(color: Colors.white24),
+                        onSelected: (_) =>
+                            setState(() => _suggestionFilter = filter),
                       ),
-                    ),
-                  ],
+                    );
+                  }),
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 36,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _suggestionFilters.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) {
-                  final filter = _suggestionFilters[index];
-                  final selected = filter == _suggestionFilter;
-                  return ChoiceChip(
-                    selected: selected,
-                    label: Text(
-                      _displayFilterName(filter),
-                      style: TextStyle(
-                        color: selected ? Colors.black : Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    selectedColor: Colors.white,
-                    checkmarkColor: Colors.black,
-                    side: const BorderSide(color: Colors.white24),
-                    onSelected: (_) => setState(() => _suggestionFilter = filter),
-                  );
-                },
-              ),
+            IconButton(
+              tooltip: 'Scroll filters right',
+              onPressed: () => scrollChipRailBy(180),
+              icon: const Icon(Icons.chevron_right_rounded),
             ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: _loadingSuggestions
-                  ? const _TopEdgeLoadingPane(
-                      label: 'Loading suggestions...',
-                      backgroundColor: Colors.transparent,
-                      minHeight: 2,
-                    )
-                  : ListView.separated(
-                      itemCount: suggestions.length.clamp(0, 24),
-                      separatorBuilder: (_, __) => const Divider(
-                        color: Colors.white24,
-                        height: 14,
-                      ),
-                      itemBuilder: (context, index) {
-                        final item = suggestions[index];
-                        return InkWell(
-                          onTap: () => Navigator.pushReplacementNamed(
-                            context,
-                            buildCollectionRoutePathForSummary(item),
+          ],
+        ),
+      );
+    }
+
+    Widget buildCommentsPanel() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Comments',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Close comments',
+                onPressed: () => setState(() => _commentsOpen = false),
+                icon: const Icon(Icons.close_rounded,
+                    color: Colors.white70, size: 18),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: _collectionComments.isEmpty
+                ? Center(
+                    child: Text(
+                      'No comments yet',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.68)),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _rightPaneScrollController,
+                    itemCount: _collectionComments.length,
+                    itemBuilder: (context, index) {
+                      final comment = _collectionComments[index];
+                      return ListTile(
+                        dense: true,
+                        title: Text(
+                          comment.author?.displayName ?? 'User',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        subtitle: Text(
+                          comment.content,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.78),
                           ),
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 140,
-                                height: 78,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: IgnorePointer(
-                                    child: _GridPresetPreview(
-                                      mode: item.thumbnailMode ??
-                                          item.firstItem?.mode ??
-                                          '2d',
-                                      payload: item.thumbnailPayload.isNotEmpty
-                                          ? item.thumbnailPayload
-                                          : (item.firstItem?.snapshot ??
-                                              const <String, dynamic>{}),
-                                      pointerPassthrough: true,
-                                    ),
+                        ),
+                        trailing: Text(
+                          _friendlyTime(comment.createdAt),
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.64),
+                            fontSize: 11,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _collectionCommentController,
+                  decoration: const InputDecoration(
+                    hintText: 'Write a comment...',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: () async {
+                  if (!await _requireAuthAction()) return;
+                  final summary = _detail?.summary;
+                  if (summary == null) return;
+                  final String text = _collectionCommentController.text.trim();
+                  if (text.isEmpty) return;
+                  await _repository.addCollectionComment(
+                    collectionId: summary.id,
+                    content: text,
+                  );
+                  _collectionCommentController.clear();
+                  await _loadCollectionComments();
+                },
+                child: const Text('Send'),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    Widget buildSuggestionsPanel() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox.shrink(),
+              const Spacer(),
+              if (_mine)
+                PopupMenuButton<String>(
+                  color: cs.surfaceContainerHighest,
+                  onSelected: (value) {
+                    if (value == 'update') _updateCollection();
+                    if (value == 'visibility') _toggleVisibility();
+                    if (value == 'delete') _deleteCollection();
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem<String>(
+                      value: 'update',
+                      child: Text('Update'),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'visibility',
+                      child: Text(
+                          summary.published ? 'Make Private' : 'Make Public'),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: 'delete',
+                      child: Text('Delete'),
+                    ),
+                  ],
+                  icon: const Icon(Icons.more_vert, color: Colors.white),
+                ),
+            ],
+          ),
+          buildFilterRail(),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _loadingSuggestions
+                ? const _TopEdgeLoadingPane(
+                    label: 'Loading suggestions...',
+                    backgroundColor: Colors.transparent,
+                    minHeight: 2,
+                  )
+                : ListView.separated(
+                    controller: _rightPaneScrollController,
+                    itemCount: suggestions.length.clamp(0, 24),
+                    separatorBuilder: (_, __) =>
+                        const Divider(color: Colors.white24, height: 14),
+                    itemBuilder: (context, index) {
+                      final item = suggestions[index];
+                      return InkWell(
+                        onTap: () => Navigator.pushReplacementNamed(
+                          context,
+                          buildCollectionRoutePathForSummary(item),
+                        ),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 140,
+                              height: 78,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: IgnorePointer(
+                                  child: _GridPresetPreview(
+                                    mode: item.thumbnailMode ??
+                                        item.firstItem?.mode ??
+                                        '2d',
+                                    payload: item.thumbnailPayload.isNotEmpty
+                                        ? item.thumbnailPayload
+                                        : (item.firstItem?.snapshot ??
+                                            const <String, dynamic>{}),
+                                    pointerPassthrough: true,
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      item.name,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                      ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.name,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
                                     ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      item.author?.displayName ?? 'Unknown creator',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.75),
-                                        fontSize: 12,
-                                      ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    item.author?.displayName ??
+                                        'Unknown creator',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.75),
+                                      fontSize: 12,
                                     ),
-                                    Text(
-                                      '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.createdAt)}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.62),
-                                        fontSize: 11,
-                                      ),
+                                  ),
+                                  Text(
+                                    '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.createdAt)}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.62),
+                                      fontSize: 11,
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        );
-      }
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      );
+    }
 
-      return Container(
-        width: narrow ? double.infinity : 360,
-        constraints: const BoxConstraints(minHeight: 420),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.58),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white24),
+    Widget buildRightPanel({
+      required bool desktop,
+      required double viewportHeight,
+    }) {
+      final Widget body =
+          _commentsOpen ? buildCommentsPanel() : buildSuggestionsPanel();
+      final EdgeInsets panelPadding =
+          desktop ? const EdgeInsets.fromLTRB(10, 0, 2, 0) : EdgeInsets.zero;
+      return SizedBox(
+        width: desktop ? 360 : double.infinity,
+        height: desktop ? viewportHeight : 640,
+        child: Padding(
+          padding: panelPadding,
+          child: body,
         ),
-        child: _commentsOpen ? buildCommentsPanel() : buildDetailDiscoveryPanel(),
       );
     }
 
@@ -9382,70 +9873,71 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             _openCollectionFullscreen(activeItem, _index);
           }
         },
-        child: Stack(
-          children: [
-            Positioned.fill(child: buildBackdrop()),
-            if (_loading)
-              const Positioned.fill(
-                child: _TopEdgeLoadingPane(label: 'Loading collection...'),
-              )
-            else if (_error != null)
-              Positioned.fill(
-                child: QueryRetryPane(
-                  title: _error,
-                  offline: _isOfflineErrorText(_error!),
-                  onRetry: _load,
-                ),
-              )
-            else
-              Positioned.fill(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-                  child: LayoutBuilder(
-                    key: const ValueKey<String>('compact-collection-detail'),
-                    builder: (context, constraints) {
-                      final bool narrow = constraints.maxWidth < 1140;
-                      final Widget previewCard = Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          buildPreviewSurface(),
-                          buildBelowPreviewMeta(),
-                        ],
-                      );
-                      final Widget meta = buildMetaPanel(constraints.maxWidth);
-                      if (narrow) {
-                        return SingleChildScrollView(
-                          child: Column(
+        child: LayoutBuilder(
+          key: const ValueKey<String>('compact-collection-detail'),
+          builder: (context, viewport) {
+            final bool desktop = viewport.maxWidth >= 1140;
+            final Widget leftColumn = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                buildPreviewSurface(),
+                buildBelowPreviewMeta(),
+                const SizedBox(height: 16),
+              ],
+            );
+            final Widget content = Stack(
+              children: [
+                Positioned.fill(child: buildBackdrop(desktop: desktop)),
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                    child: desktop
+                        ? Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              previewCard,
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                height: 640,
-                                child: meta,
+                              Expanded(
+                                child: Scrollbar(
+                                  controller: _leftPaneScrollController,
+                                  child: SingleChildScrollView(
+                                    controller: _leftPaneScrollController,
+                                    child: leftColumn,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              buildRightPanel(
+                                desktop: true,
+                                viewportHeight: viewport.maxHeight - 28,
                               ),
                             ],
-                          ),
-                        );
-                      }
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
+                          )
+                        : SingleChildScrollView(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [previewCard],
+                              children: [
+                                leftColumn,
+                                const SizedBox(height: 12),
+                                buildRightPanel(
+                                  desktop: false,
+                                  viewportHeight: viewport.maxHeight,
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          SizedBox(width: 360, child: meta),
-                        ],
-                      );
-                    },
                   ),
                 ),
-              ),
-          ],
+              ],
+            );
+            if (!desktop) return content;
+            return Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: _beginGlobalSwipe,
+              onPointerMove: _trackGlobalSwipe,
+              onPointerUp: _endGlobalSwipe,
+              onPointerCancel: _endGlobalSwipe,
+              child: content,
+            );
+          },
         ),
       ),
     );
@@ -9511,9 +10003,8 @@ class _ProfileTabState extends State<_ProfileTab> {
   final AppRepository _repository = AppRepository.instance;
   static const double _profileTitleRowHeight = 34;
   static const double _profileMetaRowHeight = 16;
-  static const double _profileCardExtraHeight = 4 +
-      _profileTitleRowHeight +
-      _profileMetaRowHeight;
+  static const double _profileCardExtraHeight =
+      4 + _profileTitleRowHeight + _profileMetaRowHeight;
 
   bool _loading = true;
   String? _error;
@@ -9545,14 +10036,17 @@ class _ProfileTabState extends State<_ProfileTab> {
       _error = null;
     });
     try {
-      final profile = await QueryGuard.run(() => _repository.ensureCurrentProfile());
-      final stats = await QueryGuard.run(() => _repository.fetchProfileStats(user.id));
-      final saved =
-          await QueryGuard.run(() => _repository.fetchSavedPresetsForCurrentUser());
+      final profile =
+          await QueryGuard.run(() => _repository.ensureCurrentProfile());
+      final stats =
+          await QueryGuard.run(() => _repository.fetchProfileStats(user.id));
+      final saved = await QueryGuard.run(
+          () => _repository.fetchSavedPresetsForCurrentUser());
       final savedCollections = await QueryGuard.run(
         () => _repository.fetchSavedCollectionsForCurrentUser(),
       );
-      final posts = await QueryGuard.run(() => _repository.fetchUserPosts(user.id));
+      final posts =
+          await QueryGuard.run(() => _repository.fetchUserPosts(user.id));
       final history = await QueryGuard.run(
         () => _repository.fetchHistoryPresetsForCurrentUser(),
       );
@@ -9738,9 +10232,10 @@ class _ProfileTabState extends State<_ProfileTab> {
   }) {
     const double horizontalPadding = 12 * 2;
     const double crossAxisSpacing = 10;
-    final double itemWidth =
-        (width - horizontalPadding - ((crossAxisCount - 1) * crossAxisSpacing)) /
-            crossAxisCount;
+    final double itemWidth = (width -
+            horizontalPadding -
+            ((crossAxisCount - 1) * crossAxisSpacing)) /
+        crossAxisCount;
     final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
     final double cardHeight = previewHeight + _profileCardExtraHeight;
     return itemWidth / cardHeight;
@@ -9780,9 +10275,10 @@ class _ProfileTabState extends State<_ProfileTab> {
                 ? preset.title.trim()
                 : preset.name;
             final String mode = preset.thumbnailMode ?? preset.mode;
-            final Map<String, dynamic> payload = preset.thumbnailPayload.isNotEmpty
-                ? preset.thumbnailPayload
-                : preset.payload;
+            final Map<String, dynamic> payload =
+                preset.thumbnailPayload.isNotEmpty
+                    ? preset.thumbnailPayload
+                    : preset.payload;
             return InkWell(
               borderRadius: BorderRadius.circular(12),
               onTap: () => _openPost(preset),
@@ -9793,7 +10289,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                   border: Border.all(
                     color: cs.outline.withValues(alpha: 0.2),
                   ),
-                  ),
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -9802,6 +10298,9 @@ class _ProfileTabState extends State<_ProfileTab> {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: _OverlayParallaxPreview(
+                          key: ValueKey<String>(
+                            'profile-post-preview-${preset.id}-${preset.updatedAt.millisecondsSinceEpoch}',
+                          ),
                           mode: mode,
                           payload: payload,
                           borderRadius: BorderRadius.circular(8),
@@ -9911,10 +10410,9 @@ class _ProfileTabState extends State<_ProfileTab> {
                     label: Text(
                       'Saved Collections',
                       style: TextStyle(
-                        color:
-                            _savedFilter == _SavedGridFilter.savedCollections
-                                ? Colors.black
-                                : cs.onSurface,
+                        color: _savedFilter == _SavedGridFilter.savedCollections
+                            ? Colors.black
+                            : cs.onSurface,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -9995,6 +10493,9 @@ class _ProfileTabState extends State<_ProfileTab> {
                                 : (preset?.payload ??
                                     const <String, dynamic>{}));
                         final String kind = entry['kind']?.toString() ?? '';
+                        final String entityId = isCollection
+                            ? collection.id
+                            : (preset?.id ?? 'unknown');
                         final String meta = switch (kind) {
                           'saved_collection' => 'Saved collection',
                           'watch_later_collection' => 'Watch later',
@@ -10028,6 +10529,9 @@ class _ProfileTabState extends State<_ProfileTab> {
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(8),
                                     child: _OverlayParallaxPreview(
+                                      key: ValueKey<String>(
+                                        'profile-saved-preview-$kind-$entityId-${(entry['createdAt'] as DateTime).millisecondsSinceEpoch}',
+                                      ),
                                       mode: mode,
                                       payload: payload,
                                       borderRadius: BorderRadius.circular(8),
@@ -10041,7 +10545,8 @@ class _ProfileTabState extends State<_ProfileTab> {
                                 SizedBox(
                                   height: _profileTitleRowHeight,
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8),
                                     child: Align(
                                       alignment: Alignment.topLeft,
                                       child: Text(
@@ -10060,7 +10565,8 @@ class _ProfileTabState extends State<_ProfileTab> {
                                 SizedBox(
                                   height: _profileMetaRowHeight,
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8),
                                     child: Align(
                                       alignment: Alignment.centerLeft,
                                       child: Text(
@@ -10501,8 +11007,7 @@ class _ChatTabState extends State<_ChatTab> {
       List<AppUserProfile> members = const <AppUserProfile>[];
       if (chats.isNotEmpty) {
         final String? currentId = preferredChatId ?? _activeChat?.id;
-        final ChatSummary selected =
-            _chatById(chats, currentId) ?? chats.first;
+        final ChatSummary selected = _chatById(chats, currentId) ?? chats.first;
         active = selected;
         members = await QueryGuard.run(
           () => _repository.fetchChatMembers(selected.id),
@@ -14424,338 +14929,460 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       child: previewSurface,
     );
 
-    return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      appBar: AppBar(
-        backgroundColor: cs.surface,
-        title: Text(
-          () {
-            if (_isDetailEditor) {
-              return widget.kind == _ComposerKind.single
-                  ? (widget.isEdit ? 'Update Preset Detail' : 'Compose Preset')
-                  : (widget.isEdit
-                      ? 'Update Collection Detail'
-                      : 'Compose Collection Detail');
-            }
-            return widget.kind == _ComposerKind.single
-                ? (widget.isEdit ? 'Update Feed Card' : 'Compose Card')
-                : (widget.isEdit
-                    ? 'Update Collection Card'
-                    : 'Compose Collection Card');
-          }(),
+    final String composerTitle = () {
+      if (_isDetailEditor) {
+        return widget.kind == _ComposerKind.single
+            ? (widget.isEdit ? 'Update Preset Detail' : 'Compose Preset')
+            : (widget.isEdit
+                ? 'Update Collection Detail'
+                : 'Compose Collection Detail');
+      }
+      return widget.kind == _ComposerKind.single
+          ? (widget.isEdit ? 'Update Feed Card' : 'Compose Card')
+          : (widget.isEdit
+              ? 'Update Collection Card'
+              : 'Compose Collection Card');
+    }();
+    const double headerHeight = 96;
+
+    Widget buildLeftHeader() {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black.withValues(alpha: 0.66),
+              Colors.transparent,
+            ],
+          ),
         ),
-      ),
-      body: Row(
-        children: [
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _isDetailEditor
-                        ? 'Detail Preview (16:9)'
-                        : 'Card Preview (16:9)',
-                    style: TextStyle(
-                      color: cs.onSurface,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  if (widget.kind == _ComposerKind.collection &&
-                      _editableCollectionItems.length > 1)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: List<Widget>.generate(
-                          _editableCollectionItems.length,
-                          (index) {
-                            final bool active = index == _thumbnailIndex;
-                            return ChoiceChip(
-                              selected: active,
-                              label: Text(
-                                '${index + 1}. ${_editableCollectionItems[index].name}',
-                                style: TextStyle(
-                                  color: active ? Colors.black : cs.onSurface,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              selectedColor: Colors.white,
-                              checkmarkColor: Colors.black,
-                              onSelected: (_) =>
-                                  _setThumbnailFromCollectionIndex(index),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  Expanded(
-                    child: Center(
-                      child: Container(
-                        constraints: const BoxConstraints(maxWidth: 1000),
-                        child: widget.kind == _ComposerKind.collection
-                            ? Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  Positioned.fill(
-                                    top: 12,
-                                    left: 12,
-                                    right: 12,
-                                    bottom: -12,
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(18),
-                                        color: cs.surfaceContainerHighest
-                                            .withValues(alpha: 0.32),
-                                      ),
-                                    ),
-                                  ),
-                                  Positioned.fill(
-                                    top: 6,
-                                    left: 6,
-                                    right: 6,
-                                    bottom: -6,
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(18),
-                                        color: cs.surfaceContainerHighest
-                                            .withValues(alpha: 0.48),
-                                      ),
-                                    ),
-                                  ),
-                                  preview,
-                                ],
-                              )
-                            : preview,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (!_showPublishStep)
-                          FilledButton.icon(
-                            onPressed: () {
-                              setState(() => _showPublishStep = true);
-                            },
-                            icon: const Icon(Icons.arrow_forward_rounded),
-                            label: const Text('Save & Next'),
-                          )
-                        else
-                          OutlinedButton.icon(
-                            onPressed: () {
-                              setState(() => _showPublishStep = false);
-                            },
-                            icon: const Icon(Icons.arrow_back_rounded),
-                            label: const Text('Back to Editing'),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
+        child: Text(
+          _isDetailEditor ? 'Detail Preview (16:9)' : 'Card Preview (16:9)',
+          style: TextStyle(
+            color: cs.onSurface,
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+          ),
+        ),
+      );
+    }
+
+    Widget buildRightPanelHeader() {
+      return Positioned(
+        left: 16,
+        right: 16,
+        top: 12,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _showPublishStep ? 'Publish Setup' : 'Editor Controls',
+              style: TextStyle(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w700,
+                fontSize: 18,
               ),
             ),
-          ),
-          SizedBox(
-            width: 430,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: cs.surface,
-                border: Border(
-                  left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
-                ),
+            const SizedBox(height: 2),
+            Text(
+              _showPublishStep
+                  ? 'Finalize metadata and visibility before publishing.'
+                  : 'Adjust card/detail payload, then continue to metadata.',
+              style: TextStyle(
+                color: cs.onSurfaceVariant,
+                fontSize: 12,
               ),
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  if (!_showPublishStep) ...[
-                    Text(
-                      _isDetailEditor ? 'Detail Editing' : 'Card Editing',
-                      style: TextStyle(
-                        color: cs.onSurface,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _isDetailEditor
-                          ? 'Adjust the preset/collection detail payload, then continue to metadata.'
-                          : 'Adjust the feed card payload (independent from detail), then continue to metadata.',
-                      style: TextStyle(color: cs.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 12),
-                    if (_isCardEditor &&
-                        !widget.isEdit &&
-                        _pullSourcePayload != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: OutlinedButton.icon(
-                          onPressed: _pullFromSourcePayload,
-                          icon: const Icon(Icons.download_for_offline_outlined),
-                          label: Text(
-                            widget.kind == _ComposerKind.single
-                                ? 'Pull From Preset'
-                                : 'Pull From Active Collection Item',
-                          ),
-                        ),
-                      ),
-                    if (_thumbnailMode == '3d')
-                      _build3DWindowLayerPanel(context)
-                    else
-                      _build2DCardEditorPanel(context),
-                    const SizedBox(height: 14),
-                    Row(
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: Row(
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        16, headerHeight + 10, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.pop(context, false),
-                            child: const Text('Cancel'),
+                        buildLeftHeader(),
+                        const SizedBox(height: 10),
+                        if (widget.kind == _ComposerKind.collection &&
+                            _editableCollectionItems.length > 1)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: List<Widget>.generate(
+                                _editableCollectionItems.length,
+                                (index) {
+                                  final bool active = index == _thumbnailIndex;
+                                  return ChoiceChip(
+                                    selected: active,
+                                    label: Text(
+                                      '${index + 1}. ${_editableCollectionItems[index].name}',
+                                      style: TextStyle(
+                                        color: active
+                                            ? Colors.black
+                                            : cs.onSurface,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    selectedColor: Colors.white,
+                                    checkmarkColor: Colors.black,
+                                    onSelected: (_) =>
+                                        _setThumbnailFromCollectionIndex(index),
+                                  );
+                                },
+                              ),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
                         Expanded(
-                          child: FilledButton.icon(
-                            onPressed: () =>
-                                setState(() => _showPublishStep = true),
-                            icon: const Icon(Icons.arrow_forward_rounded),
-                            label: const Text('Save & Next'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ] else ...[
-                    TextField(
-                      controller: _titleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Title',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _descriptionController,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                        labelText: 'Description',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _tagsController,
-                      decoration: const InputDecoration(
-                        labelText: 'Tags',
-                        hintText: '#parallax #fyp',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _mentionController,
-                      decoration: const InputDecoration(
-                        labelText: 'Mention',
-                        hintText: '@username',
-                      ),
-                    ),
-                    if (_mentionLoading)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8),
-                        child: LinearProgressIndicator(color: Colors.white),
-                      ),
-                    if (_mentionResults.isNotEmpty)
-                      Container(
-                        margin: const EdgeInsets.only(top: 8),
-                        decoration: BoxDecoration(
-                          color: cs.surfaceContainerLow,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: cs.outline.withValues(alpha: 0.2),
-                          ),
-                        ),
-                        constraints: const BoxConstraints(maxHeight: 220),
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: _mentionResults.length,
-                          itemBuilder: (context, index) {
-                            final user = _mentionResults[index];
-                            return ListTile(
-                              dense: true,
-                              title: Text(user.displayName),
-                              subtitle: Text(user.email),
-                              onTap: () => _addMention(user),
-                            );
-                          },
-                        ),
-                      ),
-                    if (_selectedMentionIds.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: _selectedMentionIds.map((id) {
-                            final profile = _selectedMentionProfiles[id];
-                            final label = profile != null
-                                ? '@${profile.username ?? profile.displayName}'
-                                : '@${id.substring(0, math.min(8, id.length))}';
-                            return InputChip(
-                              label: Text(label),
-                              onDeleted: () => _removeMention(id),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    const SizedBox(height: 14),
-                    SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment<bool>(
-                          value: true,
-                          label: Text('Public'),
-                        ),
-                        ButtonSegment<bool>(
-                          value: false,
-                          label: Text('Private'),
-                        ),
-                      ],
-                      selected: <bool>{_isPublic},
-                      onSelectionChanged: (values) {
-                        setState(() => _isPublic = values.first);
-                      },
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: _submitting
-                                ? null
-                                : () => Navigator.pop(context, false),
-                            child: const Text('Cancel'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: FilledButton(
-                            onPressed: _submitting ? null : _submit,
-                            child: Text(
-                              _submitting
-                                  ? 'Working...'
-                                  : widget.isEdit
-                                      ? 'Update'
-                                      : 'Publish',
+                          child: Center(
+                            child: Container(
+                              constraints: const BoxConstraints(maxWidth: 1000),
+                              child: widget.kind == _ComposerKind.collection
+                                  ? Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        Positioned.fill(
+                                          top: 12,
+                                          left: 12,
+                                          right: 12,
+                                          bottom: -12,
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                              color: cs.surfaceContainerHighest
+                                                  .withValues(alpha: 0.32),
+                                            ),
+                                          ),
+                                        ),
+                                        Positioned.fill(
+                                          top: 6,
+                                          left: 6,
+                                          right: 6,
+                                          bottom: -6,
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                              color: cs.surfaceContainerHighest
+                                                  .withValues(alpha: 0.48),
+                                            ),
+                                          ),
+                                        ),
+                                        preview,
+                                      ],
+                                    )
+                                  : preview,
                             ),
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!_showPublishStep)
+                                FilledButton.icon(
+                                  onPressed: () {
+                                    setState(() => _showPublishStep = true);
+                                  },
+                                  icon: const Icon(Icons.arrow_forward_rounded),
+                                  label: const Text('Save & Next'),
+                                )
+                              else
+                                OutlinedButton.icon(
+                                  onPressed: () {
+                                    setState(() => _showPublishStep = false);
+                                  },
+                                  icon: const Icon(Icons.arrow_back_rounded),
+                                  label: const Text('Back to Editing'),
+                                ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                  ],
-                ],
+                  ),
+                ),
+                SizedBox(
+                  width: 430,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: cs.surface,
+                      border: Border(
+                        left: BorderSide(
+                            color: cs.outline.withValues(alpha: 0.2)),
+                      ),
+                    ),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: ListView(
+                            padding: const EdgeInsets.fromLTRB(
+                                16, headerHeight + 16, 16, 16),
+                            children: [
+                              if (!_showPublishStep) ...[
+                                if (_isCardEditor &&
+                                    !widget.isEdit &&
+                                    _pullSourcePayload != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: OutlinedButton.icon(
+                                      onPressed: _pullFromSourcePayload,
+                                      icon: const Icon(
+                                          Icons.download_for_offline_outlined),
+                                      label: Text(
+                                        widget.kind == _ComposerKind.single
+                                            ? 'Pull From Preset'
+                                            : 'Pull From Active Collection Item',
+                                      ),
+                                    ),
+                                  ),
+                                if (_thumbnailMode == '3d')
+                                  _build3DWindowLayerPanel(context)
+                                else
+                                  _build2DCardEditorPanel(context),
+                                const SizedBox(height: 14),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton(
+                                        onPressed: () =>
+                                            Navigator.pop(context, false),
+                                        child: const Text('Cancel'),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: FilledButton.icon(
+                                        onPressed: () => setState(
+                                            () => _showPublishStep = true),
+                                        icon: const Icon(
+                                            Icons.arrow_forward_rounded),
+                                        label: const Text('Save & Next'),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ] else ...[
+                                TextField(
+                                  controller: _titleController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Title',
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: _descriptionController,
+                                  maxLines: 4,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Description',
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: _tagsController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Tags',
+                                    hintText: '#parallax #fyp',
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: _mentionController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Mention',
+                                    hintText: '@username',
+                                  ),
+                                ),
+                                if (_mentionLoading)
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 8),
+                                    child: LinearProgressIndicator(
+                                        color: Colors.white),
+                                  ),
+                                if (_mentionResults.isNotEmpty)
+                                  Container(
+                                    margin: const EdgeInsets.only(top: 8),
+                                    decoration: BoxDecoration(
+                                      color: cs.surfaceContainerLow,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color:
+                                            cs.outline.withValues(alpha: 0.2),
+                                      ),
+                                    ),
+                                    constraints:
+                                        const BoxConstraints(maxHeight: 220),
+                                    child: ListView.builder(
+                                      shrinkWrap: true,
+                                      itemCount: _mentionResults.length,
+                                      itemBuilder: (context, index) {
+                                        final user = _mentionResults[index];
+                                        return ListTile(
+                                          dense: true,
+                                          title: Text(user.displayName),
+                                          subtitle: Text(user.email),
+                                          onTap: () => _addMention(user),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                if (_selectedMentionIds.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    child: Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      children: _selectedMentionIds.map((id) {
+                                        final profile =
+                                            _selectedMentionProfiles[id];
+                                        final label = profile != null
+                                            ? '@${profile.username ?? profile.displayName}'
+                                            : '@${id.substring(0, math.min(8, id.length))}';
+                                        return InputChip(
+                                          label: Text(label),
+                                          onDeleted: () => _removeMention(id),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                const SizedBox(height: 14),
+                                SegmentedButton<bool>(
+                                  segments: const [
+                                    ButtonSegment<bool>(
+                                      value: true,
+                                      label: Text('Public'),
+                                    ),
+                                    ButtonSegment<bool>(
+                                      value: false,
+                                      label: Text('Private'),
+                                    ),
+                                  ],
+                                  selected: <bool>{_isPublic},
+                                  onSelectionChanged: (values) {
+                                    setState(() => _isPublic = values.first);
+                                  },
+                                ),
+                                const SizedBox(height: 18),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton(
+                                        onPressed: _submitting
+                                            ? null
+                                            : () =>
+                                                Navigator.pop(context, false),
+                                        child: const Text('Cancel'),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: FilledButton(
+                                        onPressed: _submitting ? null : _submit,
+                                        child: Text(
+                                          _submitting
+                                              ? 'Working...'
+                                              : widget.isEdit
+                                                  ? 'Update'
+                                                  : 'Publish',
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          top: 0,
+                          height: headerHeight,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.black.withValues(alpha: 0.82),
+                                    Colors.transparent,
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        buildRightPanelHeader(),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            height: headerHeight,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.82),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
               ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            right: 20,
+            top: 12,
+            child: Row(
+              children: [
+                IconButton.filledTonal(
+                  onPressed: () => Navigator.pop(context, false),
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    composerTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: cs.onSurface,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -15711,6 +16338,7 @@ Future<bool> _showSignInRequiredSheet(
 }) async {
   final bool? result = await showModalBottomSheet<bool>(
     context: context,
+    useRootNavigator: true,
     isDismissible: true,
     enableDrag: true,
     backgroundColor: Colors.transparent,

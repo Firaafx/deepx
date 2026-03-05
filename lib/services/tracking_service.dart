@@ -53,6 +53,8 @@ class TrackingService {
   final ValueNotifier<int> _overlayTick = ValueNotifier<int>(0);
   DateTime _lastFrameAt =
       DateTime.fromMillisecondsSinceEpoch(0, isUtc: true).toLocal();
+  DateTime _lastMediapipeRecoveryAt =
+      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true).toLocal();
   TrackingFrame _lastRawFrame = TrackingFrame.zero;
   bool _hasHeadBaseline = false;
   bool _pendingInitialHeadBaseline = true;
@@ -165,12 +167,21 @@ class TrackingService {
     _staleFrameWatchdog = Timer.periodic(
       const Duration(milliseconds: 450),
       (_) {
-        if (!_trackerEnabled || !_dartCursorEnabled) return;
+        if (!_trackerEnabled || !_routeActive) return;
         final int age = DateTime.now().difference(_lastFrameAt).inMilliseconds;
         if (age <= 1200) return;
-        _releasePointerAtCurrentPosition(cancel: true);
-        _clearHoverState();
-        _bumpOverlayTick();
+        if (_dartCursorEnabled) {
+          _releasePointerAtCurrentPosition(cancel: true);
+          _clearHoverState();
+          _bumpOverlayTick();
+        }
+        if (_runtimeConfig.inputMode == 'mediapipe') {
+          final DateTime now = DateTime.now();
+          if (now.difference(_lastMediapipeRecoveryAt).inMilliseconds >= 1800) {
+            _lastMediapipeRecoveryAt = now;
+            _postConfig(force: true);
+          }
+        }
       },
     );
 
@@ -338,8 +349,7 @@ class TrackingService {
     if (!kIsWeb) return;
     final String ua = html.window.navigator.userAgent.toLowerCase();
     final bool likelyMobile = RegExp(r'android|iphone|ipad|ipod').hasMatch(ua);
-    final bool hasTouchPoints =
-        (html.window.navigator.maxTouchPoints ?? 0) > 0;
+    final bool hasTouchPoints = (html.window.navigator.maxTouchPoints ?? 0) > 0;
     final bool coarsePointer =
         html.window.matchMedia('(pointer: coarse)').matches;
     final bool mobileLike = likelyMobile || coarsePointer;
@@ -1026,8 +1036,7 @@ class TrackingService {
   }
 
   Offset _logicalPointerOffset(int x, int y) {
-    final double dpr =
-        html.window.devicePixelRatio.clamp(0.5, 8.0).toDouble();
+    final double dpr = html.window.devicePixelRatio.clamp(0.5, 8.0).toDouble();
     return Offset(x / dpr, y / dpr);
   }
 
