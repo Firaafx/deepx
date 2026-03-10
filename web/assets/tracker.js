@@ -224,23 +224,11 @@ function _applySliderValue(id, value, digits = 3) {
     if (el.oninput) el.oninput({target: el});
 }
 
-function _dispatchChange(el) {
-    if (!el) return;
-    try {
-        el.dispatchEvent(new Event('change', {bubbles: true}));
-        return;
-    } catch (_) {}
-    if (el.onchange) el.onchange({target: el});
-}
-
 function _applyCheckboxValue(id, value) {
     const el = document.getElementById(id);
     if (!el || typeof value !== 'boolean') return;
-    const changed = el.checked !== value;
     el.checked = value;
-    if (changed) {
-        _dispatchChange(el);
-    }
+    if (el.onchange) el.onchange({target: el});
 }
 
 function _applySelectValue(id, value) {
@@ -249,7 +237,7 @@ function _applySelectValue(id, value) {
     const next = value.toString();
     if (!next || el.value === next) return;
     el.value = next;
-    _dispatchChange(el);
+    if (el.onchange) el.onchange({target: el});
 }
 
 function _readElementNumber(id, fallback) {
@@ -295,13 +283,7 @@ function applyRuntimeSettings(settings) {
     if (typeof settings.showCursor === 'boolean') {
         runtimeShowCursor = settings.showCursor;
         const cursorToggle = document.getElementById('show-cursor');
-        if (cursorToggle) {
-            const changed = cursorToggle.checked !== runtimeShowCursor;
-            cursorToggle.checked = runtimeShowCursor;
-            if (changed) {
-                _dispatchChange(cursorToggle);
-            }
-        }
+        if (cursorToggle) cursorToggle.checked = runtimeShowCursor;
     }
     const perfModeValue = (settings.perfMode || '').toString().toLowerCase();
     if (['low', 'medium', 'high'].includes(perfModeValue)) {
@@ -474,12 +456,11 @@ function applyTrackerConfig(config) {
     if (typeof config.enabled === 'boolean') {
         const toggle = document.getElementById('tracking-toggle');
         const nextEnabled = config.enabled;
-        if (toggle && toggle.checked !== nextEnabled) {
+        if (toggle && trackerRuntimeEnabled !== nextEnabled) {
             toggle.checked = nextEnabled;
-            _dispatchChange(toggle);
+            toggle.dispatchEvent(new Event('change'));
         } else {
             trackerRuntimeEnabled = nextEnabled;
-            isPaused = !nextEnabled;
             if (toggle) toggle.checked = nextEnabled;
         }
     }
@@ -494,17 +475,6 @@ function applyTrackerConfig(config) {
     }
     if (config.settings && typeof config.settings === 'object') {
         applyRuntimeSettings(config.settings);
-    }
-    if (trackerRuntimeEnabled && !isRemote) {
-        const webcam = document.getElementById('webcam-small');
-        const stream = webcam ? webcam.srcObject : null;
-        const hasLiveStream =
-            !!stream &&
-            typeof stream.getTracks === 'function' &&
-            stream.getTracks().some((track) => track && track.readyState === 'live');
-        if (!hasLiveStream && faceMesh && hands) {
-            updatePerformanceSettings();
-        }
     }
     applyRuntimeVisibility();
 }
@@ -1112,19 +1082,6 @@ function setupDraggablePanel() {
 }
 function loadSettings() {
     document.querySelectorAll('input[type=range], input[type=number], input[type=checkbox], select').forEach(el => {
-        if (GLOBAL_TRACKER) {
-            const runtimeLocked = new Set([
-                'tracking-toggle',
-                'show-cursor',
-                'hide-tracker',
-                'input-source',
-                'perf-mode-host',
-                'perf-mode-client',
-            ]);
-            if (runtimeLocked.has(el.id)) {
-                return;
-            }
-        }
         const val = localStorage.getItem(el.id);
         if (val !== null) {
             if (el.type === 'checkbox') {
@@ -1974,9 +1931,7 @@ function setupTrackerEvents() {
     document.getElementById('tracking-toggle').onchange = async (e) => {
         trackerRuntimeEnabled = e.target.checked;
         isPaused = !trackerRuntimeEnabled;
-        if (!GLOBAL_TRACKER) {
-            localStorage.setItem('tracking-toggle', trackerRuntimeEnabled);
-        }
+        localStorage.setItem('tracking-toggle', trackerRuntimeEnabled);
         if (trackerRuntimeEnabled) {
             await updatePerformanceSettings();
         } else if (cameraSvc) {
@@ -1997,9 +1952,7 @@ function setupTrackerEvents() {
     };
     document.getElementById('show-cursor').onchange = (e) => {
         runtimeShowCursor = e.target.checked;
-        if (!GLOBAL_TRACKER) {
-            localStorage.setItem('show-cursor', runtimeShowCursor);
-        }
+        localStorage.setItem('show-cursor', runtimeShowCursor);
         applyRuntimeVisibility();
     };
     document.addEventListener('dblclick', () => {

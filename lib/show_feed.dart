@@ -129,12 +129,18 @@ class _TopEdgeLoadingPane extends StatefulWidget {
   State<_TopEdgeLoadingPane> createState() => _TopEdgeLoadingPaneState();
 }
 
-class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane> {
+class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane>
+    with SingleTickerProviderStateMixin {
   OverlayEntry? _loadingOverlayEntry;
+  late final AnimationController _glowController;
 
   @override
   void initState() {
     super.initState();
+    _glowController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureOverlay());
   }
 
@@ -148,45 +154,61 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane> {
   void dispose() {
     _loadingOverlayEntry?.remove();
     _loadingOverlayEntry = null;
+    _glowController.dispose();
     super.dispose();
   }
 
   void _ensureOverlay() {
     if (!mounted || _loadingOverlayEntry != null) return;
+    if (!_glowController.isAnimating) {
+      _glowController.repeat();
+    }
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
     if (overlay == null) return;
     _loadingOverlayEntry = OverlayEntry(
       builder: (context) {
-        final BorderRadius radius = BorderRadius.circular(
-          math.max(widget.minHeight * 2.2, 4),
-        );
+        final double glowHeight = widget.minHeight + 10;
         return IgnorePointer(
           child: Align(
             alignment: Alignment.topCenter,
             child: SizedBox(
               width: double.infinity,
+              height: glowHeight,
               child: Material(
                 color: Colors.transparent,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: radius,
-                    color: Colors.white.withValues(alpha: 0.0),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.white.withValues(alpha: 0.55),
-                        blurRadius: 12,
-                        spreadRadius: 1,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned.fill(
+                      child: AnimatedBuilder(
+                        animation: _glowController,
+                        builder: (context, _) {
+                          return CustomPaint(
+                            painter: _LinearGlowPainter(
+                              animationValue: _glowController.value,
+                              textDirection: Directionality.of(context),
+                              barHeight: widget.minHeight,
+                              glowColor:
+                                  Colors.white.withValues(alpha: 0.5),
+                              innerGlowColor:
+                                  Colors.white.withValues(alpha: 0.85),
+                            ),
+                          );
+                        },
                       ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: radius,
-                    child: LinearProgressIndicator(
-                      minHeight: widget.minHeight,
-                      backgroundColor: Colors.transparent,
-                      color: Colors.white,
                     ),
-                  ),
+                    Align(
+                      alignment: Alignment.topCenter,
+                      child: SizedBox(
+                        height: widget.minHeight,
+                        child: LinearProgressIndicator(
+                          minHeight: widget.minHeight,
+                          backgroundColor: Colors.transparent,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -212,6 +234,94 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane> {
             )
           : const SizedBox.shrink(),
     );
+  }
+}
+
+class _LinearGlowPainter extends CustomPainter {
+  const _LinearGlowPainter({
+    required this.animationValue,
+    required this.textDirection,
+    required this.barHeight,
+    required this.glowColor,
+    required this.innerGlowColor,
+    this.outerBlurSigma = 8,
+    this.innerBlurSigma = 4,
+  });
+
+  final double animationValue;
+  final TextDirection textDirection;
+  final double barHeight;
+  final Color glowColor;
+  final Color innerGlowColor;
+  final double outerBlurSigma;
+  final double innerBlurSigma;
+
+  static const int _kIndeterminateLinearDuration = 1800;
+  static const Curve _line1Head = Interval(
+    0.0,
+    750.0 / _kIndeterminateLinearDuration,
+    curve: Cubic(0.2, 0.0, 0.8, 1.0),
+  );
+  static const Curve _line1Tail = Interval(
+    333.0 / _kIndeterminateLinearDuration,
+    (333.0 + 750.0) / _kIndeterminateLinearDuration,
+    curve: Cubic(0.4, 0.0, 1.0, 1.0),
+  );
+  static const Curve _line2Head = Interval(
+    1000.0 / _kIndeterminateLinearDuration,
+    (1000.0 + 567.0) / _kIndeterminateLinearDuration,
+    curve: Cubic(0.0, 0.0, 0.65, 1.0),
+  );
+  static const Curve _line2Tail = Interval(
+    1267.0 / _kIndeterminateLinearDuration,
+    (1267.0 + 533.0) / _kIndeterminateLinearDuration,
+    curve: Cubic(0.10, 0.0, 0.45, 1.0),
+  );
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bool isLtr = textDirection == TextDirection.ltr;
+    void drawGlow(double startFraction, double endFraction) {
+      if (endFraction - startFraction <= 0) return;
+      final double left =
+          (isLtr ? startFraction : 1 - endFraction) * size.width;
+      final double right =
+          (isLtr ? endFraction : 1 - startFraction) * size.width;
+      final Rect rect = Rect.fromLTRB(left, 0, right, barHeight);
+      final RRect rrect =
+          RRect.fromRectAndRadius(rect, Radius.circular(barHeight / 2));
+      final Paint outerPaint = Paint()
+        ..color = glowColor
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, outerBlurSigma);
+      final Paint innerPaint = Paint()
+        ..color = innerGlowColor
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, innerBlurSigma);
+      canvas.drawRRect(rrect, outerPaint);
+      canvas.drawRRect(rrect, innerPaint);
+    }
+
+    final double firstLineHead = _line1Head.transform(animationValue);
+    final double firstLineTail = _line1Tail.transform(animationValue);
+    final double secondLineHead = _line2Head.transform(animationValue);
+    final double secondLineTail = _line2Tail.transform(animationValue);
+
+    if (firstLineHead - firstLineTail > 0) {
+      drawGlow(firstLineTail, firstLineHead);
+    }
+    if (secondLineHead - secondLineTail > 0) {
+      drawGlow(secondLineTail, secondLineHead);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LinearGlowPainter oldDelegate) {
+    return oldDelegate.animationValue != animationValue ||
+        oldDelegate.textDirection != textDirection ||
+        oldDelegate.barHeight != barHeight ||
+        oldDelegate.glowColor != glowColor ||
+        oldDelegate.innerGlowColor != innerGlowColor ||
+        oldDelegate.outerBlurSigma != outerBlurSigma ||
+        oldDelegate.innerBlurSigma != innerBlurSigma;
   }
 }
 
@@ -4788,41 +4898,37 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         onDoubleTap: _openFullscreenViewer,
         child: Hero(
           tag: heroTag,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: Stack(
-              clipBehavior: Clip.none,
-              fit: StackFit.expand,
-              children: [
-                Positioned.fill(
-                  child: _OverlayParallaxPreview(
-                    mode: previewMode,
-                    payload: previewPayload,
-                    borderRadius: BorderRadius.zero,
-                    enableOutsideOverlay: true,
-                    outsideOverflowMax: 100,
-                    pointerPassthrough: true,
-                  ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
+                child: _GridPresetPreview(
+                  mode: previewMode,
+                  payload: previewPayload,
+                  borderRadius: BorderRadius.circular(16),
+                  pointerPassthrough: true,
+                  outsideOverflowMax: 100,
                 ),
-                Positioned(
-                  top: 8,
-                  left: 8,
-                  child: IconButton.filledTonal(
-                    onPressed: () => Navigator.pop(context),
-                    icon:
-                        const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-                  ),
+              ),
+              Positioned(
+                top: 8,
+                left: 8,
+                child: IconButton.filledTonal(
+                  onPressed: () => Navigator.pop(context),
+                  icon:
+                      const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
                 ),
-                Positioned(
-                  right: 8,
-                  bottom: 8,
-                  child: IconButton.filledTonal(
-                    onPressed: _openFullscreenViewer,
-                    icon: const Icon(Icons.fullscreen, size: 20),
-                  ),
+              ),
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: IconButton.filledTonal(
+                  onPressed: _openFullscreenViewer,
+                  icon: const Icon(Icons.fullscreen, size: 20),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       );
@@ -8974,10 +9080,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     );
   }
 
-  Widget _buildCard(
-    CollectionItemSnapshot item, {
-    bool enableOutsideOverlay = false,
-  }) {
+  Widget _buildCard(CollectionItemSnapshot item) {
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -8985,12 +9088,11 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           child: ColoredBox(color: Colors.transparent),
         ),
         IgnorePointer(
-          child: _OverlayParallaxPreview(
+          child: _GridPresetPreview(
             mode: item.mode,
             payload: item.snapshot,
             borderRadius: BorderRadius.zero,
             pointerPassthrough: true,
-            enableOutsideOverlay: enableOutsideOverlay,
             outsideOverflowMax: 100,
           ),
         ),
@@ -9463,10 +9565,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   }
                   final item = detail.items[props.index];
                   final bool active = props.index == _index;
-                  final Widget card = _buildCard(
-                    item,
-                    enableOutsideOverlay: active,
-                  );
+                  final Widget card = _buildCard(item);
                   if (!active) return card;
                   return Hero(
                     tag: _collectionHeroTag(props.index),
