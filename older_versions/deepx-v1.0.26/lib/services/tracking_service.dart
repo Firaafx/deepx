@@ -24,7 +24,6 @@ class TrackingService {
 
   bool get initialized => _initialized;
   bool _initialized = false;
-  bool _routeActive = true;
 
   bool get trackerEnabled => _trackerEnabled;
   bool _trackerEnabled = true;
@@ -33,18 +32,12 @@ class TrackingService {
   bool _trackerUiVisible = false;
 
   bool get dartCursorEnabled => _dartCursorEnabled;
-  bool _dartCursorEnabled = false;
-  bool _dartCursorSuppressedByMouse = false;
-  Timer? _mouseIdleTimer;
-  DateTime? _lastMouseMoveAt;
+  bool _dartCursorEnabled = true;
 
   TrackerRuntimeConfig get runtimeConfig => _runtimeConfig;
   TrackerRuntimeConfig _runtimeConfig = TrackerRuntimeConfig.defaults;
 
   StreamSubscription? _messageSub;
-  StreamSubscription<html.MouseEvent>? _mouseMoveSub;
-  StreamSubscription<html.DeviceMotionEvent>? _deviceMotionSub;
-  StreamSubscription<html.DeviceOrientationEvent>? _deviceOrientationSub;
   Timer? _configRetryTimer;
   late String _viewId;
   late String _iframeElementId;
@@ -62,18 +55,6 @@ class TrackingService {
   double _baselineHeadZ = 0.2;
   double _baselineYaw = 0;
   double _baselinePitch = 0;
-  TrackingFrame _latestTrackerFrame = TrackingFrame.zero;
-  double _mouseHeadX = 0;
-  double _mouseHeadY = 0;
-  double _mouseCursorX = 0;
-  double _mouseCursorY = 0;
-  double _accelerometerX = 0;
-  double _accelerometerY = 0;
-  double _gyroYaw = 0;
-  double _gyroPitch = 0;
-  bool _mouseHoverSupported = true;
-  bool _accelerometerSupported = false;
-  bool _gyroSupported = false;
 
   bool _pointerDown = false;
   DateTime? _pointerDownAt;
@@ -83,11 +64,6 @@ class TrackingService {
 
   int get frameAgeMs => DateTime.now().difference(_lastFrameAt).inMilliseconds;
   bool get hasFreshFrame => frameAgeMs <= 450;
-  bool get supportsMouseHover => _mouseHoverSupported;
-  bool get supportsAccelerometer => _accelerometerSupported;
-  bool get supportsGyro => _gyroSupported;
-  bool get _effectiveDartCursorEnabled =>
-      _dartCursorEnabled && !_dartCursorSuppressedByMouse;
 
   void remapHeadBaselineToCurrentFrame() {
     _setHeadBaseline(_lastRawFrame);
@@ -153,11 +129,9 @@ class TrackingService {
       }
       _lastFrameAt = DateTime.now();
       final mappedFrame = _applyHeadBaseline(frame);
-      _latestTrackerFrame = mappedFrame;
-      _emitInputModeFrame();
+      frameNotifier.value = mappedFrame;
+      _bridgePointerInteractions(mappedFrame);
     });
-
-    _initializeInputModeSources();
 
     await refreshPreferences();
     _postConfig(force: true);
@@ -167,14 +141,6 @@ class TrackingService {
     _postConfig(force: true);
     _configRetryTimer?.cancel();
     _configRetryTimer = null;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
-    _mouseMoveSub?.cancel();
-    _mouseMoveSub = null;
-    _deviceMotionSub?.cancel();
-    _deviceMotionSub = null;
-    _deviceOrientationSub?.cancel();
-    _deviceOrientationSub = null;
     _releasePointerAtCurrentPosition();
     _clearHoverState();
     await _messageSub?.cancel();
@@ -190,14 +156,10 @@ class TrackingService {
     _runtimeConfig =
         await AppRepository.instance.fetchTrackerRuntimeConfigForCurrentUser();
     _dartCursorEnabled = _runtimeConfig.dartCursorEnabled;
-    _dartCursorSuppressedByMouse = false;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
     _trackerEnabled = prefs['trackerEnabled'] ?? true;
     _trackerUiVisible = prefs['trackerUiVisible'] ?? false;
     _syncHostVisibilityStyle();
     _postConfig(force: true);
-    _emitInputModeFrame();
     _bumpOverlayTick();
   }
 
@@ -212,13 +174,8 @@ class TrackingService {
     _syncHostVisibilityStyle();
     _postConfig(force: true);
     if (!enabled) {
-      _dartCursorSuppressedByMouse = false;
-      _mouseIdleTimer?.cancel();
-      _mouseIdleTimer = null;
       _releasePointerAtCurrentPosition();
       _clearHoverState();
-    } else {
-      _emitInputModeFrame();
     }
     _bumpOverlayTick();
   }
@@ -232,27 +189,8 @@ class TrackingService {
     _bumpOverlayTick();
   }
 
-  void setRouteActive(bool active) {
-    if (_routeActive == active) return;
-    _routeActive = active;
-    _dartCursorSuppressedByMouse = false;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
-    _postConfig(force: true);
-    if (!active) {
-      _releasePointerAtCurrentPosition(cancel: true);
-      _clearHoverState();
-    } else {
-      _emitInputModeFrame();
-    }
-    _bumpOverlayTick();
-  }
-
   void setDartCursorEnabled(bool enabled) {
     _dartCursorEnabled = enabled;
-    _dartCursorSuppressedByMouse = false;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
     _runtimeConfig = _runtimeConfig.copyWith(dartCursorEnabled: enabled);
     _postConfig(force: true);
     if (!enabled) {
@@ -263,19 +201,12 @@ class TrackingService {
   }
 
   void setRuntimeConfig(TrackerRuntimeConfig config) {
-    final String previousInputMode = _runtimeConfig.inputMode;
     _runtimeConfig = config;
     _dartCursorEnabled = config.dartCursorEnabled;
-    _dartCursorSuppressedByMouse = false;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
     _postConfig(force: true);
     if (!_dartCursorEnabled) {
       _releasePointerAtCurrentPosition();
       _clearHoverState();
-    }
-    if (previousInputMode != config.inputMode) {
-      _emitInputModeFrame();
     }
     _bumpOverlayTick();
   }
@@ -284,18 +215,13 @@ class TrackingService {
     if (!kIsWeb || !_initialized) return;
     final element = _trackerIframe;
     if (element == null) return;
-    final bool mediapipeActive = _routeActive &&
-        _trackerEnabled &&
-        _runtimeConfig.inputMode == 'mediapipe';
-    final bool showTrackerUi = mediapipeActive && _trackerUiVisible;
     final payload = <String, dynamic>{
       'type': 'tracker_config',
       'channel': _bridgeChannel,
-      'enabled': mediapipeActive,
-      'uiVisible': showTrackerUi,
-      'showCursor':
-          mediapipeActive && !_dartCursorEnabled && _runtimeConfig.showCursor,
-      'headless': !showTrackerUi,
+      'enabled': _trackerEnabled,
+      'uiVisible': _trackerUiVisible,
+      'showCursor': !_dartCursorEnabled && _runtimeConfig.showCursor,
+      'headless': !_trackerUiVisible,
       'settings': _runtimeConfig.toMap(),
     };
     try {
@@ -334,187 +260,8 @@ class TrackingService {
     );
   }
 
-  void _handleRealMouseMove() {
-    _lastMouseMoveAt = DateTime.now();
-    if (!_dartCursorEnabled) return;
-    if (!_dartCursorSuppressedByMouse) {
-      _dartCursorSuppressedByMouse = true;
-      _releasePointerAtCurrentPosition(cancel: true);
-      _clearHoverState();
-      _bumpOverlayTick();
-    }
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = Timer(const Duration(milliseconds: 1000), () {
-      final lastMove = _lastMouseMoveAt;
-      if (lastMove == null) return;
-      if (DateTime.now().difference(lastMove).inMilliseconds < 1000) return;
-      if (!_dartCursorEnabled) return;
-      if (_dartCursorSuppressedByMouse) {
-        _dartCursorSuppressedByMouse = false;
-        _bumpOverlayTick();
-      }
-    });
-  }
-
-  void _initializeInputModeSources() {
-    if (!kIsWeb) return;
-    final String ua = html.window.navigator.userAgent.toLowerCase();
-    final bool likelyMobile = RegExp(r'android|iphone|ipad|ipod').hasMatch(ua);
-    final bool hasTouchPoints = (html.window.navigator.maxTouchPoints ?? 0) > 0;
-    final bool coarsePointer =
-        html.window.matchMedia('(pointer: coarse)').matches;
-    final bool mobileLike = likelyMobile || coarsePointer;
-    _mouseHoverSupported = true;
-    _accelerometerSupported = mobileLike && hasTouchPoints;
-    _gyroSupported = mobileLike && hasTouchPoints;
-    final int width = (html.window.innerWidth ?? 1).clamp(1, 1000000);
-    final int height = (html.window.innerHeight ?? 1).clamp(1, 1000000);
-    _mouseCursorX = width / 2;
-    _mouseCursorY = height / 2;
-    _mouseHeadX = 0;
-    _mouseHeadY = 0;
-
-    _mouseMoveSub ??= html.window.onMouseMove.listen((event) {
-      _handleRealMouseMove();
-      final int width = (html.window.innerWidth ?? 1).clamp(1, 1000000);
-      final int height = (html.window.innerHeight ?? 1).clamp(1, 1000000);
-      _mouseCursorX = event.client.x.clamp(0, width - 1).toDouble();
-      _mouseCursorY = event.client.y.clamp(0, height - 1).toDouble();
-      final double normX = -(((_mouseCursorX / width) - 0.5) * 2);
-      final double normY = ((_mouseCursorY / height) - 0.5) * 2;
-      _mouseHeadX = normX.clamp(-1.0, 1.0);
-      _mouseHeadY = normY.clamp(-1.0, 1.0);
-      if (_runtimeConfig.inputMode == 'mouse_hover') {
-        _emitInputModeFrame();
-      }
-    });
-
-    _deviceMotionSub ??= html.window.onDeviceMotion.listen((event) {
-      final acc = event.accelerationIncludingGravity;
-      if (acc == null) return;
-      final double? x = acc.x?.toDouble();
-      final double? y = acc.y?.toDouble();
-      if (x != null && x.isFinite) {
-        _accelerometerX = (x / 9.81).clamp(-1.2, 1.2).toDouble();
-      }
-      if (y != null && y.isFinite) {
-        _accelerometerY = (y / 9.81).clamp(-1.2, 1.2).toDouble();
-      }
-      _accelerometerSupported = true;
-      if (_runtimeConfig.inputMode == 'accelerometer') {
-        _emitInputModeFrame();
-      }
-    });
-
-    _deviceOrientationSub ??= html.window.onDeviceOrientation.listen((event) {
-      final double beta = (event.beta ?? 0).toDouble();
-      final double gamma = (event.gamma ?? 0).toDouble();
-      if (beta.isFinite) {
-        _gyroPitch = (beta / 45).clamp(-1.5, 1.5).toDouble();
-      }
-      if (gamma.isFinite) {
-        _gyroYaw = (gamma / 45).clamp(-1.5, 1.5).toDouble();
-      }
-      _gyroSupported = true;
-      if (_runtimeConfig.inputMode == 'gyro') {
-        _emitInputModeFrame();
-      }
-    });
-  }
-
-  void _emitInputModeFrame() {
-    if (!_trackerEnabled || !_routeActive) return;
-    final String mode = _runtimeConfig.inputMode;
-    TrackingFrame frame = _latestTrackerFrame;
-    bool usingSyntheticInput = false;
-    if (mode == 'mouse_hover') {
-      usingSyntheticInput = true;
-      frame = TrackingFrame(
-        headX: _mouseHeadX,
-        headY: _mouseHeadY,
-        headZ: 0.2,
-        yaw: _mouseHeadX * 18,
-        pitch: _mouseHeadY * 12,
-        cursorX: _mouseCursorX,
-        cursorY: _mouseCursorY,
-        wink: false,
-        pinch: false,
-        hasHand: false,
-      );
-    } else if (mode == 'accelerometer' && _accelerometerSupported) {
-      usingSyntheticInput = true;
-      frame = TrackingFrame(
-        headX: _accelerometerX,
-        headY: _accelerometerY,
-        headZ: 0.2,
-        yaw: _accelerometerX * 22,
-        pitch: _accelerometerY * 18,
-        cursorX: _latestTrackerFrame.cursorX,
-        cursorY: _latestTrackerFrame.cursorY,
-        wink: _latestTrackerFrame.wink,
-        pinch: _latestTrackerFrame.pinch,
-        hasHand: _latestTrackerFrame.hasHand,
-      );
-    } else if (mode == 'gyro' && _gyroSupported) {
-      usingSyntheticInput = true;
-      frame = TrackingFrame(
-        headX: _gyroYaw,
-        headY: _gyroPitch,
-        headZ: 0.2,
-        yaw: _gyroYaw * 28,
-        pitch: _gyroPitch * 22,
-        cursorX: _latestTrackerFrame.cursorX,
-        cursorY: _latestTrackerFrame.cursorY,
-        wink: _latestTrackerFrame.wink,
-        pinch: _latestTrackerFrame.pinch,
-        hasHand: _latestTrackerFrame.hasHand,
-      );
-    } else if (mode != 'mediapipe' &&
-        ((mode == 'accelerometer' && !_accelerometerSupported) ||
-            (mode == 'gyro' && !_gyroSupported))) {
-      // Fallback to mediapipe when a selected sensor is unavailable.
-      _runtimeConfig = _runtimeConfig.copyWith(inputMode: 'mediapipe');
-      _postConfig(force: true);
-      frame = _latestTrackerFrame;
-    }
-    if (usingSyntheticInput) {
-      // Keep cursor/gesture bridge alive when MediaPipe is disabled.
-      _lastFrameAt = DateTime.now();
-    }
-    final TrackingFrame sanitized = _sanitizeFrame(frame);
-    frameNotifier.value = sanitized;
-    _bridgePointerInteractions(sanitized);
-    _bumpOverlayTick();
-  }
-
-  TrackingFrame _sanitizeFrame(TrackingFrame frame) {
-    final int viewportW = (html.window.innerWidth ?? 1).clamp(1, 1000000);
-    final int viewportH = (html.window.innerHeight ?? 1).clamp(1, 1000000);
-    double safe(double value, double fallback) {
-      if (value.isNaN || value.isInfinite) return fallback;
-      return value;
-    }
-
-    return TrackingFrame(
-      headX: safe(frame.headX, 0).clamp(-2.0, 2.0).toDouble(),
-      headY: safe(frame.headY, 0).clamp(-2.0, 2.0).toDouble(),
-      headZ: safe(frame.headZ, 0.2).clamp(0.01, 3.0).toDouble(),
-      yaw: safe(frame.yaw, 0).clamp(-180.0, 180.0).toDouble(),
-      pitch: safe(frame.pitch, 0).clamp(-180.0, 180.0).toDouble(),
-      cursorX: safe(frame.cursorX, viewportW / 2)
-          .clamp(0.0, viewportW.toDouble())
-          .toDouble(),
-      cursorY: safe(frame.cursorY, viewportH / 2)
-          .clamp(0.0, viewportH.toDouble())
-          .toDouble(),
-      wink: frame.wink,
-      pinch: frame.pinch,
-      hasHand: frame.hasHand,
-    );
-  }
-
   void _bridgePointerInteractions(TrackingFrame frame) {
-    if (!_routeActive || !_trackerEnabled || !_effectiveDartCursorEnabled) {
+    if (!_trackerEnabled || !_dartCursorEnabled) {
       _releasePointerAtCurrentPosition(cancel: true);
       _clearHoverState();
       return;
@@ -638,18 +385,13 @@ class TrackingService {
     return ValueListenableBuilder<int>(
       valueListenable: _overlayTick,
       builder: (context, _, __) {
-        final bool attachTrackerHost = _trackerEnabled &&
-            _routeActive &&
-            _runtimeConfig.inputMode == 'mediapipe';
+        final bool attachTrackerHost = _trackerEnabled;
         final cursor = ValueListenableBuilder<TrackingFrame>(
           valueListenable: frameNotifier,
           builder: (context, frame, _) {
             final bool stale =
                 DateTime.now().difference(_lastFrameAt).inMilliseconds > 1200;
-            if (!_routeActive ||
-                !_trackerEnabled ||
-                !_effectiveDartCursorEnabled ||
-                stale) {
+            if (!_trackerEnabled || !_dartCursorEnabled || stale) {
               if (stale) {
                 _releasePointerAtCurrentPosition(cancel: true);
                 _clearHoverState();
@@ -844,19 +586,10 @@ class TrackingService {
   void _syncHostVisibilityStyle() {
     final element = _trackerIframe;
     if (element == null) return;
-    final bool visibleUi = _trackerEnabled &&
-        _routeActive &&
-        _runtimeConfig.inputMode == 'mediapipe' &&
-        _trackerUiVisible;
+    final bool visibleUi = _trackerEnabled && _trackerUiVisible;
     element.style.setProperty('pointer-events', 'none');
-    element.style.setProperty(
-      'visibility',
-      (_trackerEnabled &&
-              _routeActive &&
-              _runtimeConfig.inputMode == 'mediapipe')
-          ? 'visible'
-          : 'hidden',
-    );
+    element.style
+        .setProperty('visibility', _trackerEnabled ? 'visible' : 'hidden');
     element.style.setProperty('opacity', visibleUi ? '1' : '0');
     element.style.setProperty('background', 'transparent');
     element.style.setProperty('transform', 'none');

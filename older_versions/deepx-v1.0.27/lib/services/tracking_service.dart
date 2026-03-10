@@ -6,6 +6,7 @@ import 'dart:html' as html;
 import 'dart:js_interop';
 import 'dart:ui_web' as ui_web;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
@@ -34,9 +35,6 @@ class TrackingService {
 
   bool get dartCursorEnabled => _dartCursorEnabled;
   bool _dartCursorEnabled = false;
-  bool _dartCursorSuppressedByMouse = false;
-  Timer? _mouseIdleTimer;
-  DateTime? _lastMouseMoveAt;
 
   TrackerRuntimeConfig get runtimeConfig => _runtimeConfig;
   TrackerRuntimeConfig _runtimeConfig = TrackerRuntimeConfig.defaults;
@@ -46,6 +44,7 @@ class TrackingService {
   StreamSubscription<html.DeviceMotionEvent>? _deviceMotionSub;
   StreamSubscription<html.DeviceOrientationEvent>? _deviceOrientationSub;
   Timer? _configRetryTimer;
+  Timer? _staleFrameWatchdog;
   late String _viewId;
   late String _iframeElementId;
   late String _bridgeChannel;
@@ -78,16 +77,19 @@ class TrackingService {
   bool _pointerDown = false;
   DateTime? _pointerDownAt;
   html.Element? _pointerTarget;
+  html.Element? _hoverTarget;
   int? _lastDispatchX;
   int? _lastDispatchY;
+  bool _flutterPointerAdded = false;
+  Offset? _lastFlutterPointerPosition;
+
+  static const int _flutterSyntheticPointerDevice = 0xD33E;
 
   int get frameAgeMs => DateTime.now().difference(_lastFrameAt).inMilliseconds;
   bool get hasFreshFrame => frameAgeMs <= 450;
   bool get supportsMouseHover => _mouseHoverSupported;
   bool get supportsAccelerometer => _accelerometerSupported;
   bool get supportsGyro => _gyroSupported;
-  bool get _effectiveDartCursorEnabled =>
-      _dartCursorEnabled && !_dartCursorSuppressedByMouse;
 
   void remapHeadBaselineToCurrentFrame() {
     _setHeadBaseline(_lastRawFrame);
@@ -159,6 +161,19 @@ class TrackingService {
 
     _initializeInputModeSources();
 
+    _staleFrameWatchdog?.cancel();
+    _staleFrameWatchdog = Timer.periodic(
+      const Duration(milliseconds: 450),
+      (_) {
+        if (!_trackerEnabled || !_dartCursorEnabled) return;
+        final int age = DateTime.now().difference(_lastFrameAt).inMilliseconds;
+        if (age <= 1200) return;
+        _releasePointerAtCurrentPosition(cancel: true);
+        _clearHoverState();
+        _bumpOverlayTick();
+      },
+    );
+
     await refreshPreferences();
     _postConfig(force: true);
   }
@@ -167,8 +182,8 @@ class TrackingService {
     _postConfig(force: true);
     _configRetryTimer?.cancel();
     _configRetryTimer = null;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
+    _staleFrameWatchdog?.cancel();
+    _staleFrameWatchdog = null;
     _mouseMoveSub?.cancel();
     _mouseMoveSub = null;
     _deviceMotionSub?.cancel();
@@ -190,9 +205,6 @@ class TrackingService {
     _runtimeConfig =
         await AppRepository.instance.fetchTrackerRuntimeConfigForCurrentUser();
     _dartCursorEnabled = _runtimeConfig.dartCursorEnabled;
-    _dartCursorSuppressedByMouse = false;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
     _trackerEnabled = prefs['trackerEnabled'] ?? true;
     _trackerUiVisible = prefs['trackerUiVisible'] ?? false;
     _syncHostVisibilityStyle();
@@ -212,9 +224,6 @@ class TrackingService {
     _syncHostVisibilityStyle();
     _postConfig(force: true);
     if (!enabled) {
-      _dartCursorSuppressedByMouse = false;
-      _mouseIdleTimer?.cancel();
-      _mouseIdleTimer = null;
       _releasePointerAtCurrentPosition();
       _clearHoverState();
     } else {
@@ -235,9 +244,6 @@ class TrackingService {
   void setRouteActive(bool active) {
     if (_routeActive == active) return;
     _routeActive = active;
-    _dartCursorSuppressedByMouse = false;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
     _postConfig(force: true);
     if (!active) {
       _releasePointerAtCurrentPosition(cancel: true);
@@ -250,9 +256,6 @@ class TrackingService {
 
   void setDartCursorEnabled(bool enabled) {
     _dartCursorEnabled = enabled;
-    _dartCursorSuppressedByMouse = false;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
     _runtimeConfig = _runtimeConfig.copyWith(dartCursorEnabled: enabled);
     _postConfig(force: true);
     if (!enabled) {
@@ -266,9 +269,6 @@ class TrackingService {
     final String previousInputMode = _runtimeConfig.inputMode;
     _runtimeConfig = config;
     _dartCursorEnabled = config.dartCursorEnabled;
-    _dartCursorSuppressedByMouse = false;
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = null;
     _postConfig(force: true);
     if (!_dartCursorEnabled) {
       _releasePointerAtCurrentPosition();
@@ -334,33 +334,12 @@ class TrackingService {
     );
   }
 
-  void _handleRealMouseMove() {
-    _lastMouseMoveAt = DateTime.now();
-    if (!_dartCursorEnabled) return;
-    if (!_dartCursorSuppressedByMouse) {
-      _dartCursorSuppressedByMouse = true;
-      _releasePointerAtCurrentPosition(cancel: true);
-      _clearHoverState();
-      _bumpOverlayTick();
-    }
-    _mouseIdleTimer?.cancel();
-    _mouseIdleTimer = Timer(const Duration(milliseconds: 1000), () {
-      final lastMove = _lastMouseMoveAt;
-      if (lastMove == null) return;
-      if (DateTime.now().difference(lastMove).inMilliseconds < 1000) return;
-      if (!_dartCursorEnabled) return;
-      if (_dartCursorSuppressedByMouse) {
-        _dartCursorSuppressedByMouse = false;
-        _bumpOverlayTick();
-      }
-    });
-  }
-
   void _initializeInputModeSources() {
     if (!kIsWeb) return;
     final String ua = html.window.navigator.userAgent.toLowerCase();
     final bool likelyMobile = RegExp(r'android|iphone|ipad|ipod').hasMatch(ua);
-    final bool hasTouchPoints = (html.window.navigator.maxTouchPoints ?? 0) > 0;
+    final bool hasTouchPoints =
+        (html.window.navigator.maxTouchPoints ?? 0) > 0;
     final bool coarsePointer =
         html.window.matchMedia('(pointer: coarse)').matches;
     final bool mobileLike = likelyMobile || coarsePointer;
@@ -375,12 +354,11 @@ class TrackingService {
     _mouseHeadY = 0;
 
     _mouseMoveSub ??= html.window.onMouseMove.listen((event) {
-      _handleRealMouseMove();
       final int width = (html.window.innerWidth ?? 1).clamp(1, 1000000);
       final int height = (html.window.innerHeight ?? 1).clamp(1, 1000000);
       _mouseCursorX = event.client.x.clamp(0, width - 1).toDouble();
       _mouseCursorY = event.client.y.clamp(0, height - 1).toDouble();
-      final double normX = -(((_mouseCursorX / width) - 0.5) * 2);
+      final double normX = ((_mouseCursorX / width) - 0.5) * 2;
       final double normY = ((_mouseCursorY / height) - 0.5) * 2;
       _mouseHeadX = normX.clamp(-1.0, 1.0);
       _mouseHeadY = normY.clamp(-1.0, 1.0);
@@ -514,14 +492,21 @@ class TrackingService {
   }
 
   void _bridgePointerInteractions(TrackingFrame frame) {
-    if (!_routeActive || !_trackerEnabled || !_effectiveDartCursorEnabled) {
+    if (!_routeActive || !_trackerEnabled || !_dartCursorEnabled) {
+      _releasePointerAtCurrentPosition(cancel: true);
+      _clearHoverState();
+      return;
+    }
+    if (!hasFreshFrame) {
       _releasePointerAtCurrentPosition(cancel: true);
       _clearHoverState();
       return;
     }
 
-    final x = frame.cursorX.round();
-    final y = frame.cursorY.round();
+    final int viewportW = (html.window.innerWidth ?? 1).clamp(1, 1000000);
+    final int viewportH = (html.window.innerHeight ?? 1).clamp(1, 1000000);
+    final x = frame.cursorX.round().clamp(0, viewportW - 1);
+    final y = frame.cursorY.round().clamp(0, viewportH - 1);
     final dispatchSurface = _resolveDispatchSurface();
     final html.Element? targetAtCursor = html.document.elementFromPoint(x, y);
     if (targetAtCursor == null) {
@@ -535,6 +520,69 @@ class TrackingService {
       return;
     }
     final html.Element dispatchTarget = targetAtCursor;
+    final bool useFlutterPointerDispatch =
+        _isFlutterDispatchTarget(dispatchTarget, dispatchSurface);
+
+    if (!identical(_hoverTarget, dispatchTarget)) {
+      final html.Element? previous = _hoverTarget;
+      if (!useFlutterPointerDispatch && previous != null) {
+        _dispatchPointer(
+          target: previous,
+          type: 'pointerout',
+          x: x,
+          y: y,
+          buttons: _pointerDown ? 1 : 0,
+        );
+        _dispatchPointer(
+          target: previous,
+          type: 'pointerleave',
+          x: x,
+          y: y,
+          buttons: _pointerDown ? 1 : 0,
+        );
+        _dispatchMouseEvent(
+          target: previous,
+          type: 'mouseout',
+          x: x,
+          y: y,
+        );
+        _dispatchMouseEvent(
+          target: previous,
+          type: 'mouseleave',
+          x: x,
+          y: y,
+        );
+      }
+      if (!useFlutterPointerDispatch) {
+        _dispatchPointer(
+          target: dispatchTarget,
+          type: 'pointerover',
+          x: x,
+          y: y,
+          buttons: _pointerDown ? 1 : 0,
+        );
+        _dispatchPointer(
+          target: dispatchTarget,
+          type: 'pointerenter',
+          x: x,
+          y: y,
+          buttons: _pointerDown ? 1 : 0,
+        );
+        _dispatchMouseEvent(
+          target: dispatchTarget,
+          type: 'mouseover',
+          x: x,
+          y: y,
+        );
+        _dispatchMouseEvent(
+          target: dispatchTarget,
+          type: 'mouseenter',
+          x: x,
+          y: y,
+        );
+      }
+      _hoverTarget = dispatchTarget;
+    }
 
     void dispatchPointerToTargets({
       required String type,
@@ -550,16 +598,36 @@ class TrackingService {
         y: y,
         buttons: buttons,
       );
+      _dispatchMouseEvent(
+        target: target,
+        type: type == 'pointerdown'
+            ? 'mousedown'
+            : type == 'pointerup' || type == 'pointercancel'
+                ? 'mouseup'
+                : 'mousemove',
+        x: x,
+        y: y,
+        buttons: buttons,
+      );
       final surface = dispatchSurface;
       final bool shouldFallbackToSurface = includeSurfaceFallback &&
           surface != null &&
-          !identical(surface, target) &&
-          (identical(target, html.document.body) ||
-              identical(target, html.document.documentElement));
+          !identical(surface, target);
       if (shouldFallbackToSurface) {
         _dispatchPointer(
           target: surface,
           type: type,
+          x: x,
+          y: y,
+          buttons: buttons,
+        );
+        _dispatchMouseEvent(
+          target: surface,
+          type: type == 'pointerdown'
+              ? 'mousedown'
+              : type == 'pointerup' || type == 'pointercancel'
+                  ? 'mouseup'
+                  : 'mousemove',
           x: x,
           y: y,
           buttons: buttons,
@@ -569,10 +637,18 @@ class TrackingService {
 
     final bool moved = _lastDispatchX != x || _lastDispatchY != y;
     if (moved || _pointerDown) {
-      dispatchPointerToTargets(
-        type: 'pointermove',
-        buttons: _pointerDown ? 1 : 0,
-      );
+      if (useFlutterPointerDispatch) {
+        _dispatchFlutterPointerMove(
+          x: x,
+          y: y,
+          buttons: _pointerDown ? kPrimaryMouseButton : 0,
+        );
+      } else {
+        dispatchPointerToTargets(
+          type: 'pointermove',
+          buttons: _pointerDown ? 1 : 0,
+        );
+      }
       _lastDispatchX = x;
       _lastDispatchY = y;
     }
@@ -583,21 +659,33 @@ class TrackingService {
       _pointerDown = true;
       _pointerDownAt = DateTime.now();
       _pointerTarget = dispatchTarget;
-      dispatchPointerToTargets(
-        primaryTarget: _pointerTarget!,
-        type: 'pointerdown',
-        buttons: 1,
-      );
+      if (useFlutterPointerDispatch) {
+        _dispatchFlutterPointerDown(x: x, y: y);
+      } else {
+        dispatchPointerToTargets(
+          primaryTarget: _pointerTarget!,
+          type: 'pointerdown',
+          buttons: 1,
+        );
+      }
       return;
     }
 
     if (_pointerDown) {
       final moveTarget = _pointerTarget ?? dispatchTarget;
-      dispatchPointerToTargets(
-        primaryTarget: moveTarget,
-        type: 'pointermove',
-        buttons: 1,
-      );
+      if (useFlutterPointerDispatch) {
+        _dispatchFlutterPointerMove(
+          x: x,
+          y: y,
+          buttons: kPrimaryMouseButton,
+        );
+      } else {
+        dispatchPointerToTargets(
+          primaryTarget: moveTarget,
+          type: 'pointermove',
+          buttons: 1,
+        );
+      }
     }
 
     if (!active && _pointerDown) {
@@ -606,24 +694,23 @@ class TrackingService {
           ? 1000
           : DateTime.now().difference(downAt).inMilliseconds;
       final upTarget = _pointerTarget ?? dispatchTarget;
-      dispatchPointerToTargets(
-        primaryTarget: upTarget,
-        type: 'pointerup',
-        buttons: 0,
-      );
-
-      if (holdMs < 300) {
+      if (useFlutterPointerDispatch) {
+        _dispatchFlutterPointerUp(x: x, y: y);
+      } else {
         dispatchPointerToTargets(
           primaryTarget: upTarget,
-          type: 'click',
+          type: 'pointerup',
           buttons: 0,
-          includeSurfaceFallback: false,
         );
-        _dispatchMouseClick(
-          target: upTarget,
-          x: x,
-          y: y,
-        );
+
+        if (holdMs < 300) {
+          _dispatchMouseClick(
+            target: upTarget,
+            x: x,
+            y: y,
+            fallbackTarget: dispatchSurface,
+          );
+        }
       }
 
       _pointerDown = false;
@@ -638,9 +725,7 @@ class TrackingService {
     return ValueListenableBuilder<int>(
       valueListenable: _overlayTick,
       builder: (context, _, __) {
-        final bool attachTrackerHost = _trackerEnabled &&
-            _routeActive &&
-            _runtimeConfig.inputMode == 'mediapipe';
+        final bool attachTrackerHost = _trackerEnabled;
         final cursor = ValueListenableBuilder<TrackingFrame>(
           valueListenable: frameNotifier,
           builder: (context, frame, _) {
@@ -648,7 +733,7 @@ class TrackingService {
                 DateTime.now().difference(_lastFrameAt).inMilliseconds > 1200;
             if (!_routeActive ||
                 !_trackerEnabled ||
-                !_effectiveDartCursorEnabled ||
+                !_dartCursorEnabled ||
                 stale) {
               if (stale) {
                 _releasePointerAtCurrentPosition(cancel: true);
@@ -692,7 +777,7 @@ class TrackingService {
             ignoring: true,
             child: ClipRect(
               child: Opacity(
-                opacity: attachTrackerHost ? 1 : 0,
+                opacity: attachTrackerHost && _routeActive ? 1 : 0,
                 child: HtmlElementView(viewType: _viewId),
               ),
             ),
@@ -752,27 +837,23 @@ class TrackingService {
             'cancelable': true,
             'clientX': x,
             'clientY': y,
-            'buttons': buttons,
             'button': 0,
-            'pointerId': 731,
-            'isPrimary': true,
+            'buttons': buttons,
+            'pointerId': 1,
             'pointerType': 'mouse',
-            'composed': true,
+            'width': 1,
+            'height': 1,
+            'pressure': buttons > 0 ? 0.5 : 0.0,
+            'isPrimary': true,
           },
         ),
       );
+      return;
     } catch (_) {}
-  }
-
-  void _dispatchMouseClick({
-    required html.Element target,
-    required int x,
-    required int y,
-  }) {
     try {
       target.dispatchEvent(
         html.MouseEvent(
-          'click',
+          type,
           canBubble: true,
           cancelable: true,
           clientX: x,
@@ -781,6 +862,67 @@ class TrackingService {
         ),
       );
     } catch (_) {}
+  }
+
+  void _dispatchMouseEvent({
+    required html.Element target,
+    required String type,
+    required int x,
+    required int y,
+    int buttons = 0,
+  }) {
+    try {
+      target.dispatchEvent(
+        html.MouseEvent(
+          type,
+          canBubble: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          button: 0,
+        ),
+      );
+      final html.Document doc = html.document;
+      if (!identical(target, doc.documentElement)) {
+        doc.dispatchEvent(
+          html.MouseEvent(
+            type,
+            canBubble: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y,
+            button: 0,
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _dispatchMouseClick({
+    required html.Element target,
+    required int x,
+    required int y,
+    html.Element? fallbackTarget,
+  }) {
+    void dispatch(html.Element element) {
+      try {
+        element.dispatchEvent(
+          html.MouseEvent(
+            'click',
+            canBubble: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y,
+            button: 0,
+          ),
+        );
+      } catch (_) {}
+    }
+
+    dispatch(target);
+    if (fallbackTarget != null && !identical(fallbackTarget, target)) {
+      dispatch(fallbackTarget);
+    }
   }
 
   void _releasePointerAtCurrentPosition({bool cancel = false}) {
@@ -799,11 +941,54 @@ class TrackingService {
       y: frameNotifier.value.cursorY.round(),
       buttons: 0,
     );
+    _dispatchMouseEvent(
+      target: target,
+      type: 'mouseup',
+      x: frameNotifier.value.cursorX.round(),
+      y: frameNotifier.value.cursorY.round(),
+      buttons: 0,
+    );
+    final Offset pos = _logicalPointerOffset(
+      frameNotifier.value.cursorX.round(),
+      frameNotifier.value.cursorY.round(),
+    );
+    _ensureFlutterPointerAdded(pos);
+    GestureBinding.instance.handlePointerEvent(
+      cancel
+          ? PointerCancelEvent(
+              device: _flutterSyntheticPointerDevice,
+              position: pos,
+              kind: PointerDeviceKind.mouse,
+            )
+          : PointerUpEvent(
+              device: _flutterSyntheticPointerDevice,
+              position: pos,
+              kind: PointerDeviceKind.mouse,
+            ),
+    );
   }
 
   void _clearHoverState() {
+    final html.Element? previous = _hoverTarget;
+    if (previous != null) {
+      _dispatchPointer(
+        target: previous,
+        type: 'pointerout',
+        x: frameNotifier.value.cursorX.round(),
+        y: frameNotifier.value.cursorY.round(),
+        buttons: 0,
+      );
+      _dispatchMouseEvent(
+        target: previous,
+        type: 'mouseout',
+        x: frameNotifier.value.cursorX.round(),
+        y: frameNotifier.value.cursorY.round(),
+      );
+    }
+    _hoverTarget = null;
     _lastDispatchX = null;
     _lastDispatchY = null;
+    _teardownFlutterPointer();
   }
 
   bool _isTrackerHostElement(html.Element target) {
@@ -817,10 +1002,119 @@ class TrackingService {
   }
 
   html.Element? _resolveDispatchSurface() {
-    final html.Element? flutterPane =
-        html.document.querySelector('flt-glass-pane');
-    if (flutterPane != null) return flutterPane;
+    const selectors = <String>[
+      'flt-glass-pane',
+      'flt-scene-host',
+      'flt-scene',
+      'flutter-view',
+    ];
+    for (final selector in selectors) {
+      final html.Element? node = html.document.querySelector(selector);
+      if (node != null) return node;
+    }
     return html.document.documentElement;
+  }
+
+  bool _isFlutterDispatchTarget(
+    html.Element target,
+    html.Element? dispatchSurface,
+  ) {
+    final html.Element? surface = dispatchSurface;
+    if (surface == null) return false;
+    if (identical(target, surface)) return true;
+    return surface.contains(target);
+  }
+
+  Offset _logicalPointerOffset(int x, int y) {
+    final double dpr =
+        html.window.devicePixelRatio.clamp(0.5, 8.0).toDouble();
+    return Offset(x / dpr, y / dpr);
+  }
+
+  void _ensureFlutterPointerAdded(Offset position) {
+    if (_flutterPointerAdded) return;
+    GestureBinding.instance.handlePointerEvent(
+      PointerAddedEvent(
+        device: _flutterSyntheticPointerDevice,
+        position: position,
+        kind: PointerDeviceKind.mouse,
+      ),
+    );
+    _flutterPointerAdded = true;
+  }
+
+  void _teardownFlutterPointer() {
+    if (!_flutterPointerAdded) return;
+    final Offset position = _lastFlutterPointerPosition ?? Offset.zero;
+    GestureBinding.instance.handlePointerEvent(
+      PointerRemovedEvent(
+        device: _flutterSyntheticPointerDevice,
+        position: position,
+        kind: PointerDeviceKind.mouse,
+      ),
+    );
+    _flutterPointerAdded = false;
+    _lastFlutterPointerPosition = null;
+  }
+
+  void _dispatchFlutterPointerMove({
+    required int x,
+    required int y,
+    required int buttons,
+  }) {
+    final Offset position = _logicalPointerOffset(x, y);
+    _ensureFlutterPointerAdded(position);
+    final Offset last = _lastFlutterPointerPosition ?? position;
+    GestureBinding.instance.handlePointerEvent(
+      buttons == 0
+          ? PointerHoverEvent(
+              device: _flutterSyntheticPointerDevice,
+              position: position,
+              delta: position - last,
+              kind: PointerDeviceKind.mouse,
+            )
+          : PointerMoveEvent(
+              device: _flutterSyntheticPointerDevice,
+              position: position,
+              delta: position - last,
+              buttons: buttons,
+              kind: PointerDeviceKind.mouse,
+            ),
+    );
+    _lastFlutterPointerPosition = position;
+  }
+
+  void _dispatchFlutterPointerDown({
+    required int x,
+    required int y,
+  }) {
+    final Offset position = _logicalPointerOffset(x, y);
+    _ensureFlutterPointerAdded(position);
+    GestureBinding.instance.handlePointerEvent(
+      PointerDownEvent(
+        device: _flutterSyntheticPointerDevice,
+        position: position,
+        buttons: kPrimaryMouseButton,
+        kind: PointerDeviceKind.mouse,
+      ),
+    );
+    _lastFlutterPointerPosition = position;
+  }
+
+  void _dispatchFlutterPointerUp({
+    required int x,
+    required int y,
+  }) {
+    final Offset position = _logicalPointerOffset(x, y);
+    _ensureFlutterPointerAdded(position);
+    GestureBinding.instance.handlePointerEvent(
+      PointerUpEvent(
+        device: _flutterSyntheticPointerDevice,
+        position: position,
+        kind: PointerDeviceKind.mouse,
+      ),
+    );
+    _lastFlutterPointerPosition = position;
   }
 
   void _queueConfigRetry() {
