@@ -299,7 +299,8 @@ class _TrackingRouteObserver extends NavigatorObserver {
   bool _isTrackingActiveRoute(String name) {
     final String trimmed = name.trim().toLowerCase();
     if (trimmed.isEmpty) return false;
-    if (trimmed == '/auth' || trimmed == '/config') return false;
+    if (trimmed == '/config') return false;
+    if (trimmed == '/auth') return true;
     if (trimmed == '/feed' || trimmed == '/app') return true;
     if (trimmed == '/2d' || trimmed == '/3d') return true;
     if (trimmed.startsWith('/feed/')) return true;

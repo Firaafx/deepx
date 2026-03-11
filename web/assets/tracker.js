@@ -133,10 +133,6 @@ let handTrackingConfidence = 0.3;
 let handStableFrames = 0;
 let handMissingFrames = 0;
 let uiVisible = true;
-let runtimeHeadSensitivityX = 100.0;
-let runtimeHeadSensitivityY = 100.0;
-let runtimeHandSensitivityX = 500.0;
-let runtimeHandSensitivityY = 500.0;
 const params = new URLSearchParams(window.location.search);
 const GLOBAL_TRACKER = params.get('global') === '1';
 let activeChannel = params.get('channel') || null;
@@ -153,8 +149,6 @@ const inputSmooth = 0.7;
 let trackerDisposed = false;
 let lastHandProbeAt = 0;
 let handSuspendUntil = 0;
-let batteryPollInterval = null;
-let connectionPingInterval = null;
 
 function emitToParent(payload) {
     const message = activeChannel ? { ...payload, channel: activeChannel } : payload;
@@ -240,37 +234,6 @@ function _applySelectValue(id, value) {
     if (el.onchange) el.onchange({target: el});
 }
 
-function _readElementNumber(id, fallback) {
-    const el = document.getElementById(id);
-    if (!el) return fallback;
-    return _toNumber(el.value, fallback);
-}
-
-function _headSensX() {
-    const raw = _toNumber(runtimeHeadSensitivityX, _readElementNumber('h-sens', 100));
-    const normalized = Math.max(0, Math.min(1, (raw - 1) / 9999));
-    // Keep minimum sensitivity very precise and ramp progressively.
-    return 0.00018 + Math.pow(normalized, 2.7) * 0.85;
-}
-
-function _headSensY() {
-    const raw = _toNumber(runtimeHeadSensitivityY, _readElementNumber('v-sens', 100));
-    const normalized = Math.max(0, Math.min(1, (raw - 1) / 9999));
-    return 0.00018 + Math.pow(normalized, 2.7) * 0.85;
-}
-
-function _handSensX() {
-    const raw = _toNumber(runtimeHandSensitivityX, _readElementNumber('h-sens', 500));
-    const normalized = Math.max(0, Math.min(1, (raw - 1) / 9999));
-    return 0.2 + (normalized * 8.8);
-}
-
-function _handSensY() {
-    const raw = _toNumber(runtimeHandSensitivityY, _readElementNumber('v-sens', 500));
-    const normalized = Math.max(0, Math.min(1, (raw - 1) / 9999));
-    return 0.2 + (normalized * 8.8);
-}
-
 function applyRuntimeSettings(settings) {
     if (!settings || typeof settings !== 'object') return;
     runtimeSettings = settings;
@@ -301,46 +264,6 @@ function applyRuntimeSettings(settings) {
     }
     _applySliderValue('h-sens', settings.sensitivityX, 3);
     _applySliderValue('v-sens', settings.sensitivityY, 3);
-    runtimeHeadSensitivityX = Math.max(
-        1,
-        Math.min(
-            10000,
-            _toNumber(
-                settings.headSensitivityX,
-                _toNumber(settings.sensitivityX, runtimeHeadSensitivityX)
-            )
-        )
-    );
-    runtimeHeadSensitivityY = Math.max(
-        1,
-        Math.min(
-            10000,
-            _toNumber(
-                settings.headSensitivityY,
-                _toNumber(settings.sensitivityY, runtimeHeadSensitivityY)
-            )
-        )
-    );
-    runtimeHandSensitivityX = Math.max(
-        1,
-        Math.min(
-            10000,
-            _toNumber(
-                settings.handSensitivityX,
-                _toNumber(settings.sensitivityX, runtimeHandSensitivityX)
-            )
-        )
-    );
-    runtimeHandSensitivityY = Math.max(
-        1,
-        Math.min(
-            10000,
-            _toNumber(
-                settings.handSensitivityY,
-                _toNumber(settings.sensitivityY, runtimeHandSensitivityY)
-            )
-        )
-    );
     _applySliderValue('s-sens', settings.smoothing, 3);
     _applySliderValue('dz-ix', settings.deadZoneIrisX, 3);
     _applySliderValue('dz-iy', settings.deadZoneIrisY, 3);
@@ -411,14 +334,6 @@ function disposeTrackerRuntime() {
         try {
             cameraSvc.stop();
         } catch (_) {}
-    }
-    if (batteryPollInterval) {
-        clearInterval(batteryPollInterval);
-        batteryPollInterval = null;
-    }
-    if (connectionPingInterval) {
-        clearInterval(connectionPingInterval);
-        connectionPingInterval = null;
     }
     if (conn && typeof conn.close === 'function') {
         try {
@@ -578,10 +493,7 @@ async function init() {
                 }
             }
         };
-        if (batteryPollInterval) {
-            clearInterval(batteryPollInterval);
-        }
-        batteryPollInterval = setInterval(async () => {
+        setInterval(async () => {
             if ('getBattery' in navigator) {
                 const battery = await navigator.getBattery();
                 const currentLevel = battery.level * 100;
@@ -786,10 +698,7 @@ async function init() {
                         }, 1000);
                     });
                 });
-                if (connectionPingInterval) {
-                    clearInterval(connectionPingInterval);
-                }
-                connectionPingInterval = setInterval(() => {
+                setInterval(() => {
                     if (conn && conn.open) {
                         conn.send({type: 'ping', time: Date.now()});
                     }
@@ -805,10 +714,6 @@ async function init() {
                 if (peer) peer.destroy();
                 peer = null;
                 conn = null;
-                if (connectionPingInterval) {
-                    clearInterval(connectionPingInterval);
-                    connectionPingInterval = null;
-                }
                 if (document.getElementById('tracking-toggle').checked) {
                     document.getElementById('tracking-toggle').dispatchEvent(new Event('change'));
                 }
@@ -983,18 +888,18 @@ async function updatePerformanceSettings() {
 
     const viewportW = Math.max(window.innerWidth || 1, 1);
     const viewportH = Math.max(window.innerHeight || 1, 1);
-    const sensorAspect = 4 / 3;
+    const aspect = viewportW / viewportH;
     let captureWidth;
     let captureHeight;
-    if (viewportW >= viewportH) {
-        captureHeight = Math.round(baseShort * 1.25);
-        captureWidth = Math.round(captureHeight * sensorAspect);
+    if (aspect >= 1) {
+        captureHeight = baseShort;
+        captureWidth = Math.round(baseShort * aspect);
     } else {
         captureWidth = baseShort;
-        captureHeight = Math.round(captureWidth / sensorAspect);
+        captureHeight = Math.round(baseShort / aspect);
     }
-    captureWidth = Math.max(200, Math.min(1280, captureWidth));
-    captureHeight = Math.max(160, Math.min(1280, captureHeight));
+    captureWidth = Math.max(160, Math.min(1280, captureWidth));
+    captureHeight = Math.max(120, Math.min(1280, captureHeight));
     const videoBox = document.getElementById('ui-video-box');
     if (videoBox) {
         videoBox.style.setProperty('--camera-aspect', `${captureWidth} / ${captureHeight}`);
@@ -1021,16 +926,7 @@ async function updatePerformanceSettings() {
             }
             startTime = performance.now();
             const selectedMode = document.getElementById('cursor-mode').value;
-            const shouldProbeHand =
-                selectedMode === 'hand' ||
-                hasHand ||
-                (frameCounter % 2 === 0);
-            try {
-                await faceMesh.send({image: video});
-            } catch (err) {
-                console.warn('Face pipeline dropped one frame.', err);
-            }
-            if (shouldProbeHand) {
+            if (selectedMode === 'hand') {
                 try {
                     await hands.send({image: video});
                 } catch (err) {
@@ -1040,6 +936,12 @@ async function updatePerformanceSettings() {
                     isPinching = false;
                     handStableFrames = 0;
                     handMissingFrames = 0;
+                }
+            } else {
+                try {
+                    await faceMesh.send({image: video});
+                } catch (err) {
+                    console.warn('Face pipeline dropped one frame.', err);
                 }
             }
             frameCounter++;
@@ -1305,6 +1207,7 @@ function setupOnResults() {
             }
             return;
         } else {
+            if (activeTracker !== 'face') return;
             oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
             if (!document.getElementById('tracking-toggle').checked) { cursor.style.display = 'none'; return; }
             cursor.style.display = (!headlessMode && runtimeShowCursor && document.getElementById('show-cursor').checked) ? 'block' : 'none';
@@ -1390,19 +1293,6 @@ function toggleUI() {
 }
 function frameUpdate() {
     if (trackerDisposed) return;
-    if (document.hidden) {
-        if (cursor) cursor.style.display = 'none';
-        requestAnimationFrame(frameUpdate);
-        return;
-    }
-    if (!trackerRuntimeEnabled) {
-        if (cursor) cursor.style.display = 'none';
-        if (tCtx && tCanvas) {
-            tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
-        }
-        requestAnimationFrame(frameUpdate);
-        return;
-    }
     frameCount++;
     const now = performance.now();
     dt = now - prevTime;
@@ -1433,8 +1323,8 @@ function frameUpdate() {
                 const velY = deltaY / (dt / 1000);
                 const speedX = Math.abs(velX);
                 const speedY = Math.abs(velY);
-                const baseSensH = _handSensX();
-                const baseSensV = _handSensY();
+                const baseSensH = parseFloat(document.getElementById('h-sens').value);
+                const baseSensV = parseFloat(document.getElementById('v-sens').value);
                 const baseThresholdX = 0.05;
                 const baseThresholdY = 0.05;
                 const thresholdX = baseThresholdX / handTransX;
@@ -1464,8 +1354,8 @@ function frameUpdate() {
                 const velPitch = deltaPitch / (dt / 1000);
                 const speedX = Math.abs(velYaw);
                 const speedY = Math.abs(velPitch);
-                const baseSensH = _headSensX();
-                const baseSensV = _headSensY();
+                const baseSensH = parseFloat(document.getElementById('h-sens').value);
+                const baseSensV = parseFloat(document.getElementById('v-sens').value);
                 const baseThresholdX = 5;
                 const baseThresholdY = 3;
                 const thresholdX = baseThresholdX / headTransX;
@@ -1480,8 +1370,8 @@ function frameUpdate() {
                     const normalizedY = (speedY - thresholdY) / (30 - thresholdY);
                     accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
                 }
-                let cursorDeltaX = deltaYaw * baseSensH * accelX * 0.35;
-                let cursorDeltaY = deltaPitch * baseSensV * accelY * 0.7;
+                let cursorDeltaX = deltaYaw * baseSensH * accelX * 1;
+                let cursorDeltaY = deltaPitch * baseSensV * accelY;
                 targetX += cursorDeltaX;
                 targetY += cursorDeltaY;
                 targetX = Math.max(0, Math.min(window.innerWidth, targetX));
@@ -1497,8 +1387,8 @@ function frameUpdate() {
             const velPitch = deltaPitch / (dt / 1000);
             const speedX = Math.abs(velYaw);
             const speedY = Math.abs(velPitch);
-            const baseSensH = _headSensX();
-            const baseSensV = _headSensY();
+            const baseSensH = parseFloat(document.getElementById('h-sens').value);
+            const baseSensV = parseFloat(document.getElementById('v-sens').value);
             const baseThresholdX = 5;
             const baseThresholdY = 3;
             const thresholdX = baseThresholdX / headTransX;
@@ -1513,8 +1403,8 @@ function frameUpdate() {
                 const normalizedY = (speedY - thresholdY) / (30 - thresholdY);
                 accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
             }
-            let cursorDeltaX = deltaYaw * baseSensH * accelX * 0.45;
-            let cursorDeltaY = deltaPitch * baseSensV * accelY * 0.85;
+            let cursorDeltaX = deltaYaw * baseSensH * accelX * 2.5;
+            let cursorDeltaY = deltaPitch * baseSensV * accelY * 2.5;
             targetX += cursorDeltaX;
             targetY += cursorDeltaY;
             targetX = Math.max(0, Math.min(window.innerWidth, targetX));
@@ -1535,8 +1425,8 @@ function frameUpdate() {
                 const scale = 1.0;
                 rawRelYaw = currentIrisYaw;
                 rawRelPitch = currentIrisPitch;
-                targetX = (window.innerWidth / 2) + (rawRelYaw * scale * (_headSensX() / 10));
-                targetY = (window.innerHeight / 2) + (rawRelPitch * scale * (_headSensY() / 10));
+                targetX = (window.innerWidth / 2) + (rawRelYaw * scale * (parseFloat(document.getElementById('h-sens').value) / 10));
+                targetY = (window.innerHeight / 2) + (rawRelPitch * scale * (parseFloat(document.getElementById('v-sens').value) / 10));
             }
             prevHeadYaw = currentHeadYaw;
             prevHeadPitch = currentHeadPitch;
@@ -1930,24 +1820,11 @@ function setupTrackerEvents() {
     document.getElementById('toggle-tracker-ui').onclick = toggleUI;
     document.getElementById('tracking-toggle').onchange = async (e) => {
         trackerRuntimeEnabled = e.target.checked;
-        isPaused = !trackerRuntimeEnabled;
         localStorage.setItem('tracking-toggle', trackerRuntimeEnabled);
         if (trackerRuntimeEnabled) {
             await updatePerformanceSettings();
         } else if (cameraSvc) {
             await cameraSvc.stop();
-            const webcam = document.getElementById('webcam-small');
-            const stream = webcam ? webcam.srcObject : null;
-            if (stream && typeof stream.getTracks === 'function') {
-                stream.getTracks().forEach((track) => track.stop());
-            }
-            if (webcam) webcam.srcObject = null;
-            hasHand = false;
-            handLm = null;
-            isPinching = false;
-            isWinking = false;
-            prevWinking = false;
-            winkDownSent = false;
         }
     };
     document.getElementById('show-cursor').onchange = (e) => {
@@ -2289,22 +2166,6 @@ window.addEventListener('resize', () => {
     if (isIrisCalibrated) {
         isIrisCalibrated = false;
         alert('Screen resized. Please recalibrate for iris mode.');
-    }
-});
-document.addEventListener('visibilitychange', async () => {
-    if (trackerDisposed) return;
-    const trackingToggle = document.getElementById('tracking-toggle');
-    if (!trackingToggle) return;
-    if (document.hidden) {
-        if (cameraSvc && typeof cameraSvc.stop === 'function') {
-            try {
-                await cameraSvc.stop();
-            } catch (_) {}
-        }
-        return;
-    }
-    if (!isRemote && trackingToggle.checked) {
-        await updatePerformanceSettings();
     }
 });
 window.addEventListener('mousemove', (e) => {

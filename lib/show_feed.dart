@@ -15583,6 +15583,10 @@ class _SettingsTabState extends State<_SettingsTab> {
     await _repository.updateTrackerRuntimeConfigForCurrentUser(next);
   }
 
+  Future<void> _resetTrackerDefaults() async {
+    await _updateTrackerConfig(TrackerRuntimeConfig.defaults);
+  }
+
   Future<void> _setInputMode(String mode) async {
     if (!_trackerEnabled) return;
     final resolvedConfig = _normalizeInputModeForDevice(
@@ -15910,51 +15914,12 @@ class _SettingsTabState extends State<_SettingsTab> {
                           )
                       : null,
                 ),
-                _settingsSectionTitle('Head Cursor Sensitivity'),
-                _settingsSlider(
-                  label: 'Head Sensitivity X',
-                  value: _trackerConfig.headSensitivityX,
-                  min: 1,
-                  max: 10000,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(headSensitivityX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Head Sensitivity Y',
-                  value: _trackerConfig.headSensitivityY,
-                  min: 1,
-                  max: 10000,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(headSensitivityY: v),
-                          )
-                      : null,
-                ),
-                _settingsSectionTitle('Hand Cursor Sensitivity'),
-                _settingsSlider(
-                  label: 'Hand Sensitivity X',
-                  value: _trackerConfig.handSensitivityX,
-                  min: 1,
-                  max: 10000,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(handSensitivityX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Sensitivity Y',
-                  value: _trackerConfig.handSensitivityY,
-                  min: 1,
-                  max: 10000,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(handSensitivityY: v),
-                          )
-                      : null,
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed:
+                      _trackerEnabled ? _resetTrackerDefaults : null,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reset Tracker Defaults'),
                 ),
                 _settingsSectionTitle('Dead Zones'),
                 _settingsSlider(

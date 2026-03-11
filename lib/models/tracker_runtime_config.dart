@@ -6,10 +6,6 @@ class TrackerRuntimeConfig {
     required this.perfMode,
     required this.sensitivityX,
     required this.sensitivityY,
-    required this.headSensitivityX,
-    required this.headSensitivityY,
-    required this.handSensitivityX,
-    required this.handSensitivityY,
     required this.smoothing,
     required this.deadZoneIrisX,
     required this.deadZoneIrisY,
@@ -55,10 +51,6 @@ class TrackerRuntimeConfig {
   final String perfMode;
   final double sensitivityX;
   final double sensitivityY;
-  final double headSensitivityX;
-  final double headSensitivityY;
-  final double handSensitivityX;
-  final double handSensitivityY;
   final double smoothing;
   final double deadZoneIrisX;
   final double deadZoneIrisY;
@@ -104,10 +96,6 @@ class TrackerRuntimeConfig {
     perfMode: 'medium',
     sensitivityX: 100.0,
     sensitivityY: 100.0,
-    headSensitivityX: 100.0,
-    headSensitivityY: 100.0,
-    handSensitivityX: 500.0,
-    handSensitivityY: 500.0,
     smoothing: 85.0,
     deadZoneIrisX: 0.01,
     deadZoneIrisY: 0.01,
@@ -144,7 +132,7 @@ class TrackerRuntimeConfig {
     sendAll: true,
     sendNone: false,
     showCursor: true,
-    dartCursorEnabled: false,
+    dartCursorEnabled: true,
   );
 
   factory TrackerRuntimeConfig.fromMap(Map<String, dynamic>? map) {
@@ -156,22 +144,6 @@ class TrackerRuntimeConfig {
       perfMode: _perfMode(map['perfMode']),
       sensitivityX: _toDouble(map['sensitivityX'], defaults.sensitivityX),
       sensitivityY: _toDouble(map['sensitivityY'], defaults.sensitivityY),
-      headSensitivityX: _toDouble(
-        map['headSensitivityX'],
-        _toDouble(map['sensitivityX'], defaults.headSensitivityX),
-      ),
-      headSensitivityY: _toDouble(
-        map['headSensitivityY'],
-        _toDouble(map['sensitivityY'], defaults.headSensitivityY),
-      ),
-      handSensitivityX: _toDouble(
-        map['handSensitivityX'],
-        _toDouble(map['sensitivityX'], defaults.handSensitivityX),
-      ),
-      handSensitivityY: _toDouble(
-        map['handSensitivityY'],
-        _toDouble(map['sensitivityY'], defaults.handSensitivityY),
-      ),
       smoothing: _toDouble(map['smoothing'], defaults.smoothing),
       deadZoneIrisX: _toDouble(map['deadZoneIrisX'], defaults.deadZoneIrisX),
       deadZoneIrisY: _toDouble(map['deadZoneIrisY'], defaults.deadZoneIrisY),
@@ -219,9 +191,7 @@ class TrackerRuntimeConfig {
       sendAll: map['sendAll'] != false,
       sendNone: map['sendNone'] == true,
       showCursor: map['showCursor'] != false,
-      dartCursorEnabled: map.containsKey('dartCursorEnabled')
-          ? map['dartCursorEnabled'] == true
-          : defaults.dartCursorEnabled,
+      dartCursorEnabled: map['dartCursorEnabled'] != false,
     );
   }
 
@@ -233,10 +203,6 @@ class TrackerRuntimeConfig {
       'perfMode': perfMode,
       'sensitivityX': sensitivityX,
       'sensitivityY': sensitivityY,
-      'headSensitivityX': headSensitivityX,
-      'headSensitivityY': headSensitivityY,
-      'handSensitivityX': handSensitivityX,
-      'handSensitivityY': handSensitivityY,
       'smoothing': smoothing,
       'deadZoneIrisX': deadZoneIrisX,
       'deadZoneIrisY': deadZoneIrisY,
@@ -284,10 +250,6 @@ class TrackerRuntimeConfig {
     String? perfMode,
     double? sensitivityX,
     double? sensitivityY,
-    double? headSensitivityX,
-    double? headSensitivityY,
-    double? handSensitivityX,
-    double? handSensitivityY,
     double? smoothing,
     double? deadZoneIrisX,
     double? deadZoneIrisY,
@@ -333,10 +295,6 @@ class TrackerRuntimeConfig {
       perfMode: perfMode ?? this.perfMode,
       sensitivityX: sensitivityX ?? this.sensitivityX,
       sensitivityY: sensitivityY ?? this.sensitivityY,
-      headSensitivityX: headSensitivityX ?? this.headSensitivityX,
-      headSensitivityY: headSensitivityY ?? this.headSensitivityY,
-      handSensitivityX: handSensitivityX ?? this.handSensitivityX,
-      handSensitivityY: handSensitivityY ?? this.handSensitivityY,
       smoothing: smoothing ?? this.smoothing,
       deadZoneIrisX: deadZoneIrisX ?? this.deadZoneIrisX,
       deadZoneIrisY: deadZoneIrisY ?? this.deadZoneIrisY,
