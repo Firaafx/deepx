@@ -187,19 +187,57 @@ function _isLikelyHandLandmarks(lm) {
     return Array.isArray(lm) && lm.length === 21;
 }
 
+function _normalizeCursorMode(raw) {
+    const value = (raw || '').toString().toLowerCase();
+    if (value === 'hand') return 'head';
+    if (value === 'iris' || value === 'head') return value;
+    return 'head';
+}
+
+function _currentCursorMode() {
+    const select = document.getElementById('cursor-mode');
+    if (select && select.value) {
+        return _normalizeCursorMode(select.value);
+    }
+    return _normalizeCursorMode(currentMode);
+}
+
+function _isAutoHandMode(mode) {
+    return mode === 'head';
+}
+
+function _handPresenceTimeoutMs() {
+    if (perfMode === 'high') return 550;
+    if (perfMode === 'low') return 900;
+    return 700;
+}
+
+function _handProbeIntervalFrames() {
+    if (perfMode === 'high') return 2;
+    if (perfMode === 'low') return 4;
+    return 3;
+}
+
+function _faceRefreshIntervalFrames() {
+    if (perfMode === 'high') return 6;
+    if (perfMode === 'low') return 10;
+    return 8;
+}
+
 function _markHandObserved(isValid) {
+    const now = performance.now();
     if (isValid) {
         handStableFrames = Math.min(handStableFrames + 1, 30);
         handMissingFrames = 0;
         if (handStableFrames >= 1) {
             hasHand = true;
-            lastHandDataTime = performance.now();
+            lastHandDataTime = now;
             return true;
         }
         return false;
     }
     handMissingFrames = Math.min(handMissingFrames + 1, 30);
-    if (handMissingFrames > 4) {
+    if (handMissingFrames > 4 && (now - lastHandDataTime > _handPresenceTimeoutMs())) {
         hasHand = false;
         handLm = null;
         isPinching = false;
@@ -237,11 +275,11 @@ function _applySelectValue(id, value) {
 function applyRuntimeSettings(settings) {
     if (!settings || typeof settings !== 'object') return;
     runtimeSettings = settings;
-    const mode = (settings.cursorMode || '').toString().toLowerCase();
+    const mode = _normalizeCursorMode(settings.cursorMode);
     const cursorModeSelect = document.getElementById('cursor-mode');
-    if (cursorModeSelect && ['head', 'iris', 'hand'].includes(mode)) {
+    currentMode = mode;
+    if (cursorModeSelect && ['head', 'iris'].includes(mode)) {
         cursorModeSelect.value = mode;
-        currentMode = mode;
     }
     if (typeof settings.showCursor === 'boolean') {
         runtimeShowCursor = settings.showCursor;
@@ -720,34 +758,26 @@ async function init() {
             }
         };
         document.getElementById('cursor-mode').onchange = async (e) => {
-            const mode = e.target.value;
-            currentMode = mode;
-            if (conn && conn.open) conn.send({type: 'set_mode', mode: mode});
-            if (mode !== 'hand') {
+            const normalized = _normalizeCursorMode(e.target.value);
+            if (e.target.value !== normalized) {
+                e.target.value = normalized;
+            }
+            currentMode = normalized;
+            if (conn && conn.open) conn.send({type: 'set_mode', mode: normalized});
+            if (normalized !== 'head') {
                 activeTracker = 'face';
                 hasHand = false;
+                handLm = null;
+                isPinching = false;
             }
-            localStorage.setItem('cursor-mode', mode);
+            localStorage.setItem('cursor-mode', normalized);
             // Adjust sensitivity when switching mode
             const hSensInput = document.getElementById('h-sens');
             const vSensInput = document.getElementById('v-sens');
-            if (mode === 'hand') {
-                hSensInput.value = 500;
-                vSensInput.value = 500;
-                document.getElementById('h-val').innerText = '500';
-                document.getElementById('v-val').innerText = '500';
-                handTransX = 10;
-                handTransY = 10;
-                document.getElementById('hand-trans-x').value = 10;
-                document.getElementById('hand-trans-y').value = 10;
-                document.getElementById('hand-trans-x-val').innerText = '10.000';
-                document.getElementById('hand-trans-y-val').innerText = '10.000';
-            } else {
-                hSensInput.value = 100;
-                vSensInput.value = 100;
-                document.getElementById('h-val').innerText = '100';
-                document.getElementById('v-val').innerText = '100';
-            }
+            hSensInput.value = 100;
+            vSensInput.value = 100;
+            document.getElementById('h-val').innerText = '100';
+            document.getElementById('v-val').innerText = '100';
             if (document.getElementById('tracking-toggle').checked) {
                 await updatePerformanceSettings();
             }
@@ -805,7 +835,7 @@ function connectToHost(remotePeerId) {
     });
     conn.on('data', (data) => {
         if (data.type === 'set_mode') {
-            currentMode = data.mode;
+            currentMode = _normalizeCursorMode(data.mode);
         } else if (data.type === 'ping') {
             conn.send({type: 'pong', time: data.time});
         }
@@ -925,8 +955,13 @@ async function updatePerformanceSettings() {
                 return;
             }
             startTime = performance.now();
-            const selectedMode = document.getElementById('cursor-mode').value;
-            if (selectedMode === 'hand') {
+            const selectedMode = _currentCursorMode();
+            const autoHand = _isAutoHandMode(selectedMode);
+            const now = performance.now();
+            const handFresh = (now - lastHandDataTime) <= _handPresenceTimeoutMs();
+            const shouldProbeHand = autoHand && !handFresh && (frameCounter % _handProbeIntervalFrames() === 0);
+            const shouldRefreshFace = autoHand && handFresh && (frameCounter % _faceRefreshIntervalFrames() === 0);
+            const sendHandsFrame = async () => {
                 try {
                     await hands.send({image: video});
                 } catch (err) {
@@ -937,12 +972,30 @@ async function updatePerformanceSettings() {
                     handStableFrames = 0;
                     handMissingFrames = 0;
                 }
-            } else {
+            };
+            const sendFaceFrame = async () => {
                 try {
                     await faceMesh.send({image: video});
                 } catch (err) {
                     console.warn('Face pipeline dropped one frame.', err);
                 }
+            };
+            if (selectedMode === 'iris') {
+                await sendFaceFrame();
+            } else if (autoHand) {
+                if (handFresh) {
+                    if (shouldRefreshFace) {
+                        await sendFaceFrame();
+                    } else {
+                        await sendHandsFrame();
+                    }
+                } else if (shouldProbeHand) {
+                    await sendHandsFrame();
+                } else {
+                    await sendFaceFrame();
+                }
+            } else {
+                await sendFaceFrame();
             }
             frameCounter++;
         },
@@ -994,6 +1047,13 @@ function loadSettings() {
             if (el.oninput) el.oninput({target: el});
         }
     });
+    const cursorModeSelect = document.getElementById('cursor-mode');
+    if (cursorModeSelect) {
+        const normalized = _normalizeCursorMode(cursorModeSelect.value);
+        cursorModeSelect.value = normalized;
+        currentMode = normalized;
+        localStorage.setItem('cursor-mode', normalized);
+    }
 }
 function dist(p1, p2) {
     return Math.hypot(p1.x - p2.x, p1.y - p2.y, (p1.z || 0) - (p2.z || 0));
@@ -1227,9 +1287,11 @@ function setupOnResults() {
         const hasRawHand = !!(results.multiHandLandmarks && results.multiHandLandmarks.length > 0);
         const candidate = hasRawHand ? results.multiHandLandmarks[0] : null;
         const handStable = _markHandObserved(_isLikelyHandLandmarks(candidate));
+        const activeMode = _currentCursorMode();
+        const autoHand = _isAutoHandMode(activeMode);
 
         if (isClient) {
-            if (currentMode === 'hand' && handStable && candidate && !sendNone) {
+            if ((autoHand || activeMode === 'hand') && handStable && candidate && !sendNone) {
                 const lm = candidate;
                 processHand(lm);
                 let sendData = {type: 'hand', timestamp: Date.now(), mpLatency: latency};
@@ -1306,13 +1368,14 @@ function frameUpdate() {
             document.getElementById('lat-span').innerText = latency.toFixed(0);
         }
     }
-    if (currentMode === 'hand' && (now - lastHandDataTime > 1000)) {
-        hasHand = false;
-        activeTracker = 'face';
-    }
     if (document.getElementById('tracking-toggle').checked && !isPaused) {
-        const selectedMode = document.getElementById('cursor-mode').value;
-        const mode = (hasHand && selectedMode !== 'hand') ? 'hand' : selectedMode;
+        const selectedMode = _currentCursorMode();
+        const autoHand = _isAutoHandMode(selectedMode);
+        if (autoHand && (now - lastHandDataTime > _handPresenceTimeoutMs())) {
+            hasHand = false;
+            activeTracker = 'face';
+        }
+        const mode = (autoHand && hasHand) ? 'hand' : selectedMode;
         const isHead = mode === 'head';
         let rawRelYaw, rawRelPitch;
         if (mode === 'hand') {
@@ -1525,8 +1588,8 @@ function frameUpdate() {
         cursorColor = 'green';
     }
     cursor.style.backgroundColor = cursorColor;
-    const mode = document.getElementById('cursor-mode').value;
-    if (mode === 'hand' && hasHand) {
+    const mode = _currentCursorMode();
+    if (_isAutoHandMode(mode) && hasHand) {
         if (isPinching) {
             if (now - lastPinchTime < doubleClickThreshold) {
                 if (!uiVisible) toggleUI();
@@ -1673,7 +1736,7 @@ function frameUpdate() {
                 potentialClickTarget = null;
                 isHoverBlue = false;
             } else if (dragging && !isDebouncingUnwink) {
-                if (mode === 'hand' && hasHand) {
+                if (_isAutoHandMode(_currentCursorMode()) && hasHand) {
                     if (dragTarget) {
                         const upEvent = new MouseEvent('mouseup', {
                             bubbles: true,
@@ -1840,14 +1903,14 @@ function setupTrackerEvents() {
         emitToParent({type: 'hide_tracker'});
     });
     document.getElementById('btn-calibrate').onclick = async () => {
-        const mode = document.getElementById('cursor-mode').value;
+        const mode = _currentCursorMode();
         const overlay = document.getElementById('timer-overlay');
         const label = document.getElementById('timer-label');
         const count = document.getElementById('timer-count');
         overlay.style.display = 'block';
         calibrationData = [];
-        if (mode === 'head' || mode === 'hand') {
-            label.innerText = mode === 'head' ? 'CENTER EYES' : 'CENTER INDEX FINGER';
+        if (mode === 'head') {
+            label.innerText = 'CENTER EYES';
             for(let i=3; i>0; i--) { count.innerText = i; await new Promise(r => setTimeout(r, 1000)); }
             label.innerText = 'SYNCING...';
             isCapturing = true;
@@ -1855,17 +1918,16 @@ function setupTrackerEvents() {
             let samplesCam = [];
             let samplesHand = [];
             const interval = setInterval(() => {
-                if (mode === 'head' || !hasHand) {
-                    samplesCursor.push({
-                        y: currentHeadYaw,
-                        p: currentHeadPitch
-                    });
-                    samplesCam.push({
-                        x: currentFace.x,
-                        y: currentFace.y,
-                        z: currentFace.z
-                    });
-                } else if (hasHand) {
+                samplesCursor.push({
+                    y: currentHeadYaw,
+                    p: currentHeadPitch
+                });
+                samplesCam.push({
+                    x: currentFace.x,
+                    y: currentFace.y,
+                    z: currentFace.z
+                });
+                if (hasHand) {
                     samplesHand.push({
                         x: currentHandIndexX,
                         y: currentHandIndexY
@@ -1875,23 +1937,18 @@ function setupTrackerEvents() {
             for(let i=5; i>0; i--) { count.innerText = i; await new Promise(r => setTimeout(r, 1000)); }
             clearInterval(interval);
             isCapturing = false;
-            if (mode === 'hand') {
-                if (samplesHand.length > 0) {
-                    anchorHand.x = samplesHand.reduce((a, b) => a + b.x, 0) / samplesHand.length;
-                    anchorHand.y = samplesHand.reduce((a, b) => a + b.y, 0) / samplesHand.length;
-                } else {
-                    alert('No hand detected during calibration.');
-                }
-            } else {
-                if (samplesCursor.length > 0) {
-                    anchorYaw = samplesCursor.reduce((a, b) => a + b.y, 0) / samplesCursor.length;
-                    anchorPitch = samplesCursor.reduce((a, b) => a + b.p, 0) / samplesCursor.length;
-                }
-                if (samplesCam.length > 0) {
-                    anchorFace.x = samplesCam.reduce((a, b) => a + b.x, 0) / samplesCam.length;
-                    anchorFace.y = samplesCam.reduce((a, b) => a + b.y, 0) / samplesCam.length;
-                    anchorFace.z = samplesCam.reduce((a, b) => a + b.z, 0) / samplesCam.length;
-                }
+            if (samplesCursor.length > 0) {
+                anchorYaw = samplesCursor.reduce((a, b) => a + b.y, 0) / samplesCursor.length;
+                anchorPitch = samplesCursor.reduce((a, b) => a + b.p, 0) / samplesCursor.length;
+            }
+            if (samplesCam.length > 0) {
+                anchorFace.x = samplesCam.reduce((a, b) => a + b.x, 0) / samplesCam.length;
+                anchorFace.y = samplesCam.reduce((a, b) => a + b.y, 0) / samplesCam.length;
+                anchorFace.z = samplesCam.reduce((a, b) => a + b.z, 0) / samplesCam.length;
+            }
+            if (samplesHand.length > 0) {
+                anchorHand.x = samplesHand.reduce((a, b) => a + b.x, 0) / samplesHand.length;
+                anchorHand.y = samplesHand.reduce((a, b) => a + b.y, 0) / samplesHand.length;
             }
             targetX = window.innerWidth / 2;
             targetY = window.innerHeight / 2;

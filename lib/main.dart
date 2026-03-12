@@ -7,12 +7,17 @@ import 'auth.dart';
 import 'engine3d.dart';
 import 'layer_mode.dart';
 import 'services/app_repository.dart';
+import 'services/appearance_settings_service.dart';
+import 'services/cache_service.dart';
+import 'services/realtime_cache_invalidator.dart';
 import 'services/tracking_service.dart';
 import 'show_feed.dart';
 import 'supabase_config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppearanceSettingsService.instance.initialize();
+  await CacheService.instance.initialize();
   if (SupabaseConfig.isConfigured) {
     await Supabase.initialize(
       url: SupabaseConfig.url,
@@ -47,7 +52,9 @@ class _MyAppState extends State<MyApp> {
       _authSub = _repository.authChanges.listen((_) {
         _loadThemeMode();
         TrackingService.instance.refreshPreferences();
+        RealtimeCacheInvalidator.instance.start();
       });
+      RealtimeCacheInvalidator.instance.start();
     }
   }
 

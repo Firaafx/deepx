@@ -13,6 +13,7 @@ import '../models/profile_stats.dart';
 import '../models/render_preset.dart';
 import '../models/tracker_runtime_config.dart';
 import '../models/watch_later_item.dart';
+import 'cache_service.dart';
 
 class AppRepository {
   AppRepository._();
@@ -124,25 +125,45 @@ class AppRepository {
   }
 
   Future<AppUserProfile?> fetchProfileById(String userId) async {
-    final row = await _client
-        .from('profiles')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle();
-    if (row == null) return null;
-    return AppUserProfile.fromMap(row);
+    final String trimmed = userId.trim();
+    if (trimmed.isEmpty) return null;
+    final String cacheKey = 'profile.byId.$trimmed';
+    return CacheService.instance.getOrFetch<AppUserProfile?>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile},
+      fetch: () async {
+        final row = await _client
+            .from('profiles')
+            .select('*')
+            .eq('user_id', trimmed)
+            .maybeSingle();
+        if (row == null) return null;
+        return AppUserProfile.fromMap(row);
+      },
+      encode: (value) => value?.toMap(),
+      decode: (data) => _decodeProfileNullable(data),
+    );
   }
 
   Future<AppUserProfile?> fetchProfileByUsername(String username) async {
     final String normalized = username.trim().toLowerCase();
     if (normalized.isEmpty) return null;
-    final row = await _client
-        .from('profiles')
-        .select('*')
-        .eq('username', normalized)
-        .maybeSingle();
-    if (row == null) return null;
-    return AppUserProfile.fromMap(row);
+    final String cacheKey = 'profile.byUsername.$normalized';
+    return CacheService.instance.getOrFetch<AppUserProfile?>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile},
+      fetch: () async {
+        final row = await _client
+            .from('profiles')
+            .select('*')
+            .eq('username', normalized)
+            .maybeSingle();
+        if (row == null) return null;
+        return AppUserProfile.fromMap(row);
+      },
+      encode: (value) => value?.toMap(),
+      decode: (data) => _decodeProfileNullable(data),
+    );
   }
 
   Future<List<RenderPreset>> fetchPublicPostsForUser(
@@ -151,17 +172,26 @@ class AppRepository {
   }) async {
     final String trimmed = userId.trim();
     if (trimmed.isEmpty) return const <RenderPreset>[];
-    final rows = await _client
-        .from('presets')
-        .select('*')
-        .eq('user_id', trimmed)
-        .neq('visibility', 'private')
-        .order('created_at', ascending: false)
-        .limit(limit);
-    return (rows as List)
-        .map((raw) =>
-            RenderPreset.fromMap(Map<String, dynamic>.from(raw as Map)))
-        .toList();
+    final String cacheKey = 'profile.publicPosts.$trimmed.$limit';
+    return CacheService.instance.getOrFetch<List<RenderPreset>>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile},
+      fetch: () async {
+        final rows = await _client
+            .from('presets')
+            .select('*')
+            .eq('user_id', trimmed)
+            .neq('visibility', 'private')
+            .order('created_at', ascending: false)
+            .limit(limit);
+        return (rows as List)
+            .map((raw) =>
+                RenderPreset.fromMap(Map<String, dynamic>.from(raw as Map)))
+            .toList();
+      },
+      encode: (value) => value.map(_encodePreset).toList(),
+      decode: (data) => _decodePresetList(data),
+    );
   }
 
   Future<List<CollectionSummary>> fetchPublicCollectionsForUser(
@@ -170,14 +200,24 @@ class AppRepository {
   }) async {
     final String trimmed = userId.trim();
     if (trimmed.isEmpty) return const <CollectionSummary>[];
-    final rows = await _client
-        .from('collections')
-        .select('*')
-        .eq('user_id', trimmed)
-        .eq('published', true)
-        .order('created_at', ascending: false)
-        .limit(limit);
-    return _hydrateCollectionSummaries(rows);
+    final String viewer = currentUser?.id ?? 'guest';
+    final String cacheKey = 'profile.publicCollections.$trimmed.$limit.$viewer';
+    return CacheService.instance.getOrFetch<List<CollectionSummary>>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile},
+      fetch: () async {
+        final rows = await _client
+            .from('collections')
+            .select('*')
+            .eq('user_id', trimmed)
+            .eq('published', true)
+            .order('created_at', ascending: false)
+            .limit(limit);
+        return _hydrateCollectionSummaries(rows);
+      },
+      encode: (value) => value.map(_encodeCollectionSummary).toList(),
+      decode: (data) => _decodeCollectionSummaryList(data),
+    );
   }
 
   Future<bool> isUsernameAvailable(String rawUsername) async {
@@ -390,19 +430,28 @@ class AppRepository {
   }
 
   Future<ProfileStats> fetchProfileStats(String userId) async {
-    final row = await _client
-        .from('profile_stats')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle();
-    if (row == null) {
-      return const ProfileStats(
-        followersCount: 0,
-        followingCount: 0,
-        postsCount: 0,
-      );
-    }
-    return ProfileStats.fromMap(row);
+    final String cacheKey = 'profile.stats.$userId';
+    return CacheService.instance.getOrFetch<ProfileStats>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile},
+      fetch: () async {
+        final row = await _client
+            .from('profile_stats')
+            .select('*')
+            .eq('user_id', userId)
+            .maybeSingle();
+        if (row == null) {
+          return const ProfileStats(
+            followersCount: 0,
+            followingCount: 0,
+            postsCount: 0,
+          );
+        }
+        return ProfileStats.fromMap(row);
+      },
+      encode: (value) => _encodeProfileStats(value),
+      decode: (data) => _decodeProfileStats(data),
+    );
   }
 
   Future<bool> isFollowing(String targetUserId) async {
@@ -439,6 +488,9 @@ class AppRepository {
           .eq('follower_id', user.id)
           .eq('following_id', targetUserId);
     }
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.feed, CacheDomain.profile},
+    );
   }
 
   Future<Map<String, dynamic>?> fetchModeState(String mode) async {
@@ -520,22 +572,34 @@ class AppRepository {
   }
 
   Future<List<RenderPreset>> fetchUserPosts(String userId) async {
-    dynamic query = _client
-        .from('presets')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', ascending: false);
+    final String trimmed = userId.trim();
+    if (trimmed.isEmpty) return const <RenderPreset>[];
+    final String cacheKey =
+        'profile.userPosts.$trimmed.${currentUser?.id == trimmed}';
+    return CacheService.instance.getOrFetch<List<RenderPreset>>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile},
+      fetch: () async {
+        dynamic query = _client
+            .from('presets')
+            .select('*')
+            .eq('user_id', trimmed)
+            .order('created_at', ascending: false);
 
-    if (currentUser?.id != userId) {
-      query = query.eq('visibility', 'public');
-    }
+        if (currentUser?.id != trimmed) {
+          query = query.eq('visibility', 'public');
+        }
 
-    final List<dynamic> rows = await query;
+        final List<dynamic> rows = await query;
 
-    return rows
-        .map((dynamic e) =>
-            RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
-        .toList();
+        return rows
+            .map((dynamic e) =>
+                RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
+            .toList();
+      },
+      encode: (value) => value.map(_encodePreset).toList(),
+      decode: (data) => _decodePresetList(data),
+    );
   }
 
   Future<List<RenderPreset>> fetchFeedPresets({int limit = 200}) async {
@@ -582,22 +646,42 @@ class AppRepository {
   }
 
   Future<List<FeedPost>> fetchFeedPosts({int limit = 200}) async {
-    final List<RenderPreset> presets = await fetchFeedPresets(limit: limit);
-    return _hydrateFeedPosts(presets);
+    final String viewer = currentUser?.id ?? 'guest';
+    final String cacheKey = 'feed.posts.$limit.$viewer';
+    return CacheService.instance.getOrFetch<List<FeedPost>>(
+      key: cacheKey,
+      domains: const {CacheDomain.feed},
+      fetch: () async {
+        final List<RenderPreset> presets =
+            await fetchFeedPresets(limit: limit);
+        return _hydrateFeedPosts(presets);
+      },
+      encode: (value) => value.map(_encodeFeedPost).toList(),
+      decode: (data) => _decodeFeedPostList(data),
+    );
   }
 
   Future<List<FeedPost>> fetchGuestFeedPosts({int limit = 200}) async {
-    final List<dynamic> rows = await _client
-        .from('presets')
-        .select('*')
-        .eq('visibility', 'public')
-        .order('created_at', ascending: false)
-        .limit(limit);
-    final List<RenderPreset> presets = rows
-        .map((dynamic e) =>
-            RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    return _hydrateFeedPosts(presets);
+    final String cacheKey = 'feed.guest.$limit';
+    return CacheService.instance.getOrFetch<List<FeedPost>>(
+      key: cacheKey,
+      domains: const {CacheDomain.feed},
+      fetch: () async {
+        final List<dynamic> rows = await _client
+            .from('presets')
+            .select('*')
+            .eq('visibility', 'public')
+            .order('created_at', ascending: false)
+            .limit(limit);
+        final List<RenderPreset> presets = rows
+            .map((dynamic e) =>
+                RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
+            .toList();
+        return _hydrateFeedPosts(presets);
+      },
+      encode: (value) => value.map(_encodeFeedPost).toList(),
+      decode: (data) => _decodeFeedPostList(data),
+    );
   }
 
   Future<FeedPost?> fetchFeedPostById(String presetId) async {
@@ -607,28 +691,37 @@ class AppRepository {
   Future<FeedPost?> fetchFeedPostByRouteId(String idOrShareId) async {
     final String routeId = idOrShareId.trim();
     if (routeId.isEmpty) return null;
+    final String viewer = currentUser?.id ?? 'guest';
+    final String cacheKey = 'feed.post.$routeId.$viewer';
+    return CacheService.instance.getOrFetch<FeedPost?>(
+      key: cacheKey,
+      domains: const {CacheDomain.feed},
+      fetch: () async {
+        Map<String, dynamic>? row = await _client
+            .from('presets')
+            .select('*')
+            .eq('share_id', routeId)
+            .maybeSingle();
+        if (row == null && _looksLikeUuid(routeId)) {
+          row = await _client
+              .from('presets')
+              .select('*')
+              .eq('id', routeId)
+              .maybeSingle();
+        }
+        if (row == null) return null;
 
-    Map<String, dynamic>? row = await _client
-        .from('presets')
-        .select('*')
-        .eq('share_id', routeId)
-        .maybeSingle();
-    if (row == null && _looksLikeUuid(routeId)) {
-      row = await _client
-          .from('presets')
-          .select('*')
-          .eq('id', routeId)
-          .maybeSingle();
-    }
-    if (row == null) return null;
-
-    final RenderPreset preset = RenderPreset.fromMap(row);
-    final bool canView = preset.isPublic || preset.userId == currentUser?.id;
-    if (!canView) return null;
-    final List<FeedPost> posts =
-        await _hydrateFeedPosts(<RenderPreset>[preset]);
-    if (posts.isEmpty) return null;
-    return posts.first;
+        final RenderPreset preset = RenderPreset.fromMap(row);
+        final bool canView = preset.isPublic || preset.userId == currentUser?.id;
+        if (!canView) return null;
+        final List<FeedPost> posts =
+            await _hydrateFeedPosts(<RenderPreset>[preset]);
+        if (posts.isEmpty) return null;
+        return posts.first;
+      },
+      encode: (value) => value == null ? null : _encodeFeedPost(value),
+      decode: (data) => _decodeFeedPostNullable(data),
+    );
   }
 
   Future<List<FeedPost>> _hydrateFeedPosts(List<RenderPreset> presets) async {
@@ -730,7 +823,42 @@ class AppRepository {
   Future<Map<String, AppUserProfile>> fetchProfilesByIds(
     Iterable<String> ids,
   ) async {
-    return _fetchProfilesByIds(ids.where((id) => id.trim().isNotEmpty).toSet());
+    final List<String> list = ids
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (list.isEmpty) return <String, AppUserProfile>{};
+    final String cacheKey = 'profile.byIds.${list.join(',')}';
+    return CacheService.instance.getOrFetch<Map<String, AppUserProfile>>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile},
+      fetch: () async => _fetchProfilesByIds(list.toSet()),
+      encode: (value) =>
+          value.map((key, profile) => MapEntry(key, profile.toMap())),
+      decode: (data) => _decodeProfileMap(data),
+    );
+  }
+
+  Future<Map<String, Map<String, dynamic>>> fetchPresetStatsByIds(
+    Iterable<String> ids,
+  ) async {
+    final List<String> list = ids
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (list.isEmpty) return <String, Map<String, dynamic>>{};
+    final String cacheKey = 'feed.presetStats.${list.join(',')}';
+    return CacheService.instance.getOrFetch<Map<String, Map<String, dynamic>>>(
+      key: cacheKey,
+      domains: const {CacheDomain.feed},
+      fetch: () async => _fetchPresetStatsByIds(list.toSet()),
+      encode: (value) => value,
+      decode: (data) => _decodeStatsMap(data),
+    );
   }
 
   Future<Map<String, Map<String, dynamic>>> _fetchPresetStatsByIds(
@@ -843,6 +971,9 @@ class AppRepository {
         )
         .select('*')
         .single();
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.feed, CacheDomain.profile},
+    );
     return row['id']?.toString() ?? '';
   }
 
@@ -941,6 +1072,9 @@ class AppRepository {
         .update(values)
         .eq('id', presetId)
         .eq('user_id', user.id);
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.feed, CacheDomain.profile},
+    );
   }
 
   Future<void> deletePresetPost(String presetId) async {
@@ -951,6 +1085,9 @@ class AppRepository {
         .delete()
         .eq('id', presetId)
         .eq('user_id', user.id);
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.feed, CacheDomain.profile},
+    );
   }
 
   Future<void> setPresetVisibility({
@@ -1045,6 +1182,7 @@ class AppRepository {
           .delete()
           .eq('preset_id', presetId)
           .eq('user_id', user.id);
+      await CacheService.instance.markDomainDirty(CacheDomain.feed);
       return;
     }
 
@@ -1056,6 +1194,8 @@ class AppRepository {
       },
       onConflict: 'preset_id,user_id',
     );
+    await CacheService.instance
+        .markDomainDirty(CacheDomain.feed);
   }
 
   Future<void> toggleSavePreset(String presetId, {required bool save}) async {
@@ -1076,6 +1216,9 @@ class AppRepository {
           .eq('user_id', user.id)
           .eq('preset_id', presetId);
     }
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.feed, CacheDomain.profile, CacheDomain.saved},
+    );
   }
 
   Future<void> toggleWatchLaterItem({
@@ -1104,6 +1247,14 @@ class AppRepository {
           .eq('target_type', normalizedType)
           .eq('target_id', targetId);
     }
+    await CacheService.instance.markDomainsDirty(
+      const {
+        CacheDomain.feed,
+        CacheDomain.collections,
+        CacheDomain.profile,
+        CacheDomain.saved,
+      },
+    );
   }
 
   Future<void> submitReport({
@@ -1170,109 +1321,127 @@ class AppRepository {
   }) async {
     final user = currentUser;
     if (user == null) return const <WatchLaterItem>[];
-    final List<dynamic> rows = await _client
-        .from('watch_later_items')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', ascending: false)
-        .limit(limit);
-    if (rows.isEmpty) return const <WatchLaterItem>[];
+    final String cacheKey = 'saved.watchLater.${user.id}.$limit';
+    return CacheService.instance.getOrFetch<List<WatchLaterItem>>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile, CacheDomain.saved},
+      fetch: () async {
+        final List<dynamic> rows = await _client
+            .from('watch_later_items')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false)
+            .limit(limit);
+        if (rows.isEmpty) return const <WatchLaterItem>[];
 
-    final List<String> postIds = <String>[];
-    final List<String> collectionIds = <String>[];
-    for (final dynamic raw in rows) {
-      final map = Map<String, dynamic>.from(raw as Map);
-      final String id = map['target_id']?.toString() ?? '';
-      if (id.isEmpty) continue;
-      if ((map['target_type']?.toString() ?? '') == 'collection') {
-        collectionIds.add(id);
-      } else {
-        postIds.add(id);
-      }
-    }
+        final List<String> postIds = <String>[];
+        final List<String> collectionIds = <String>[];
+        for (final dynamic raw in rows) {
+          final map = Map<String, dynamic>.from(raw as Map);
+          final String id = map['target_id']?.toString() ?? '';
+          if (id.isEmpty) continue;
+          if ((map['target_type']?.toString() ?? '') == 'collection') {
+            collectionIds.add(id);
+          } else {
+            postIds.add(id);
+          }
+        }
 
-    final Map<String, RenderPreset> postsById = postIds.isEmpty
-        ? <String, RenderPreset>{}
-        : await fetchPresetsByIds(postIds);
-    final Map<String, CollectionSummary> collectionsById =
-        <String, CollectionSummary>{};
-    if (collectionIds.isNotEmpty) {
-      final List<dynamic> collectionRows = await _client
-          .from('collections')
-          .select('*')
-          .inFilter('id', collectionIds);
-      final hydrated = await _hydrateCollectionSummaries(collectionRows);
-      for (final summary in hydrated) {
-        collectionsById[summary.id] = summary;
-      }
-    }
+        final Map<String, RenderPreset> postsById = postIds.isEmpty
+            ? <String, RenderPreset>{}
+            : await fetchPresetsByIds(postIds);
+        final Map<String, CollectionSummary> collectionsById =
+            <String, CollectionSummary>{};
+        if (collectionIds.isNotEmpty) {
+          final List<dynamic> collectionRows = await _client
+              .from('collections')
+              .select('*')
+              .inFilter('id', collectionIds);
+          final hydrated = await _hydrateCollectionSummaries(collectionRows);
+          for (final summary in hydrated) {
+            collectionsById[summary.id] = summary;
+          }
+        }
 
-    final List<WatchLaterItem> items = <WatchLaterItem>[];
-    for (final dynamic raw in rows) {
-      final map = Map<String, dynamic>.from(raw as Map);
-      final String id = map['id']?.toString() ?? '';
-      final String type = map['target_type']?.toString() ?? 'post';
-      final String targetId = map['target_id']?.toString() ?? '';
-      final DateTime createdAt =
-          DateTime.tryParse(map['created_at']?.toString() ?? '') ??
-              DateTime.fromMillisecondsSinceEpoch(0);
-      if (targetId.isEmpty) continue;
-      if (type == 'collection') {
-        final summary = collectionsById[targetId];
-        if (summary == null) continue;
-        items.add(
-          WatchLaterItem.collection(
-            id: id,
-            createdAt: createdAt,
-            collection: summary,
-          ),
-        );
-      } else {
-        final post = postsById[targetId];
-        if (post == null) continue;
-        items.add(
-          WatchLaterItem.post(
-            id: id,
-            createdAt: createdAt,
-            post: post,
-          ),
-        );
-      }
-    }
-    return items;
+        final List<WatchLaterItem> items = <WatchLaterItem>[];
+        for (final dynamic raw in rows) {
+          final map = Map<String, dynamic>.from(raw as Map);
+          final String id = map['id']?.toString() ?? '';
+          final String type = map['target_type']?.toString() ?? 'post';
+          final String targetId = map['target_id']?.toString() ?? '';
+          final DateTime createdAt =
+              DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+                  DateTime.fromMillisecondsSinceEpoch(0);
+          if (targetId.isEmpty) continue;
+          if (type == 'collection') {
+            final summary = collectionsById[targetId];
+            if (summary == null) continue;
+            items.add(
+              WatchLaterItem.collection(
+                id: id,
+                createdAt: createdAt,
+                collection: summary,
+              ),
+            );
+          } else {
+            final post = postsById[targetId];
+            if (post == null) continue;
+            items.add(
+              WatchLaterItem.post(
+                id: id,
+                createdAt: createdAt,
+                post: post,
+              ),
+            );
+          }
+        }
+        return items;
+      },
+      encode: (value) => value.map(_encodeWatchLaterItem).toList(),
+      decode: (data) => _decodeWatchLaterList(data),
+    );
   }
 
   Future<List<PresetComment>> fetchPresetComments(
     String presetId, {
     int limit = 200,
   }) async {
-    final List<dynamic> rows = await _client
-        .from('preset_comments')
-        .select('*')
-        .eq('preset_id', presetId)
-        .order('created_at', ascending: true)
-        .limit(limit);
+    final String cacheKey = 'comments.preset.$presetId.$limit';
+    return CacheService.instance.getOrFetch<List<PresetComment>>(
+      key: cacheKey,
+      domains: const {CacheDomain.comments},
+      fetch: () async {
+        final List<dynamic> rows = await _client
+            .from('preset_comments')
+            .select('*')
+            .eq('preset_id', presetId)
+            .order('created_at', ascending: true)
+            .limit(limit);
 
-    final Set<String> userIds = rows
-        .map((dynamic e) => (e as Map)['user_id']?.toString() ?? '')
-        .where((String e) => e.isNotEmpty)
-        .toSet();
-    final Map<String, AppUserProfile> profiles =
-        await _fetchProfilesByIds(userIds);
+        final Set<String> userIds = rows
+            .map((dynamic e) => (e as Map)['user_id']?.toString() ?? '')
+            .where((String e) => e.isNotEmpty)
+            .toSet();
+        final Map<String, AppUserProfile> profiles =
+            await _fetchProfilesByIds(userIds);
 
-    return rows.map((dynamic e) {
-      final map = Map<String, dynamic>.from(e as Map);
-      final userId = map['user_id']?.toString() ?? '';
-      return PresetComment(
-        id: map['id']?.toString() ?? '',
-        presetId: map['preset_id']?.toString() ?? '',
-        userId: userId,
-        content: map['content']?.toString() ?? '',
-        createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
-            DateTime.fromMillisecondsSinceEpoch(0),
-        author: profiles[userId],
-      );
-    }).toList();
+        return rows.map((dynamic e) {
+          final map = Map<String, dynamic>.from(e as Map);
+          final userId = map['user_id']?.toString() ?? '';
+          return PresetComment(
+            id: map['id']?.toString() ?? '',
+            presetId: map['preset_id']?.toString() ?? '',
+            userId: userId,
+            content: map['content']?.toString() ?? '',
+            createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+            author: profiles[userId],
+          );
+        }).toList();
+      },
+      encode: (value) => value.map(_encodePresetComment).toList(),
+      decode: (data) => _decodePresetCommentList(data),
+    );
   }
 
   Future<void> addPresetComment({
@@ -1292,6 +1461,9 @@ class AppRepository {
         'content': text,
       },
     );
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.comments, CacheDomain.feed},
+    );
   }
 
   Future<void> recordPresetView(String presetId) async {
@@ -1299,62 +1471,80 @@ class AppRepository {
       'record_preset_view',
       params: <String, dynamic>{'p_preset_id': presetId},
     );
+    await CacheService.instance.markDomainDirty(CacheDomain.feed);
   }
 
   Future<List<RenderPreset>> fetchSavedPresetsForCurrentUser() async {
     final user = currentUser;
     if (user == null) return const <RenderPreset>[];
+    final String cacheKey = 'saved.presets.${user.id}';
+    return CacheService.instance.getOrFetch<List<RenderPreset>>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile, CacheDomain.saved},
+      fetch: () async {
+        final List<dynamic> saveRows = await _client
+            .from('saved_presets')
+            .select('preset_id,created_at')
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false);
 
-    final List<dynamic> saveRows = await _client
-        .from('saved_presets')
-        .select('preset_id,created_at')
-        .eq('user_id', user.id)
-        .order('created_at', ascending: false);
+        final List<String> presetIds = saveRows
+            .map((dynamic e) => (e as Map)['preset_id']?.toString() ?? '')
+            .where((String e) => e.isNotEmpty)
+            .toList();
+        if (presetIds.isEmpty) return const <RenderPreset>[];
 
-    final List<String> presetIds = saveRows
-        .map((dynamic e) => (e as Map)['preset_id']?.toString() ?? '')
-        .where((String e) => e.isNotEmpty)
-        .toList();
-    if (presetIds.isEmpty) return const <RenderPreset>[];
-
-    final Map<String, RenderPreset> presetById =
-        await fetchPresetsByIds(presetIds);
-    final List<RenderPreset> ordered = <RenderPreset>[];
-    for (final String id in presetIds) {
-      final preset = presetById[id];
-      if (preset != null) ordered.add(preset);
-    }
-    return ordered;
+        final Map<String, RenderPreset> presetById =
+            await fetchPresetsByIds(presetIds);
+        final List<RenderPreset> ordered = <RenderPreset>[];
+        for (final String id in presetIds) {
+          final preset = presetById[id];
+          if (preset != null) ordered.add(preset);
+        }
+        return ordered;
+      },
+      encode: (value) => value.map(_encodePreset).toList(),
+      decode: (data) => _decodePresetList(data),
+    );
   }
 
   Future<List<CollectionSummary>> fetchSavedCollectionsForCurrentUser() async {
     final user = currentUser;
     if (user == null) return const <CollectionSummary>[];
-    final List<dynamic> saveRows = await _client
-        .from('saved_collections')
-        .select('collection_id,created_at')
-        .eq('user_id', user.id)
-        .order('created_at', ascending: false);
-    final List<String> collectionIds = saveRows
-        .map((dynamic e) => (e as Map)['collection_id']?.toString() ?? '')
-        .where((String e) => e.isNotEmpty)
-        .toList();
-    if (collectionIds.isEmpty) return const <CollectionSummary>[];
-    final List<dynamic> rows = await _client
-        .from('collections')
-        .select('*')
-        .inFilter('id', collectionIds);
-    final List<CollectionSummary> hydrated =
-        await _hydrateCollectionSummaries(rows);
-    final Map<String, CollectionSummary> byId = <String, CollectionSummary>{
-      for (final summary in hydrated) summary.id: summary,
-    };
-    final List<CollectionSummary> ordered = <CollectionSummary>[];
-    for (final id in collectionIds) {
-      final summary = byId[id];
-      if (summary != null) ordered.add(summary);
-    }
-    return ordered;
+    final String cacheKey = 'saved.collections.${user.id}';
+    return CacheService.instance.getOrFetch<List<CollectionSummary>>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile, CacheDomain.saved},
+      fetch: () async {
+        final List<dynamic> saveRows = await _client
+            .from('saved_collections')
+            .select('collection_id,created_at')
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false);
+        final List<String> collectionIds = saveRows
+            .map((dynamic e) => (e as Map)['collection_id']?.toString() ?? '')
+            .where((String e) => e.isNotEmpty)
+            .toList();
+        if (collectionIds.isEmpty) return const <CollectionSummary>[];
+        final List<dynamic> rows = await _client
+            .from('collections')
+            .select('*')
+            .inFilter('id', collectionIds);
+        final List<CollectionSummary> hydrated =
+            await _hydrateCollectionSummaries(rows);
+        final Map<String, CollectionSummary> byId = <String, CollectionSummary>{
+          for (final summary in hydrated) summary.id: summary,
+        };
+        final List<CollectionSummary> ordered = <CollectionSummary>[];
+        for (final id in collectionIds) {
+          final summary = byId[id];
+          if (summary != null) ordered.add(summary);
+        }
+        return ordered;
+      },
+      encode: (value) => value.map(_encodeCollectionSummary).toList(),
+      decode: (data) => _decodeCollectionSummaryList(data),
+    );
   }
 
   Future<List<Map<String, dynamic>>> fetchSavedGrid({
@@ -1477,28 +1667,36 @@ class AppRepository {
   Future<List<RenderPreset>> fetchHistoryPresetsForCurrentUser() async {
     final user = currentUser;
     if (user == null) return const <RenderPreset>[];
+    final String cacheKey = 'profile.history.${user.id}';
+    return CacheService.instance.getOrFetch<List<RenderPreset>>(
+      key: cacheKey,
+      domains: const {CacheDomain.profile, CacheDomain.saved},
+      fetch: () async {
+        final List<dynamic> rows = await _client
+            .from('view_history')
+            .select('preset_id,last_viewed_at')
+            .eq('user_id', user.id)
+            .order('last_viewed_at', ascending: false)
+            .limit(200);
 
-    final List<dynamic> rows = await _client
-        .from('view_history')
-        .select('preset_id,last_viewed_at')
-        .eq('user_id', user.id)
-        .order('last_viewed_at', ascending: false)
-        .limit(200);
+        final List<String> presetIds = rows
+            .map((dynamic e) => (e as Map)['preset_id']?.toString() ?? '')
+            .where((String e) => e.isNotEmpty)
+            .toList();
+        if (presetIds.isEmpty) return const <RenderPreset>[];
 
-    final List<String> presetIds = rows
-        .map((dynamic e) => (e as Map)['preset_id']?.toString() ?? '')
-        .where((String e) => e.isNotEmpty)
-        .toList();
-    if (presetIds.isEmpty) return const <RenderPreset>[];
-
-    final Map<String, RenderPreset> presetById =
-        await fetchPresetsByIds(presetIds);
-    final List<RenderPreset> ordered = <RenderPreset>[];
-    for (final String id in presetIds) {
-      final preset = presetById[id];
-      if (preset != null) ordered.add(preset);
-    }
-    return ordered;
+        final Map<String, RenderPreset> presetById =
+            await fetchPresetsByIds(presetIds);
+        final List<RenderPreset> ordered = <RenderPreset>[];
+        for (final String id in presetIds) {
+          final preset = presetById[id];
+          if (preset != null) ordered.add(preset);
+        }
+        return ordered;
+      },
+      encode: (value) => value.map(_encodePreset).toList(),
+      decode: (data) => _decodePresetList(data),
+    );
   }
 
   Future<List<RenderPreset>> fetchRecentViewedPresetsForSharing() async {
@@ -1751,25 +1949,43 @@ class AppRepository {
   Future<List<CollectionSummary>> fetchPublishedCollections({
     int limit = 120,
   }) async {
-    final List<dynamic> rows = await _client
-        .from('collections')
-        .select('*')
-        .eq('published', true)
-        .order('created_at', ascending: false)
-        .limit(limit);
-    return _hydrateCollectionSummaries(rows);
+    final String viewer = currentUser?.id ?? 'guest';
+    final String cacheKey = 'collections.published.$limit.$viewer';
+    return CacheService.instance.getOrFetch<List<CollectionSummary>>(
+      key: cacheKey,
+      domains: const {CacheDomain.collections},
+      fetch: () async {
+        final List<dynamic> rows = await _client
+            .from('collections')
+            .select('*')
+            .eq('published', true)
+            .order('created_at', ascending: false)
+            .limit(limit);
+        return _hydrateCollectionSummaries(rows);
+      },
+      encode: (value) => value.map(_encodeCollectionSummary).toList(),
+      decode: (data) => _decodeCollectionSummaryList(data),
+    );
   }
 
   Future<List<CollectionSummary>> fetchCollectionsForCurrentUser() async {
     final user = currentUser;
     if (user == null) return const <CollectionSummary>[];
-
-    final List<dynamic> rows = await _client
-        .from('collections')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', ascending: false);
-    return _hydrateCollectionSummaries(rows);
+    final String cacheKey = 'collections.mine.${user.id}';
+    return CacheService.instance.getOrFetch<List<CollectionSummary>>(
+      key: cacheKey,
+      domains: const {CacheDomain.collections, CacheDomain.profile},
+      fetch: () async {
+        final List<dynamic> rows = await _client
+            .from('collections')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false);
+        return _hydrateCollectionSummaries(rows);
+      },
+      encode: (value) => value.map(_encodeCollectionSummary).toList(),
+      decode: (data) => _decodeCollectionSummaryList(data),
+    );
   }
 
   Future<CollectionDetail?> fetchCollectionById(String collectionId) async {
@@ -1781,98 +1997,109 @@ class AppRepository {
   ) async {
     final String routeId = idOrShareId.trim();
     if (routeId.isEmpty) return null;
+    final String viewer = currentUser?.id ?? 'guest';
+    final String cacheKey = 'collections.detail.$routeId.$viewer';
+    return CacheService.instance.getOrFetch<CollectionDetail?>(
+      key: cacheKey,
+      domains: const {CacheDomain.collections},
+      fetch: () async {
+        Map<String, dynamic>? row = await _client
+            .from('collections')
+            .select('*')
+            .eq('share_id', routeId)
+            .maybeSingle();
+        if (row == null && _looksLikeUuid(routeId)) {
+          row = await _client
+              .from('collections')
+              .select('*')
+              .eq('id', routeId)
+              .maybeSingle();
+        }
+        if (row == null) return null;
 
-    Map<String, dynamic>? row = await _client
-        .from('collections')
-        .select('*')
-        .eq('share_id', routeId)
-        .maybeSingle();
-    if (row == null && _looksLikeUuid(routeId)) {
-      row = await _client
-          .from('collections')
-          .select('*')
-          .eq('id', routeId)
-          .maybeSingle();
-    }
-    if (row == null) return null;
+        final String collectionId = row['id']?.toString() ?? '';
+        if (collectionId.isEmpty) return null;
 
-    final String collectionId = row['id']?.toString() ?? '';
-    if (collectionId.isEmpty) return null;
+        final List<dynamic> itemRows = await _client
+            .from('collection_items')
+            .select('*')
+            .eq('collection_id', collectionId)
+            .order('position', ascending: true);
 
-    final List<dynamic> itemRows = await _client
-        .from('collection_items')
-        .select('*')
-        .eq('collection_id', collectionId)
-        .order('position', ascending: true);
+        final profile = await fetchProfileById(row['user_id'].toString());
+        final statsByCollection =
+            await _fetchCollectionStatsByIds(<String>{collectionId});
+        final stats =
+            statsByCollection[collectionId] ?? const <String, dynamic>{};
+        bool isSavedByCurrentUser = false;
+        bool isWatchLater = false;
+        int myReaction = 0;
+        final user = currentUser;
+        if (user != null) {
+          final savedRow = await _client
+              .from('saved_collections')
+              .select('collection_id')
+              .eq('user_id', user.id)
+              .eq('collection_id', collectionId)
+              .maybeSingle();
+          isSavedByCurrentUser = savedRow != null;
 
-    final profile = await fetchProfileById(row['user_id'].toString());
-    final statsByCollection =
-        await _fetchCollectionStatsByIds(<String>{collectionId});
-    final stats = statsByCollection[collectionId] ?? const <String, dynamic>{};
-    bool isSavedByCurrentUser = false;
-    bool isWatchLater = false;
-    int myReaction = 0;
-    final user = currentUser;
-    if (user != null) {
-      final savedRow = await _client
-          .from('saved_collections')
-          .select('collection_id')
-          .eq('user_id', user.id)
-          .eq('collection_id', collectionId)
-          .maybeSingle();
-      isSavedByCurrentUser = savedRow != null;
+          final watchRow = await _client
+              .from('watch_later_items')
+              .select('target_id')
+              .eq('user_id', user.id)
+              .eq('target_type', 'collection')
+              .eq('target_id', collectionId)
+              .maybeSingle();
+          isWatchLater = watchRow != null;
 
-      final watchRow = await _client
-          .from('watch_later_items')
-          .select('target_id')
-          .eq('user_id', user.id)
-          .eq('target_type', 'collection')
-          .eq('target_id', collectionId)
-          .maybeSingle();
-      isWatchLater = watchRow != null;
+          final reactionRow = await _client
+              .from('collection_reactions')
+              .select('reaction')
+              .eq('user_id', user.id)
+              .eq('collection_id', collectionId)
+              .maybeSingle();
+          myReaction = _toInt(reactionRow?['reaction']);
+        }
+        final items = itemRows
+            .map((dynamic e) => CollectionItemSnapshot.fromMap(
+                Map<String, dynamic>.from(e as Map)))
+            .toList();
 
-      final reactionRow = await _client
-          .from('collection_reactions')
-          .select('reaction')
-          .eq('user_id', user.id)
-          .eq('collection_id', collectionId)
-          .maybeSingle();
-      myReaction = _toInt(reactionRow?['reaction']);
-    }
-    final items = itemRows
-        .map((dynamic e) =>
-            CollectionItemSnapshot.fromMap(Map<String, dynamic>.from(e as Map)))
-        .toList();
-
-    return CollectionDetail(
-      summary: CollectionSummary(
-        id: collectionId,
-        shareId: row['share_id']?.toString() ?? '',
-        userId: row['user_id'].toString(),
-        name: row['name']?.toString() ?? 'Untitled collection',
-        description: row['description']?.toString() ?? '',
-        tags: _stringListFrom(row['tags']),
-        mentionUserIds: _stringListFrom(row['mention_user_ids']),
-        published: row['published'] == true,
-        thumbnailPayload: _mapFrom(row['thumbnail_payload']),
-        thumbnailMode: row['thumbnail_mode']?.toString(),
-        itemsCount: items.length,
-        createdAt: DateTime.tryParse(row['created_at']?.toString() ?? '') ??
-            DateTime.fromMillisecondsSinceEpoch(0),
-        updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? '') ??
-            DateTime.fromMillisecondsSinceEpoch(0),
-        firstItem: items.isEmpty ? null : items.first,
-        author: profile,
-        likesCount: _toInt(stats['likes_count']),
-        dislikesCount: _toInt(stats['dislikes_count']),
-        commentsCount: _toInt(stats['comments_count']),
-        savesCount: _toInt(stats['saves_count']),
-        viewsCount: _toInt(stats['views_count']),
-        myReaction: myReaction,
-        isSavedByCurrentUser: isSavedByCurrentUser,
-        isWatchLater: isWatchLater,
-      ),
-      items: items,
+        return CollectionDetail(
+          summary: CollectionSummary(
+            id: collectionId,
+            shareId: row['share_id']?.toString() ?? '',
+            userId: row['user_id'].toString(),
+            name: row['name']?.toString() ?? 'Untitled collection',
+            description: row['description']?.toString() ?? '',
+            tags: _stringListFrom(row['tags']),
+            mentionUserIds: _stringListFrom(row['mention_user_ids']),
+            published: row['published'] == true,
+            thumbnailPayload: _mapFrom(row['thumbnail_payload']),
+            thumbnailMode: row['thumbnail_mode']?.toString(),
+            itemsCount: items.length,
+            createdAt: DateTime.tryParse(row['created_at']?.toString() ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+            updatedAt: DateTime.tryParse(row['updated_at']?.toString() ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+            firstItem: items.isEmpty ? null : items.first,
+            author: profile,
+            likesCount: _toInt(stats['likes_count']),
+            dislikesCount: _toInt(stats['dislikes_count']),
+            commentsCount: _toInt(stats['comments_count']),
+            savesCount: _toInt(stats['saves_count']),
+            viewsCount: _toInt(stats['views_count']),
+            myReaction: myReaction,
+            isSavedByCurrentUser: isSavedByCurrentUser,
+            isWatchLater: isWatchLater,
+          ),
+          items: items,
+        );
+      },
+      encode: (value) =>
+          value == null ? null : _encodeCollectionDetail(value),
+      decode: (data) => _decodeCollectionDetailNullable(data),
     );
   }
 
@@ -1947,6 +2174,9 @@ class AppRepository {
       );
     }
     await _client.from('collection_items').insert(rows);
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.collections, CacheDomain.profile},
+    );
     return id;
   }
 
@@ -2027,6 +2257,9 @@ class AppRepository {
         .update(values)
         .eq('id', collectionId)
         .eq('user_id', user.id);
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.collections, CacheDomain.profile},
+    );
   }
 
   Future<void> deleteCollection(String collectionId) async {
@@ -2037,6 +2270,9 @@ class AppRepository {
         .delete()
         .eq('id', collectionId)
         .eq('user_id', user.id);
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.collections, CacheDomain.profile},
+    );
   }
 
   Future<void> setCollectionPublished({
@@ -2050,6 +2286,9 @@ class AppRepository {
         .update(<String, dynamic>{'published': published})
         .eq('id', collectionId)
         .eq('user_id', user.id);
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.collections, CacheDomain.profile},
+    );
   }
 
   Future<void> setCollectionReaction({
@@ -2064,6 +2303,7 @@ class AppRepository {
           .delete()
           .eq('collection_id', collectionId)
           .eq('user_id', user.id);
+      await CacheService.instance.markDomainDirty(CacheDomain.collections);
       return;
     }
     await _client.from('collection_reactions').upsert(
@@ -2074,6 +2314,7 @@ class AppRepository {
       },
       onConflict: 'collection_id,user_id',
     );
+    await CacheService.instance.markDomainDirty(CacheDomain.collections);
   }
 
   Future<void> toggleSaveCollection(
@@ -2097,6 +2338,13 @@ class AppRepository {
           .eq('collection_id', collectionId)
           .eq('user_id', user.id);
     }
+    await CacheService.instance.markDomainsDirty(
+      const {
+        CacheDomain.collections,
+        CacheDomain.profile,
+        CacheDomain.saved,
+      },
+    );
   }
 
   Future<void> recordCollectionView(String collectionId) async {
@@ -2104,39 +2352,49 @@ class AppRepository {
       'record_collection_view',
       params: <String, dynamic>{'p_collection_id': collectionId},
     );
+    await CacheService.instance.markDomainDirty(CacheDomain.collections);
   }
 
   Future<List<PresetComment>> fetchCollectionComments(
     String collectionId, {
     int limit = 200,
   }) async {
-    final List<dynamic> rows = await _client
-        .from('collection_comments')
-        .select('*')
-        .eq('collection_id', collectionId)
-        .order('created_at', ascending: true)
-        .limit(limit);
+    final String cacheKey = 'comments.collection.$collectionId.$limit';
+    return CacheService.instance.getOrFetch<List<PresetComment>>(
+      key: cacheKey,
+      domains: const {CacheDomain.comments},
+      fetch: () async {
+        final List<dynamic> rows = await _client
+            .from('collection_comments')
+            .select('*')
+            .eq('collection_id', collectionId)
+            .order('created_at', ascending: true)
+            .limit(limit);
 
-    final Set<String> userIds = rows
-        .map((dynamic e) => (e as Map)['user_id']?.toString() ?? '')
-        .where((String e) => e.isNotEmpty)
-        .toSet();
-    final Map<String, AppUserProfile> profiles =
-        await _fetchProfilesByIds(userIds);
+        final Set<String> userIds = rows
+            .map((dynamic e) => (e as Map)['user_id']?.toString() ?? '')
+            .where((String e) => e.isNotEmpty)
+            .toSet();
+        final Map<String, AppUserProfile> profiles =
+            await _fetchProfilesByIds(userIds);
 
-    return rows.map((dynamic e) {
-      final map = Map<String, dynamic>.from(e as Map);
-      final userId = map['user_id']?.toString() ?? '';
-      return PresetComment(
-        id: map['id']?.toString() ?? '',
-        presetId: map['collection_id']?.toString() ?? '',
-        userId: userId,
-        content: map['content']?.toString() ?? '',
-        createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
-            DateTime.fromMillisecondsSinceEpoch(0),
-        author: profiles[userId],
-      );
-    }).toList();
+        return rows.map((dynamic e) {
+          final map = Map<String, dynamic>.from(e as Map);
+          final userId = map['user_id']?.toString() ?? '';
+          return PresetComment(
+            id: map['id']?.toString() ?? '',
+            presetId: map['collection_id']?.toString() ?? '',
+            userId: userId,
+            content: map['content']?.toString() ?? '',
+            createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+            author: profiles[userId],
+          );
+        }).toList();
+      },
+      encode: (value) => value.map(_encodePresetComment).toList(),
+      decode: (data) => _decodePresetCommentList(data),
+    );
   }
 
   Future<void> addCollectionComment({
@@ -2153,6 +2411,9 @@ class AppRepository {
         'user_id': user.id,
         'content': text,
       },
+    );
+    await CacheService.instance.markDomainsDirty(
+      const {CacheDomain.comments, CacheDomain.collections},
     );
   }
 
@@ -2438,6 +2699,328 @@ class AppRepository {
       folder: 'avatars',
       bucket: avatarsBucket,
     );
+  }
+
+  Map<String, dynamic> _encodePreset(RenderPreset preset) {
+    return <String, dynamic>{
+      'id': preset.id,
+      'share_id': preset.shareId,
+      'user_id': preset.userId,
+      'mode': preset.mode,
+      'name': preset.name,
+      'title': preset.title,
+      'description': preset.description,
+      'tags': preset.tags,
+      'mention_user_ids': preset.mentionUserIds,
+      'visibility': preset.visibility,
+      'thumbnail_payload': preset.thumbnailPayload,
+      'thumbnail_mode': preset.thumbnailMode,
+      'payload': preset.payload,
+      'created_at': preset.createdAt.toIso8601String(),
+      'updated_at': preset.updatedAt.toIso8601String(),
+    };
+  }
+
+  RenderPreset _decodePreset(Object? raw) {
+    final map = _mapFrom(raw);
+    return RenderPreset.fromMap(map);
+  }
+
+  List<RenderPreset> _decodePresetList(Object? raw) {
+    if (raw is! List) return const <RenderPreset>[];
+    return raw
+        .map(_decodePreset)
+        .where((preset) => preset.id.isNotEmpty)
+        .toList();
+  }
+
+  AppUserProfile? _decodeProfileNullable(Object? raw) {
+    final map = _mapFrom(raw);
+    if (map.isEmpty) return null;
+    return AppUserProfile.fromMap(map);
+  }
+
+  Map<String, AppUserProfile> _decodeProfileMap(Object? raw) {
+    if (raw is! Map) return <String, AppUserProfile>{};
+    final Map<String, AppUserProfile> output =
+        <String, AppUserProfile>{};
+    raw.forEach((key, value) {
+      final profile = _decodeProfileNullable(value);
+      if (profile != null) {
+        output[key.toString()] = profile;
+      }
+    });
+    return output;
+  }
+
+  Map<String, dynamic> _encodeFeedPost(FeedPost post) {
+    return <String, dynamic>{
+      'preset': _encodePreset(post.preset),
+      'author': post.author?.toMap(),
+      'likesCount': post.likesCount,
+      'dislikesCount': post.dislikesCount,
+      'commentsCount': post.commentsCount,
+      'savesCount': post.savesCount,
+      'viewsCount': post.viewsCount,
+      'myReaction': post.myReaction,
+      'isSaved': post.isSaved,
+      'isFollowingAuthor': post.isFollowingAuthor,
+      'isWatchLater': post.isWatchLater,
+    };
+  }
+
+  FeedPost _decodeFeedPost(Object? raw) {
+    final map = _mapFrom(raw);
+    final preset = _decodePreset(map['preset']);
+    return FeedPost(
+      preset: preset,
+      author: _decodeProfileNullable(map['author']),
+      likesCount: _toInt(map['likesCount']),
+      dislikesCount: _toInt(map['dislikesCount']),
+      commentsCount: _toInt(map['commentsCount']),
+      savesCount: _toInt(map['savesCount']),
+      viewsCount: _toInt(map['viewsCount']),
+      myReaction: _toInt(map['myReaction']),
+      isSaved: map['isSaved'] == true,
+      isFollowingAuthor: map['isFollowingAuthor'] == true,
+      isWatchLater: map['isWatchLater'] == true,
+    );
+  }
+
+  FeedPost? _decodeFeedPostNullable(Object? raw) {
+    if (raw == null) return null;
+    final map = _mapFrom(raw);
+    if (map.isEmpty) return null;
+    final preset = _decodePreset(map['preset']);
+    if (preset.id.isEmpty) return null;
+    return _decodeFeedPost(map);
+  }
+
+  List<FeedPost> _decodeFeedPostList(Object? raw) {
+    if (raw is! List) return const <FeedPost>[];
+    return raw
+        .map(_decodeFeedPost)
+        .where((post) => post.preset.id.isNotEmpty)
+        .toList();
+  }
+
+  Map<String, dynamic> _encodeCollectionItem(CollectionItemSnapshot item) {
+    return <String, dynamic>{
+      'id': item.id,
+      'mode': item.mode,
+      'preset_name': item.name,
+      'position': item.position,
+      'preset_snapshot': item.snapshot,
+    };
+  }
+
+  CollectionItemSnapshot _decodeCollectionItem(Object? raw) {
+    return CollectionItemSnapshot.fromMap(_mapFrom(raw));
+  }
+
+  Map<String, dynamic> _encodeCollectionSummary(CollectionSummary summary) {
+    return <String, dynamic>{
+      'id': summary.id,
+      'share_id': summary.shareId,
+      'user_id': summary.userId,
+      'name': summary.name,
+      'description': summary.description,
+      'tags': summary.tags,
+      'mention_user_ids': summary.mentionUserIds,
+      'published': summary.published,
+      'thumbnail_payload': summary.thumbnailPayload,
+      'thumbnail_mode': summary.thumbnailMode,
+      'items_count': summary.itemsCount,
+      'created_at': summary.createdAt.toIso8601String(),
+      'updated_at': summary.updatedAt.toIso8601String(),
+      'first_item':
+          summary.firstItem == null ? null : _encodeCollectionItem(summary.firstItem!),
+      'author': summary.author?.toMap(),
+      'likes_count': summary.likesCount,
+      'dislikes_count': summary.dislikesCount,
+      'comments_count': summary.commentsCount,
+      'saves_count': summary.savesCount,
+      'views_count': summary.viewsCount,
+      'my_reaction': summary.myReaction,
+      'is_saved': summary.isSavedByCurrentUser,
+      'is_watch_later': summary.isWatchLater,
+    };
+  }
+
+  CollectionSummary _decodeCollectionSummary(Object? raw) {
+    final map = _mapFrom(raw);
+    final firstRaw = map['first_item'];
+    final CollectionItemSnapshot? firstItem =
+        firstRaw == null ? null : _decodeCollectionItem(firstRaw);
+    return CollectionSummary(
+      id: map['id']?.toString() ?? '',
+      shareId: map['share_id']?.toString() ?? '',
+      userId: map['user_id']?.toString() ?? '',
+      name: map['name']?.toString() ?? 'Untitled collection',
+      description: map['description']?.toString() ?? '',
+      tags: _stringListFrom(map['tags']),
+      mentionUserIds: _stringListFrom(map['mention_user_ids']),
+      published: map['published'] == true,
+      thumbnailPayload: _mapFrom(map['thumbnail_payload']),
+      thumbnailMode: map['thumbnail_mode']?.toString(),
+      itemsCount: _toInt(map['items_count']),
+      createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      updatedAt: DateTime.tryParse(map['updated_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      firstItem: firstItem,
+      author: _decodeProfileNullable(map['author']),
+      likesCount: _toInt(map['likes_count']),
+      dislikesCount: _toInt(map['dislikes_count']),
+      commentsCount: _toInt(map['comments_count']),
+      savesCount: _toInt(map['saves_count']),
+      viewsCount: _toInt(map['views_count']),
+      myReaction: _toInt(map['my_reaction']),
+      isSavedByCurrentUser: map['is_saved'] == true,
+      isWatchLater: map['is_watch_later'] == true,
+    );
+  }
+
+  List<CollectionSummary> _decodeCollectionSummaryList(Object? raw) {
+    if (raw is! List) return const <CollectionSummary>[];
+    return raw
+        .map(_decodeCollectionSummary)
+        .where((summary) => summary.id.isNotEmpty)
+        .toList();
+  }
+
+  Map<String, dynamic> _encodeCollectionDetail(CollectionDetail detail) {
+    return <String, dynamic>{
+      'summary': _encodeCollectionSummary(detail.summary),
+      'items': detail.items.map(_encodeCollectionItem).toList(),
+    };
+  }
+
+  CollectionDetail _decodeCollectionDetail(Object? raw) {
+    final map = _mapFrom(raw);
+    final summary = _decodeCollectionSummary(map['summary']);
+    final Object? itemsRaw = map['items'];
+    final List<CollectionItemSnapshot> items = itemsRaw is List
+        ? itemsRaw.map(_decodeCollectionItem).toList()
+        : const <CollectionItemSnapshot>[];
+    return CollectionDetail(summary: summary, items: items);
+  }
+
+  CollectionDetail? _decodeCollectionDetailNullable(Object? raw) {
+    if (raw == null) return null;
+    final map = _mapFrom(raw);
+    if (map.isEmpty) return null;
+    final detail = _decodeCollectionDetail(map);
+    if (detail.summary.id.isEmpty) return null;
+    return detail;
+  }
+
+  Map<String, dynamic> _encodeProfileStats(ProfileStats stats) {
+    return <String, dynamic>{
+      'followers_count': stats.followersCount,
+      'following_count': stats.followingCount,
+      'posts_count': stats.postsCount,
+    };
+  }
+
+  ProfileStats _decodeProfileStats(Object? raw) {
+    final map = _mapFrom(raw);
+    if (map.isEmpty) {
+      return const ProfileStats(
+        followersCount: 0,
+        followingCount: 0,
+        postsCount: 0,
+      );
+    }
+    return ProfileStats.fromMap(map);
+  }
+
+  Map<String, dynamic> _encodePresetComment(PresetComment comment) {
+    return <String, dynamic>{
+      'id': comment.id,
+      'preset_id': comment.presetId,
+      'user_id': comment.userId,
+      'content': comment.content,
+      'created_at': comment.createdAt.toIso8601String(),
+      'author': comment.author?.toMap(),
+    };
+  }
+
+  List<PresetComment> _decodePresetCommentList(Object? raw) {
+    if (raw is! List) return const <PresetComment>[];
+    return raw.map((entry) {
+      final map = _mapFrom(entry);
+      final userId = map['user_id']?.toString() ?? '';
+      return PresetComment(
+        id: map['id']?.toString() ?? '',
+        presetId: map['preset_id']?.toString() ?? '',
+        userId: userId,
+        content: map['content']?.toString() ?? '',
+        createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        author: _decodeProfileNullable(map['author']),
+      );
+    }).where((comment) => comment.id.isNotEmpty).toList();
+  }
+
+  Map<String, dynamic> _encodeWatchLaterItem(WatchLaterItem item) {
+    return <String, dynamic>{
+      'id': item.id,
+      'type': item.type.name,
+      'created_at': item.createdAt.toIso8601String(),
+      'post': item.post == null ? null : _encodePreset(item.post!),
+      'collection':
+          item.collection == null ? null : _encodeCollectionSummary(item.collection!),
+    };
+  }
+
+  List<WatchLaterItem> _decodeWatchLaterList(Object? raw) {
+    if (raw is! List) return const <WatchLaterItem>[];
+    final List<WatchLaterItem> items = <WatchLaterItem>[];
+    for (final entry in raw) {
+      final map = _mapFrom(entry);
+      final String id = map['id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      final String type = map['type']?.toString() ?? 'post';
+      final DateTime createdAt =
+          DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+      if (type == 'collection') {
+        final summary = _decodeCollectionSummary(map['collection']);
+        if (summary.id.isEmpty) continue;
+        items.add(
+          WatchLaterItem.collection(
+            id: id,
+            createdAt: createdAt,
+            collection: summary,
+          ),
+        );
+      } else {
+        final preset = _decodePreset(map['post']);
+        if (preset.id.isEmpty) continue;
+        items.add(
+          WatchLaterItem.post(
+            id: id,
+            createdAt: createdAt,
+            post: preset,
+          ),
+        );
+      }
+    }
+    return items;
+  }
+
+  Map<String, Map<String, dynamic>> _decodeStatsMap(Object? raw) {
+    if (raw is! Map) return <String, Map<String, dynamic>>{};
+    final Map<String, Map<String, dynamic>> output =
+        <String, Map<String, dynamic>>{};
+    raw.forEach((key, value) {
+      final map = _mapFrom(value);
+      if (map.isNotEmpty) {
+        output[key.toString()] = map;
+      }
+    });
+    return output;
   }
 
   int _toInt(dynamic value) {

@@ -19,6 +19,7 @@ class WindowEffect2DPreview extends StatelessWidget {
     required this.mode,
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
+    this.clipper,
     this.layerMode = WindowEffectLayerMode.combined,
     this.outsideOverflowMax = 100,
   });
@@ -26,6 +27,7 @@ class WindowEffect2DPreview extends StatelessWidget {
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
+  final CustomClipper<Path>? clipper;
   final WindowEffectLayerMode layerMode;
   final double outsideOverflowMax;
 
@@ -41,7 +43,13 @@ class WindowEffect2DPreview extends StatelessWidget {
     final double turningOrder = _resolveTurningOrder(layers);
 
     if (layers.isEmpty) {
-      return const ColoredBox(color: Colors.black);
+      const Widget base = ColoredBox(color: Colors.black);
+      if (clipper == null) return base;
+      return ClipPath(
+        clipper: clipper!,
+        clipBehavior: Clip.antiAlias,
+        child: base,
+      );
     }
 
     return ValueListenableBuilder<TrackingFrame>(
@@ -74,10 +82,20 @@ class WindowEffect2DPreview extends StatelessWidget {
                 inside.add(item);
               }
             }
+            Widget clipInside(Widget child) {
+              if (clipper != null) {
+                return ClipPath(
+                  clipper: clipper!,
+                  clipBehavior: Clip.antiAlias,
+                  child: child,
+                );
+              }
+              return ClipRRect(borderRadius: borderRadius, child: child);
+            }
+
             if (layerMode == WindowEffectLayerMode.insideOnly) {
-              return ClipRRect(
-                borderRadius: borderRadius,
-                child: ColoredBox(
+              return clipInside(
+                ColoredBox(
                   color: Colors.black,
                   child: Stack(
                     clipBehavior: Clip.none,
@@ -115,9 +133,8 @@ class WindowEffect2DPreview extends StatelessWidget {
               clipBehavior: Clip.none,
               fit: StackFit.expand,
               children: <Widget>[
-                ClipRRect(
-                  borderRadius: borderRadius,
-                  child: ColoredBox(
+                clipInside(
+                  ColoredBox(
                     color: Colors.black,
                     child: Stack(
                       clipBehavior: Clip.none,

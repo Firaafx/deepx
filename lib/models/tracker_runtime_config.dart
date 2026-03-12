@@ -339,7 +339,8 @@ class TrackerRuntimeConfig {
 
   static String _mode(dynamic raw) {
     final value = raw?.toString().toLowerCase();
-    if (value == 'iris' || value == 'head' || value == 'hand') {
+    if (value == 'hand') return 'head';
+    if (value == 'iris' || value == 'head') {
       return value!;
     }
     return defaults.cursorMode;

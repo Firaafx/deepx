@@ -25,6 +25,8 @@ class TrackingService {
   bool get initialized => _initialized;
   bool _initialized = false;
   bool _routeActive = true;
+  bool _pageVisible = true;
+  bool get _trackingActive => _routeActive && _pageVisible;
 
   bool get trackerEnabled => _trackerEnabled;
   bool _trackerEnabled = true;
@@ -45,6 +47,9 @@ class TrackingService {
   StreamSubscription<html.MouseEvent>? _mouseMoveSub;
   StreamSubscription<html.DeviceMotionEvent>? _deviceMotionSub;
   StreamSubscription<html.DeviceOrientationEvent>? _deviceOrientationSub;
+  StreamSubscription<html.Event>? _visibilitySub;
+  StreamSubscription<html.Event>? _windowBlurSub;
+  StreamSubscription<html.Event>? _windowFocusSub;
   Timer? _configRetryTimer;
   Timer? _staleFrameWatchdog;
   late String _viewId;
@@ -164,6 +169,17 @@ class TrackingService {
       }
     });
 
+    _pageVisible = !(html.document.hidden ?? false);
+    _visibilitySub ??= html.document.onVisibilityChange.listen((_) {
+      _setPageVisible(!(html.document.hidden ?? false));
+    });
+    _windowBlurSub ??= html.window.onBlur.listen((_) {
+      _setPageVisible(false);
+    });
+    _windowFocusSub ??= html.window.onFocus.listen((_) {
+      _setPageVisible(!(html.document.hidden ?? false));
+    });
+
     _initializeInputModeSources();
 
     _staleFrameWatchdog?.cancel();
@@ -197,6 +213,12 @@ class TrackingService {
     _deviceMotionSub = null;
     _deviceOrientationSub?.cancel();
     _deviceOrientationSub = null;
+    _visibilitySub?.cancel();
+    _visibilitySub = null;
+    _windowBlurSub?.cancel();
+    _windowBlurSub = null;
+    _windowFocusSub?.cancel();
+    _windowFocusSub = null;
     _releasePointerAtCurrentPosition();
     _clearHoverState();
     await _messageSub?.cancel();
@@ -270,6 +292,23 @@ class TrackingService {
     _bumpOverlayTick();
   }
 
+  void _setPageVisible(bool visible) {
+    if (_pageVisible == visible) return;
+    _pageVisible = visible;
+    _dartCursorSuppressedByMouse = false;
+    _mouseIdleTimer?.cancel();
+    _mouseIdleTimer = null;
+    _postConfig(force: true);
+    _syncHostVisibilityStyle();
+    if (!visible) {
+      _releasePointerAtCurrentPosition(cancel: true);
+      _clearHoverState();
+    } else {
+      _emitInputModeFrame();
+    }
+    _bumpOverlayTick();
+  }
+
   void setDartCursorEnabled(bool enabled) {
     _dartCursorEnabled = enabled;
     _dartCursorSuppressedByMouse = false;
@@ -306,7 +345,7 @@ class TrackingService {
     if (!kIsWeb || !_initialized) return;
     final element = _trackerIframe;
     if (element == null) return;
-    final bool mediapipeActive = _routeActive &&
+    final bool mediapipeActive = _trackingActive &&
         _trackerEnabled &&
         _runtimeConfig.inputMode == 'mediapipe';
     final bool showTrackerUi = mediapipeActive && _trackerUiVisible;
@@ -424,7 +463,7 @@ class TrackingService {
   }
 
   void _emitInputModeFrame() {
-    if (!_trackerEnabled || !_routeActive) return;
+    if (!_trackerEnabled || !_trackingActive) return;
     final String mode = _runtimeConfig.inputMode;
     if (mode == 'mediapipe') return;
     TrackingFrame frame = _latestTrackerFrame;
@@ -538,7 +577,7 @@ class TrackingService {
   }
 
   void _bridgePointerInteractions(TrackingFrame frame) {
-    if (!_routeActive || !_trackerEnabled || !_effectiveDartCursorEnabled) {
+    if (!_trackingActive || !_trackerEnabled || !_effectiveDartCursorEnabled) {
       _releasePointerAtCurrentPosition(cancel: true);
       _clearHoverState();
       return;
@@ -670,7 +709,7 @@ class TrackingService {
           builder: (context, frame, _) {
             final bool stale =
                 DateTime.now().difference(_lastFrameAt).inMilliseconds > 1200;
-            if (!_routeActive ||
+            if (!_trackingActive ||
                 !_trackerEnabled ||
                 !_effectiveDartCursorEnabled ||
                 stale) {
@@ -716,7 +755,7 @@ class TrackingService {
             ignoring: true,
             child: ClipRect(
               child: Opacity(
-                opacity: attachTrackerHost && _routeActive ? 1 : 0,
+                opacity: attachTrackerHost && _trackingActive ? 1 : 0,
                 child: HtmlElementView(viewType: _viewId),
               ),
             ),
@@ -869,14 +908,14 @@ class TrackingService {
     final element = _trackerIframe;
     if (element == null) return;
     final bool visibleUi = _trackerEnabled &&
-        _routeActive &&
+        _trackingActive &&
         _runtimeConfig.inputMode == 'mediapipe' &&
         _trackerUiVisible;
     element.style.setProperty('pointer-events', 'none');
     element.style.setProperty(
       'visibility',
       (_trackerEnabled &&
-              _routeActive &&
+              _trackingActive &&
               _runtimeConfig.inputMode == 'mediapipe')
           ? 'visible'
           : 'hidden',

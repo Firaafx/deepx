@@ -29,11 +29,13 @@ import 'models/render_preset.dart';
 import 'models/tracker_runtime_config.dart';
 import 'models/watch_later_item.dart';
 import 'services/app_repository.dart';
+import 'services/appearance_settings_service.dart';
 import 'services/query_guard.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
 import 'widgets/preset_viewer.dart';
 import 'widgets/query_feedback.dart';
+import 'widgets/svg_card_shell.dart';
 import 'widgets/window_effect_2d_preview.dart';
 
 enum _ShellTab {
@@ -100,6 +102,37 @@ String buildPostShareUrl(RenderPreset preset) {
 
 String buildCollectionShareUrl(CollectionSummary summary) {
   return _publicShareUrl(buildCollectionRoutePathForSummary(summary));
+}
+
+PageRouteBuilder<T> _buildHeroRoute<T>({
+  required WidgetBuilder builder,
+  String? name,
+}) {
+  return PageRouteBuilder<T>(
+    settings: name == null ? null : RouteSettings(name: name),
+    transitionDuration: const Duration(milliseconds: 260),
+    reverseTransitionDuration: const Duration(milliseconds: 240),
+    pageBuilder: (context, animation, secondaryAnimation) => builder(context),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final fade = CurvedAnimation(parent: animation, curve: Curves.easeInOut);
+      final opacity =
+          Tween<double>(begin: 0.05, end: 1.0).animate(fade);
+      return FadeTransition(opacity: opacity, child: child);
+    },
+  );
+}
+
+Future<T?> _pushHeroRoute<T>(
+  BuildContext context, {
+  required WidgetBuilder builder,
+  required String name,
+  bool replace = false,
+}) {
+  final route = _buildHeroRoute<T>(builder: builder, name: name);
+  if (replace) {
+    return Navigator.of(context).pushReplacement(route);
+  }
+  return Navigator.of(context).push(route);
 }
 
 void _openPublicProfileRoute(
@@ -192,6 +225,8 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane>
                                   Colors.white.withValues(alpha: 0.5),
                               innerGlowColor:
                                   Colors.white.withValues(alpha: 0.85),
+                              outerBlurSigma: 8,
+                              innerBlurSigma: 4,
                             ),
                           );
                         },
@@ -234,6 +269,176 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane>
             )
           : const SizedBox.shrink(),
     );
+  }
+}
+
+class _BlurMenuEntry<T> {
+  const _BlurMenuEntry.item({
+    required this.value,
+    required this.label,
+    this.enabled = true,
+  }) : isDivider = false;
+
+  const _BlurMenuEntry.divider()
+      : value = null,
+        label = null,
+        enabled = false,
+        isDivider = true;
+
+  final T? value;
+  final String? label;
+  final bool enabled;
+  final bool isDivider;
+}
+
+class BlurMenuButton<T> extends StatefulWidget {
+  const BlurMenuButton({
+    super.key,
+    required this.items,
+    required this.onSelected,
+    required this.icon,
+    this.tooltip,
+  });
+
+  // ignore: library_private_types_in_public_api
+  final List<_BlurMenuEntry<T>> items;
+  final ValueChanged<T> onSelected;
+  final Widget icon;
+  final String? tooltip;
+
+  @override
+  State<BlurMenuButton<T>> createState() => _BlurMenuButtonState<T>();
+}
+
+class _BlurMenuButtonState<T> extends State<BlurMenuButton<T>> {
+  final LayerLink _link = LayerLink();
+  OverlayEntry? _entry;
+
+  @override
+  void dispose() {
+    _removeEntry();
+    super.dispose();
+  }
+
+  void _removeEntry() {
+    _entry?.remove();
+    _entry = null;
+  }
+
+  void _showEntry() {
+    if (_entry != null) return;
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    _entry = OverlayEntry(
+      builder: (context) {
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _removeEntry,
+              ),
+            ),
+            CompositedTransformFollower(
+              link: _link,
+              showWhenUnlinked: false,
+              targetAnchor: Alignment.bottomRight,
+              followerAnchor: Alignment.topRight,
+              offset: const Offset(0, 8),
+              child: _BlurMenuCard<T>(
+                items: widget.items,
+                onSelected: (value) {
+                  _removeEntry();
+                  widget.onSelected(value);
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    overlay.insert(_entry!);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CompositedTransformTarget(
+      link: _link,
+      child: IconButton(
+        tooltip: widget.tooltip,
+        onPressed: _showEntry,
+        icon: widget.icon,
+      ),
+    );
+  }
+}
+
+class _BlurMenuCard<T> extends StatelessWidget {
+  const _BlurMenuCard({
+    required this.items,
+    required this.onSelected,
+  });
+
+  final List<_BlurMenuEntry<T>> items;
+  final ValueChanged<T> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(30),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Material(
+          color: Colors.black.withValues(alpha: 0.6),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 200, maxWidth: 260),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: items.map((entry) {
+                if (entry.isDivider) {
+                  return const Divider(
+                    height: 16,
+                    color: Colors.white24,
+                  );
+                }
+                return InkWell(
+                  onTap: entry.enabled && entry.value != null
+                      ? () => onSelected(entry.value as T)
+                      : null,
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        entry.label ?? '',
+                        style: TextStyle(
+                          color: entry.enabled
+                              ? Colors.white
+                              : Colors.white.withValues(alpha: 0.45),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EaseInOutRectTween extends RectTween {
+  _EaseInOutRectTween({super.begin, super.end});
+
+  @override
+  Rect lerp(double t) {
+    final double eased = Curves.easeInOut.transform(t);
+    return Rect.lerp(begin, end, eased)!;
   }
 }
 
@@ -1829,14 +2034,13 @@ class _HomeFeedTab extends StatefulWidget {
   State<_HomeFeedTab> createState() => _HomeFeedTabState();
 }
 
-const double _kGridPreviewAspectRatio = 16 / 9;
+const double _kGridPreviewAspectRatio = 1661 / 960;
 const double _kFeedCardTitleRowHeight = 40;
 const double _kFeedCardAuthorRowHeight = 18;
-const double _kFeedCardMetaRowHeight = 16;
-const double _kFeedCardMetaSpacingHeight = 13;
-const double _kFeedCardFixedMetaHeight = _kFeedCardTitleRowHeight +
+const double _kFeedCardMetaSpacingHeight = 16;
+const double _kFeedCardFixedMetaHeight =
+    _kFeedCardTitleRowHeight +
     _kFeedCardAuthorRowHeight +
-    _kFeedCardMetaRowHeight +
     _kFeedCardMetaSpacingHeight;
 
 class _HomeFeedTabState extends State<_HomeFeedTab> {
@@ -1909,8 +2113,11 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
   Future<void> _openPost(FeedPost post) async {
     await _repository.recordPresetView(post.preset.id);
     if (!mounted) return;
-    await Navigator.pushNamed(
-        context, buildPostRoutePathForPreset(post.preset));
+    await _pushHeroRoute(
+      context,
+      builder: (_) => _PresetDetailPage(initialPost: post),
+      name: buildPostRoutePathForPreset(post.preset),
+    );
     await _loadFeed();
   }
 
@@ -2483,9 +2690,13 @@ class _CollectionTabState extends State<_CollectionTab> {
   }
 
   Future<void> _openCollection(CollectionSummary summary) async {
-    await Navigator.pushNamed(
+    await _pushHeroRoute(
       context,
-      buildCollectionRoutePathForSummary(summary),
+      builder: (_) => _CollectionDetailPage(
+        collectionId: summary.id,
+        initialSummary: summary,
+      ),
+      name: buildCollectionRoutePathForSummary(summary),
     );
     await _loadCollections();
   }
@@ -3042,14 +3253,13 @@ class _CollectionFeedTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final BorderRadius cardRadius = BorderRadius.circular(16);
     final item = summary.firstItem;
     final String previewMode = summary.thumbnailMode ?? item?.mode ?? '2d';
     final Map<String, dynamic> previewPayload =
         summary.thumbnailPayload.isNotEmpty
             ? summary.thumbnailPayload
             : (item?.snapshot ?? const <String, dynamic>{});
-    final preview = previewPayload.isEmpty
+    final Widget preview = previewPayload.isEmpty
         ? Container(
             color: cs.surfaceContainerLow,
             child: Center(
@@ -3063,106 +3273,101 @@ class _CollectionFeedTile extends StatelessWidget {
         : _GridPresetPreview(
             mode: previewMode,
             payload: previewPayload,
-            borderRadius: cardRadius,
+            clipper: const SvgCardClipper(),
           );
+    final ImageProvider? avatarImage =
+        (summary.author?.avatarUrl ?? '').trim().isNotEmpty
+            ? NetworkImage(summary.author!.avatarUrl!.trim())
+            : null;
+    final String heroTag = 'collection-detail-hero-${summary.id}-0';
+    final List<_BlurMenuEntry<String>> menuItems =
+        <_BlurMenuEntry<String>>[
+      _BlurMenuEntry.item(
+        value: 'watch_later',
+        label: summary.isWatchLater ? 'Remove from Watch Later' : 'Watch Later',
+      ),
+      const _BlurMenuEntry.item(value: 'share', label: 'Share'),
+      const _BlurMenuEntry.item(value: 'report', label: 'Report'),
+      const _BlurMenuEntry.item(value: 'not_interested', label: 'Not interested'),
+      const _BlurMenuEntry.item(
+        value: 'dont_recommend',
+        label: 'Don\'t recommend channel',
+      ),
+    ];
+    if (isMine) {
+      menuItems.addAll(
+        [
+          const _BlurMenuEntry.divider(),
+          const _BlurMenuEntry.item(value: 'update', label: 'Update'),
+          _BlurMenuEntry.item(
+            value: 'visibility',
+            label: summary.published ? 'Make Private' : 'Make Public',
+          ),
+          const _BlurMenuEntry.item(value: 'delete', label: 'Delete'),
+        ],
+      );
+    }
+    final Widget topRightMeta = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.9),
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 6),
+        BlurMenuButton<String>(
+          tooltip: 'Collection actions',
+          items: menuItems,
+          onSelected: (value) {
+            if (value == 'watch_later') onWatchLater();
+            if (value == 'share') onShare();
+            if (value == 'report') onReport();
+            if (value == 'not_interested') onNotInterested();
+            if (value == 'dont_recommend') onDontRecommend();
+            if (value == 'update') onUpdate?.call();
+            if (value == 'visibility') onToggleVisibility?.call();
+            if (value == 'delete') onDelete?.call();
+          },
+          icon: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.35),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.more_vert,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+        ),
+      ],
+    );
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: cardRadius,
         onTap: onTap,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Stack(
-                clipBehavior: Clip.none,
-                fit: StackFit.expand,
-                children: [
-                  IgnorePointer(child: preview),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: PopupMenuButton<String>(
-                      tooltip: 'Collection actions',
-                      color: cs.surfaceContainerHighest,
-                      onSelected: (value) {
-                        if (value == 'watch_later') onWatchLater();
-                        if (value == 'share') onShare();
-                        if (value == 'report') onReport();
-                        if (value == 'not_interested') onNotInterested();
-                        if (value == 'dont_recommend') onDontRecommend();
-                        if (value == 'update') onUpdate?.call();
-                        if (value == 'visibility') onToggleVisibility?.call();
-                        if (value == 'delete') onDelete?.call();
-                      },
-                      itemBuilder: (context) {
-                        final items = <PopupMenuEntry<String>>[
-                          PopupMenuItem<String>(
-                            value: 'watch_later',
-                            child: Text(
-                              summary.isWatchLater
-                                  ? 'Remove from Watch Later'
-                                  : 'Watch Later',
-                            ),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'share',
-                            child: Text('Share'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'report',
-                            child: Text('Report'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'not_interested',
-                            child: Text('Not interested'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'dont_recommend',
-                            child: Text('Don\'t recommend channel'),
-                          ),
-                        ];
-                        if (isMine) {
-                          items.addAll(
-                            <PopupMenuEntry<String>>[
-                              const PopupMenuDivider(),
-                              const PopupMenuItem<String>(
-                                value: 'update',
-                                child: Text('Update'),
-                              ),
-                              PopupMenuItem<String>(
-                                value: 'visibility',
-                                child: Text(
-                                  summary.published
-                                      ? 'Make Private'
-                                      : 'Make Public',
-                                ),
-                              ),
-                              const PopupMenuItem<String>(
-                                value: 'delete',
-                                child: Text('Delete'),
-                              ),
-                            ],
-                          );
-                        }
-                        return items;
-                      },
-                      icon: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.more_vert,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              aspectRatio: _kGridPreviewAspectRatio,
+              child: Hero(
+                tag: heroTag,
+                createRectTween: (begin, end) =>
+                    _EaseInOutRectTween(begin: begin, end: end),
+                child: SvgCardShell(
+                  baseColor: const Color(0xFFF0F0F0),
+                  avatarImage: avatarImage,
+                  topRightOverlay: topRightMeta,
+                  child: IgnorePointer(child: preview),
+                ),
               ),
             ),
             const SizedBox(height: 8),
@@ -3184,7 +3389,7 @@ class _CollectionFeedTile extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 8),
             SizedBox(
               height: _kFeedCardAuthorRowHeight,
               child: Align(
@@ -3198,26 +3403,7 @@ class _CollectionFeedTile extends StatelessWidget {
                     style: TextStyle(
                       color: cs.onSurfaceVariant,
                       fontSize: 12,
-                      decoration: TextDecoration.underline,
-                      decorationColor:
-                          cs.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 2),
-            SizedBox(
-              height: _kFeedCardMetaRowHeight,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: cs.onSurfaceVariant,
-                    fontSize: 11,
                   ),
                 ),
               ),
@@ -3261,7 +3447,6 @@ class _FeedTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final BorderRadius cardRadius = BorderRadius.circular(16);
     final String previewMode = post.preset.thumbnailMode ?? post.preset.mode;
     final Map<String, dynamic> previewPayload =
         post.preset.thumbnailPayload.isNotEmpty
@@ -3270,108 +3455,101 @@ class _FeedTile extends StatelessWidget {
     final Widget layeredPreview = _GridPresetPreview(
       mode: previewMode,
       payload: previewPayload,
-      borderRadius: cardRadius,
+      clipper: const SvgCardClipper(),
+    );
+    final ImageProvider? avatarImage =
+        (post.author?.avatarUrl ?? '').trim().isNotEmpty
+            ? NetworkImage(post.author!.avatarUrl!.trim())
+            : null;
+    final String heroTag = 'post-detail-hero-${post.preset.id}';
+    final List<_BlurMenuEntry<String>> menuItems = <_BlurMenuEntry<String>>[
+      _BlurMenuEntry.item(
+        value: 'watch_later',
+        label: post.isWatchLater ? 'Remove from Watch Later' : 'Watch Later',
+      ),
+      const _BlurMenuEntry.item(value: 'share', label: 'Share'),
+      const _BlurMenuEntry.item(value: 'report', label: 'Report'),
+      const _BlurMenuEntry.item(value: 'not_interested', label: 'Not interested'),
+      const _BlurMenuEntry.item(
+        value: 'dont_recommend',
+        label: 'Don\'t recommend channel',
+      ),
+    ];
+    if (isMine) {
+      menuItems.addAll(
+        [
+          const _BlurMenuEntry.divider(),
+          const _BlurMenuEntry.item(value: 'edit', label: 'Update'),
+          _BlurMenuEntry.item(
+            value: 'visibility',
+            label: post.preset.isPublic ? 'Make Private' : 'Make Public',
+          ),
+          const _BlurMenuEntry.item(value: 'delete', label: 'Delete'),
+        ],
+      );
+    }
+    final Widget topRightMeta = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '${_friendlyCount(post.viewsCount)} views · ${_friendlyTime(post.preset.createdAt)}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.9),
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 6),
+        BlurMenuButton<String>(
+          tooltip: 'Post actions',
+          items: menuItems,
+          onSelected: (value) {
+            if (value == 'watch_later') onWatchLater();
+            if (value == 'share') onShare();
+            if (value == 'report') onReport();
+            if (value == 'not_interested') onNotInterested();
+            if (value == 'dont_recommend') onDontRecommend();
+            if (value == 'edit') onEdit?.call();
+            if (value == 'visibility') onToggleVisibility?.call();
+            if (value == 'delete') onDelete?.call();
+          },
+          icon: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.35),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.more_vert,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+        ),
+      ],
     );
 
     return Material(
       color: Colors.transparent,
-      borderRadius: cardRadius,
       child: InkWell(
         onTap: onTap,
-        borderRadius: cardRadius,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Stack(
-                clipBehavior: Clip.none,
-                fit: StackFit.expand,
-                children: [
-                  IgnorePointer(child: layeredPreview),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: PopupMenuButton<String>(
-                      tooltip: 'Post actions',
-                      color: cs.surfaceContainerHighest,
-                      onSelected: (value) {
-                        if (value == 'watch_later') onWatchLater();
-                        if (value == 'share') onShare();
-                        if (value == 'report') onReport();
-                        if (value == 'not_interested') onNotInterested();
-                        if (value == 'dont_recommend') onDontRecommend();
-                        if (value == 'edit') onEdit?.call();
-                        if (value == 'visibility') onToggleVisibility?.call();
-                        if (value == 'delete') onDelete?.call();
-                      },
-                      itemBuilder: (context) {
-                        final items = <PopupMenuEntry<String>>[
-                          PopupMenuItem<String>(
-                            value: 'watch_later',
-                            child: Text(
-                              post.isWatchLater
-                                  ? 'Remove from Watch Later'
-                                  : 'Watch Later',
-                            ),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'share',
-                            child: Text('Share'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'report',
-                            child: Text('Report'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'not_interested',
-                            child: Text('Not interested'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'dont_recommend',
-                            child: Text('Don\'t recommend channel'),
-                          ),
-                        ];
-                        if (isMine) {
-                          items.addAll(
-                            <PopupMenuEntry<String>>[
-                              const PopupMenuDivider(),
-                              const PopupMenuItem<String>(
-                                value: 'edit',
-                                child: Text('Update'),
-                              ),
-                              PopupMenuItem<String>(
-                                value: 'visibility',
-                                child: Text(
-                                  post.preset.isPublic
-                                      ? 'Make Private'
-                                      : 'Make Public',
-                                ),
-                              ),
-                              const PopupMenuItem<String>(
-                                value: 'delete',
-                                child: Text('Delete'),
-                              ),
-                            ],
-                          );
-                        }
-                        return items;
-                      },
-                      icon: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.more_vert,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              aspectRatio: _kGridPreviewAspectRatio,
+              child: Hero(
+                tag: heroTag,
+                createRectTween: (begin, end) =>
+                    _EaseInOutRectTween(begin: begin, end: end),
+                child: SvgCardShell(
+                  baseColor: const Color(0xFFF0F0F0),
+                  avatarImage: avatarImage,
+                  topRightOverlay: topRightMeta,
+                  child: IgnorePointer(child: layeredPreview),
+                ),
               ),
             ),
             const SizedBox(height: 8),
@@ -3393,7 +3571,7 @@ class _FeedTile extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 8),
             SizedBox(
               height: _kFeedCardAuthorRowHeight,
               child: Align(
@@ -3407,26 +3585,7 @@ class _FeedTile extends StatelessWidget {
                     style: TextStyle(
                       color: cs.onSurfaceVariant,
                       fontSize: 12,
-                      decoration: TextDecoration.underline,
-                      decorationColor:
-                          cs.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 2),
-            SizedBox(
-              height: _kFeedCardMetaRowHeight,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '${_friendlyCount(post.viewsCount)} views · ${_friendlyTime(post.preset.createdAt)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: cs.onSurfaceVariant,
-                    fontSize: 11,
                   ),
                 ),
               ),
@@ -3446,18 +3605,19 @@ enum _GridPresetPreviewLayerMode {
 
 class _OverlayParallaxPreview extends StatefulWidget {
   const _OverlayParallaxPreview({
-    super.key,
     required this.mode,
     required this.payload,
-    this.borderRadius = const BorderRadius.all(Radius.circular(16)),
-    this.pointerPassthrough = true,
-    this.enableOutsideOverlay = false,
-    this.outsideOverflowMax = 100,
+    required this.borderRadius,
+    required this.clipper,
+    required this.pointerPassthrough,
+    required this.enableOutsideOverlay,
+    required this.outsideOverflowMax,
   });
 
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
+  final CustomClipper<Path>? clipper;
   final bool pointerPassthrough;
   final bool enableOutsideOverlay;
   final double outsideOverflowMax;
@@ -3537,6 +3697,7 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
                   mode: widget.mode,
                   payload: widget.payload,
                   borderRadius: BorderRadius.zero,
+                  clipper: widget.clipper,
                   pointerPassthrough: true,
                   layerMode: _GridPresetPreviewLayerMode.outsideOnly,
                   outsideOverflowMax: widget.outsideOverflowMax,
@@ -3571,6 +3732,7 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
         mode: widget.mode,
         payload: widget.payload,
         borderRadius: widget.borderRadius,
+        clipper: widget.clipper,
         pointerPassthrough: widget.pointerPassthrough,
         outsideOverflowMax: widget.outsideOverflowMax,
       );
@@ -3585,6 +3747,7 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
             mode: widget.mode,
             payload: widget.payload,
             borderRadius: widget.borderRadius,
+            clipper: widget.clipper,
             pointerPassthrough: widget.pointerPassthrough,
             layerMode: _GridPresetPreviewLayerMode.insideOnly,
             outsideOverflowMax: widget.outsideOverflowMax,
@@ -3600,6 +3763,7 @@ class _GridPresetPreview extends StatelessWidget {
     required this.mode,
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
+    this.clipper,
     this.pointerPassthrough = true,
     this.layerMode = _GridPresetPreviewLayerMode.combined,
     this.outsideOverflowMax = 100,
@@ -3608,6 +3772,7 @@ class _GridPresetPreview extends StatelessWidget {
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
+  final CustomClipper<Path>? clipper;
   final bool pointerPassthrough;
   final _GridPresetPreviewLayerMode layerMode;
   final double outsideOverflowMax;
@@ -3624,21 +3789,22 @@ class _GridPresetPreview extends StatelessWidget {
       if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
         return const SizedBox.shrink();
       }
-      return ClipRRect(
-        borderRadius: borderRadius,
-        child: DecoratedBox(
-          decoration: BoxDecoration(color: cs.surfaceContainerLow),
-          child: Center(
-            child: Icon(
-              adapted.mode == '3d'
-                  ? Icons.view_in_ar_outlined
-                  : Icons.layers_outlined,
-              color: cs.onSurfaceVariant,
-              size: 28,
-            ),
+      final Widget base = DecoratedBox(
+        decoration: BoxDecoration(color: cs.surfaceContainerLow),
+        child: Center(
+          child: Icon(
+            adapted.mode == '3d'
+                ? Icons.view_in_ar_outlined
+                : Icons.layers_outlined,
+            color: cs.onSurfaceVariant,
+            size: 28,
           ),
         ),
       );
+      if (clipper != null) {
+        return ClipPath(clipper: clipper!, clipBehavior: Clip.antiAlias, child: base);
+      }
+      return ClipRRect(borderRadius: borderRadius, child: base);
     }
 
     if (adapted.mode == '2d') {
@@ -3653,6 +3819,7 @@ class _GridPresetPreview extends StatelessWidget {
         mode: adapted.mode,
         payload: adapted.toMap(),
         borderRadius: borderRadius,
+        clipper: clipper,
         layerMode: resolvedLayerMode,
         outsideOverflowMax: outsideOverflowMax,
       );
@@ -3677,6 +3844,13 @@ class _GridPresetPreview extends StatelessWidget {
         pointerPassthrough: pointerPassthrough,
       );
       if (layerMode == _GridPresetPreviewLayerMode.insideOnly) {
+        if (clipper != null) {
+          return ClipPath(
+            clipper: clipper!,
+            clipBehavior: Clip.antiAlias,
+            child: viewer,
+          );
+        }
         return ClipRRect(borderRadius: borderRadius, child: viewer);
       }
       return viewer;
@@ -3688,18 +3862,32 @@ class _GridPresetPreview extends StatelessWidget {
       ..['scene'] = _filtered3dScene(adapted.scene, 'outside');
     final bool hasOutside = _sceneHasModelsOrLights(outsidePayload['scene']);
 
-    final Widget inside = ClipRRect(
-      borderRadius: borderRadius,
-      child: PresetViewer(
-        mode: adapted.mode,
-        payload: insidePayload,
-        cleanView: true,
-        embedded: true,
-        disableAudio: true,
-        useGlobalTracking: true,
-        pointerPassthrough: pointerPassthrough,
-      ),
-    );
+    final Widget inside = (clipper != null)
+        ? ClipPath(
+            clipper: clipper!,
+            clipBehavior: Clip.antiAlias,
+            child: PresetViewer(
+              mode: adapted.mode,
+              payload: insidePayload,
+              cleanView: true,
+              embedded: true,
+              disableAudio: true,
+              useGlobalTracking: true,
+              pointerPassthrough: pointerPassthrough,
+            ),
+          )
+        : ClipRRect(
+            borderRadius: borderRadius,
+            child: PresetViewer(
+              mode: adapted.mode,
+              payload: insidePayload,
+              cleanView: true,
+              embedded: true,
+              disableAudio: true,
+              useGlobalTracking: true,
+              pointerPassthrough: pointerPassthrough,
+            ),
+          );
 
     final Widget outside = Positioned(
       left: -outsideOverflowMax,
@@ -3907,6 +4095,8 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                   onDoubleTap: () => Navigator.pop(context),
                   child: Hero(
                     tag: heroTag,
+                    createRectTween: (begin, end) =>
+                        _EaseInOutRectTween(begin: begin, end: end),
                     child: _GridPresetPreview(
                       mode: mode,
                       payload: payload,
@@ -4502,11 +4692,11 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   Future<void> _openSuggestedPost(FeedPost post) async {
     await _repository.recordPresetView(post.preset.id);
     if (!mounted) return;
-    await Navigator.pushReplacement(
+    await _pushHeroRoute(
       context,
-      MaterialPageRoute(
-        builder: (_) => _PresetDetailPage(initialPost: post),
-      ),
+      builder: (_) => _PresetDetailPage(initialPost: post),
+      name: buildPostRoutePathForPreset(post.preset),
+      replace: true,
     );
   }
 
@@ -4574,31 +4764,39 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => const ColoredBox(color: fallback),
             );
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          base,
-          BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 56, sigmaY: 56),
-            child: Container(color: Colors.black.withValues(alpha: 0.72)),
-          ),
-          IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: desktop
-                      ? const Alignment(-0.44, -0.24)
-                      : const Alignment(0, -0.34),
-                  radius: desktop ? 0.78 : 0.64,
-                  colors: [
-                    Colors.white.withValues(alpha: 0.14),
-                    Colors.transparent,
-                  ],
+      return ValueListenableBuilder<AppearanceSettings>(
+        valueListenable: AppearanceSettingsService.instance.settings,
+        builder: (context, settings, _) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              base,
+              BackdropFilter(
+                filter: ImageFilter.blur(
+                  sigmaX: settings.ambientBlurSigmaX,
+                  sigmaY: settings.ambientBlurSigmaY,
+                ),
+                child: Container(color: Colors.black.withValues(alpha: 0.72)),
+              ),
+              IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: desktop
+                          ? const Alignment(-0.44, -0.24)
+                          : const Alignment(0, -0.34),
+                      radius: desktop ? 0.78 : 0.64,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.14),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       );
     }
 
@@ -4611,30 +4809,42 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
               errorBuilder: (_, __, ___) =>
                   Container(color: Colors.black.withValues(alpha: 0.45)),
             );
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            visual,
-            BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-              child: Container(color: Colors.black.withValues(alpha: 0.42)),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment.center,
-                  radius: 0.88,
-                  colors: [
-                    Colors.white.withValues(alpha: 0.16),
-                    Colors.transparent,
-                  ],
+      return ValueListenableBuilder<AppearanceSettings>(
+        valueListenable: AppearanceSettingsService.instance.settings,
+        builder: (context, settings, _) {
+          final double underlaySigmaX =
+              settings.ambientBlurSigmaX * (24 / 56);
+          final double underlaySigmaY =
+              settings.ambientBlurSigmaY * (24 / 56);
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                visual,
+                BackdropFilter(
+                  filter: ImageFilter.blur(
+                    sigmaX: underlaySigmaX,
+                    sigmaY: underlaySigmaY,
+                  ),
+                  child: Container(color: Colors.black.withValues(alpha: 0.42)),
                 ),
-              ),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment.center,
+                      radius: 0.88,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.16),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       );
     }
 
@@ -4898,6 +5108,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         onDoubleTap: _openFullscreenViewer,
         child: Hero(
           tag: heroTag,
+          createRectTween: (begin, end) =>
+              _EaseInOutRectTween(begin: begin, end: end),
           child: Stack(
             clipBehavior: Clip.none,
             fit: StackFit.expand,
@@ -5111,29 +5323,23 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
               const SizedBox.shrink(),
               const Spacer(),
               if (_mine)
-                PopupMenuButton<String>(
-                  color: cs.surfaceContainerHighest,
+                BlurMenuButton<String>(
+                  tooltip: 'Post actions',
+                  items: [
+                    const _BlurMenuEntry.item(value: 'edit', label: 'Update'),
+                    _BlurMenuEntry.item(
+                      value: 'visibility',
+                      label: _post.preset.isPublic
+                          ? 'Make Private'
+                          : 'Make Public',
+                    ),
+                    const _BlurMenuEntry.item(value: 'delete', label: 'Delete'),
+                  ],
                   onSelected: (value) {
                     if (value == 'edit') _editOwnPost();
                     if (value == 'visibility') _toggleOwnVisibility();
                     if (value == 'delete') _deleteOwnPost();
                   },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem<String>(
-                      value: 'edit',
-                      child: Text('Update'),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'visibility',
-                      child: Text(
-                        _post.preset.isPublic ? 'Make Private' : 'Make Public',
-                      ),
-                    ),
-                    const PopupMenuItem<String>(
-                      value: 'delete',
-                      child: Text('Delete'),
-                    ),
-                  ],
                   icon: const Icon(Icons.more_vert, color: Colors.white),
                 ),
             ],
@@ -5161,17 +5367,24 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                             SizedBox(
                               width: 140,
                               height: 78,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: IgnorePointer(
-                                  child: _GridPresetPreview(
-                                    mode: item.preset.thumbnailMode ??
-                                        item.preset.mode,
-                                    payload:
-                                        item.preset.thumbnailPayload.isNotEmpty
-                                            ? item.preset.thumbnailPayload
-                                            : item.preset.payload,
-                                    pointerPassthrough: true,
+                              child: Hero(
+                                tag: 'post-detail-hero-${item.preset.id}',
+                                createRectTween: (begin, end) =>
+                                    _EaseInOutRectTween(
+                                        begin: begin, end: end),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: IgnorePointer(
+                                    child: _GridPresetPreview(
+                                      mode: item.preset.thumbnailMode ??
+                                          item.preset.mode,
+                                      payload:
+                                          item.preset.thumbnailPayload
+                                                  .isNotEmpty
+                                              ? item.preset.thumbnailPayload
+                                              : item.preset.payload,
+                                      pointerPassthrough: true,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -8188,6 +8401,7 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Stack(
+          clipBehavior: Clip.none,
           children: [
             Positioned.fill(
               child: hasItems
@@ -9161,31 +9375,39 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => const ColoredBox(color: fallback),
             );
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          base,
-          BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 56, sigmaY: 56),
-            child: Container(color: Colors.black.withValues(alpha: 0.72)),
-          ),
-          IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: desktop
-                      ? const Alignment(-0.44, -0.24)
-                      : const Alignment(0, -0.34),
-                  radius: desktop ? 0.78 : 0.64,
-                  colors: [
-                    Colors.white.withValues(alpha: 0.14),
-                    Colors.transparent,
-                  ],
+      return ValueListenableBuilder<AppearanceSettings>(
+        valueListenable: AppearanceSettingsService.instance.settings,
+        builder: (context, settings, _) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              base,
+              BackdropFilter(
+                filter: ImageFilter.blur(
+                  sigmaX: settings.ambientBlurSigmaX,
+                  sigmaY: settings.ambientBlurSigmaY,
+                ),
+                child: Container(color: Colors.black.withValues(alpha: 0.72)),
+              ),
+              IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: desktop
+                          ? const Alignment(-0.44, -0.24)
+                          : const Alignment(0, -0.34),
+                      radius: desktop ? 0.78 : 0.64,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.14),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       );
     }
 
@@ -9198,30 +9420,42 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               errorBuilder: (_, __, ___) =>
                   Container(color: Colors.black.withValues(alpha: 0.45)),
             );
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            visual,
-            BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-              child: Container(color: Colors.black.withValues(alpha: 0.42)),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment.center,
-                  radius: 0.88,
-                  colors: [
-                    Colors.white.withValues(alpha: 0.16),
-                    Colors.transparent,
-                  ],
+      return ValueListenableBuilder<AppearanceSettings>(
+        valueListenable: AppearanceSettingsService.instance.settings,
+        builder: (context, settings, _) {
+          final double underlaySigmaX =
+              settings.ambientBlurSigmaX * (24 / 56);
+          final double underlaySigmaY =
+              settings.ambientBlurSigmaY * (24 / 56);
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                visual,
+                BackdropFilter(
+                  filter: ImageFilter.blur(
+                    sigmaX: underlaySigmaX,
+                    sigmaY: underlaySigmaY,
+                  ),
+                  child: Container(color: Colors.black.withValues(alpha: 0.42)),
                 ),
-              ),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment.center,
+                      radius: 0.88,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.16),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       );
     }
 
@@ -9521,8 +9755,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   ],
                   const SizedBox(height: 10),
                   buildDescriptionBox(),
-                  const SizedBox(height: 8),
-                  buildSwipeControlRail(),
                 ],
               );
             },
@@ -9569,6 +9801,8 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   if (!active) return card;
                   return Hero(
                     tag: _collectionHeroTag(props.index),
+                    createRectTween: (begin, end) =>
+                        _EaseInOutRectTween(begin: begin, end: end),
                     child: card,
                   );
                 },
@@ -9608,10 +9842,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           ),
           AspectRatio(
             aspectRatio: 16 / 9,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: buildPreviewDeck(),
-            ),
+            child: buildPreviewDeck(),
           ),
         ],
       );
@@ -9782,32 +10013,27 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               const SizedBox.shrink(),
               const Spacer(),
               if (_mine)
-                PopupMenuButton<String>(
-                  color: cs.surfaceContainerHighest,
+                BlurMenuButton<String>(
+                  tooltip: 'Collection actions',
+                  items: [
+                    const _BlurMenuEntry.item(value: 'update', label: 'Update'),
+                    _BlurMenuEntry.item(
+                      value: 'visibility',
+                      label: summary.published ? 'Make Private' : 'Make Public',
+                    ),
+                    const _BlurMenuEntry.item(value: 'delete', label: 'Delete'),
+                  ],
                   onSelected: (value) {
                     if (value == 'update') _updateCollection();
                     if (value == 'visibility') _toggleVisibility();
                     if (value == 'delete') _deleteCollection();
                   },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem<String>(
-                      value: 'update',
-                      child: Text('Update'),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'visibility',
-                      child: Text(
-                          summary.published ? 'Make Private' : 'Make Public'),
-                    ),
-                    const PopupMenuItem<String>(
-                      value: 'delete',
-                      child: Text('Delete'),
-                    ),
-                  ],
                   icon: const Icon(Icons.more_vert, color: Colors.white),
                 ),
             ],
           ),
+          const SizedBox(height: 6),
+          buildSwipeControlRail(),
           buildFilterRail(),
           const SizedBox(height: 8),
           Expanded(
@@ -9825,27 +10051,38 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                     itemBuilder: (context, index) {
                       final item = suggestions[index];
                       return InkWell(
-                        onTap: () => Navigator.pushReplacementNamed(
+                        onTap: () => _pushHeroRoute(
                           context,
-                          buildCollectionRoutePathForSummary(item),
+                          builder: (_) => _CollectionDetailPage(
+                            collectionId: item.id,
+                            initialSummary: item,
+                          ),
+                          name: buildCollectionRoutePathForSummary(item),
+                          replace: true,
                         ),
                         child: Row(
                           children: [
                             SizedBox(
                               width: 140,
                               height: 78,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: IgnorePointer(
-                                  child: _GridPresetPreview(
-                                    mode: item.thumbnailMode ??
-                                        item.firstItem?.mode ??
-                                        '2d',
-                                    payload: item.thumbnailPayload.isNotEmpty
-                                        ? item.thumbnailPayload
-                                        : (item.firstItem?.snapshot ??
-                                            const <String, dynamic>{}),
-                                    pointerPassthrough: true,
+                              child: Hero(
+                                tag: 'collection-detail-hero-${item.id}-0',
+                                createRectTween: (begin, end) =>
+                                    _EaseInOutRectTween(
+                                        begin: begin, end: end),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: IgnorePointer(
+                                    child: _GridPresetPreview(
+                                      mode: item.thumbnailMode ??
+                                          item.firstItem?.mode ??
+                                          '2d',
+                                      payload: item.thumbnailPayload.isNotEmpty
+                                          ? item.thumbnailPayload
+                                          : (item.firstItem?.snapshot ??
+                                              const <String, dynamic>{}),
+                                      pointerPassthrough: true,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -9943,12 +10180,75 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           key: const ValueKey<String>('compact-collection-detail'),
           builder: (context, viewport) {
             final bool desktop = viewport.maxWidth >= 1140;
-            final Widget leftColumn = Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            const double horizontalPadding = 14;
+            const double rightPanelWidth = 360;
+            const double gap = 12;
+            final double contentWidth = viewport.maxWidth - (horizontalPadding * 2);
+            final double previewWidth = contentWidth;
+            final double previewHeight = previewWidth / (16 / 9);
+            final Widget leftScroll = Scrollbar(
+              controller: _leftPaneScrollController,
+              child: SingleChildScrollView(
+                controller: _leftPaneScrollController,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(height: previewHeight),
+                    buildBelowPreviewMeta(),
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+            );
+            final Widget desktopBody = Stack(
               children: [
-                buildPreviewSurface(),
-                buildBelowPreviewMeta(),
-                const SizedBox(height: 16),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: rightPanelWidth,
+                  child: buildRightPanel(
+                    desktop: true,
+                    viewportHeight: viewport.maxHeight - 28,
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  right: rightPanelWidth + gap,
+                  child: leftScroll,
+                ),
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  right: 0,
+                  child: buildPreviewSurface(),
+                ),
+              ],
+            );
+            final Widget mobileBody = Stack(
+              children: [
+                SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(height: previewHeight),
+                      buildBelowPreviewMeta(),
+                      const SizedBox(height: 12),
+                      buildRightPanel(
+                        desktop: false,
+                        viewportHeight: viewport.maxHeight,
+                      ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: buildPreviewSurface(),
+                ),
               ],
             );
             final Widget content = Stack(
@@ -9956,40 +10256,12 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                 Positioned.fill(child: buildBackdrop(desktop: desktop)),
                 Positioned.fill(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-                    child: desktop
-                        ? Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Scrollbar(
-                                  controller: _leftPaneScrollController,
-                                  child: SingleChildScrollView(
-                                    controller: _leftPaneScrollController,
-                                    child: leftColumn,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              buildRightPanel(
-                                desktop: true,
-                                viewportHeight: viewport.maxHeight - 28,
-                              ),
-                            ],
-                          )
-                        : SingleChildScrollView(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                leftColumn,
-                                const SizedBox(height: 12),
-                                buildRightPanel(
-                                  desktop: false,
-                                  viewportHeight: viewport.maxHeight,
-                                ),
-                              ],
-                            ),
-                          ),
+                    padding: const EdgeInsets.fromLTRB(
+                        horizontalPadding,
+                        horizontalPadding,
+                        horizontalPadding,
+                        horizontalPadding),
+                    child: desktop ? desktopBody : mobileBody,
                   ),
                 ),
               ],
@@ -10070,7 +10342,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   static const double _profileTitleRowHeight = 34;
   static const double _profileMetaRowHeight = 16;
   static const double _profileCardExtraHeight =
-      4 + _profileTitleRowHeight + _profileMetaRowHeight;
+      16 + _profileTitleRowHeight + _profileMetaRowHeight;
 
   bool _loading = true;
   String? _error;
@@ -10086,6 +10358,8 @@ class _ProfileTabState extends State<_ProfileTab> {
   List<RenderPreset> _history = const <RenderPreset>[];
   List<WatchLaterItem> _watchLater = const <WatchLaterItem>[];
   _SavedGridFilter _savedFilter = _SavedGridFilter.all;
+  Map<String, int> _presetViewsById = <String, int>{};
+  Map<String, AppUserProfile> _authorById = <String, AppUserProfile>{};
 
   @override
   void initState() {
@@ -10119,6 +10393,50 @@ class _ProfileTabState extends State<_ProfileTab> {
       final watchLater = await QueryGuard.run(
         () => _repository.fetchWatchLaterForCurrentUser(),
       );
+      final Set<String> presetIds = <String>{};
+      final Set<String> authorIds = <String>{};
+      void addPreset(RenderPreset preset) {
+        if (preset.id.isEmpty) return;
+        presetIds.add(preset.id);
+        if (preset.userId.isNotEmpty) {
+          authorIds.add(preset.userId);
+        }
+      }
+
+      for (final preset in posts) {
+        addPreset(preset);
+      }
+      for (final preset in saved) {
+        addPreset(preset);
+      }
+      for (final preset in history) {
+        addPreset(preset);
+      }
+      for (final item in watchLater) {
+        final preset = item.post;
+        if (preset != null) addPreset(preset);
+      }
+
+      final statsByPresetId = presetIds.isEmpty
+          ? <String, Map<String, dynamic>>{}
+          : await QueryGuard.run(
+              () => _repository.fetchPresetStatsByIds(presetIds),
+            );
+      final Map<String, int> viewsById = <String, int>{};
+      int safeInt(dynamic value) {
+        if (value is int) return value;
+        if (value is num) return value.toInt();
+        return int.tryParse(value?.toString() ?? '') ?? 0;
+      }
+
+      statsByPresetId.forEach((id, stats) {
+        viewsById[id] = safeInt(stats['views_count']);
+      });
+      final Map<String, AppUserProfile> authors = authorIds.isEmpty
+          ? <String, AppUserProfile>{}
+          : await QueryGuard.run(
+              () => _repository.fetchProfilesByIds(authorIds),
+            );
 
       if (!mounted) return;
       setState(() {
@@ -10129,6 +10447,8 @@ class _ProfileTabState extends State<_ProfileTab> {
         _posts = posts;
         _history = history;
         _watchLater = watchLater;
+        _presetViewsById = viewsById;
+        _authorById = authors;
         _loading = false;
       });
     } catch (e) {
@@ -10141,17 +10461,181 @@ class _ProfileTabState extends State<_ProfileTab> {
     }
   }
 
+  FeedPost _fallbackFeedPost(RenderPreset preset) {
+    return FeedPost(
+      preset: preset,
+      author: _authorById[preset.userId],
+      likesCount: 0,
+      dislikesCount: 0,
+      commentsCount: 0,
+      savesCount: 0,
+      viewsCount: _presetViewsById[preset.id] ?? 0,
+      myReaction: 0,
+      isSaved: false,
+      isFollowingAuthor: false,
+      isWatchLater: false,
+    );
+  }
+
   Future<void> _openPost(RenderPreset preset) async {
     await _repository.recordPresetView(preset.id);
     if (!mounted) return;
-    await Navigator.pushNamed(context, buildPostRoutePathForPreset(preset));
+    FeedPost resolved = _fallbackFeedPost(preset);
+    try {
+      final fetched = await _repository.fetchFeedPostById(preset.id);
+      if (fetched != null) {
+        resolved = fetched;
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    await _pushHeroRoute(
+      context,
+      builder: (_) => _PresetDetailPage(initialPost: resolved),
+      name: buildPostRoutePathForPreset(preset),
+    );
     await _load();
   }
 
   Future<void> _openCollection(CollectionSummary summary) async {
-    await Navigator.pushNamed(
-        context, buildCollectionRoutePathForSummary(summary));
+    await _pushHeroRoute(
+      context,
+      builder: (_) => _CollectionDetailPage(
+        collectionId: summary.id,
+        initialSummary: summary,
+      ),
+      name: buildCollectionRoutePathForSummary(summary),
+    );
     await _load();
+  }
+
+  Future<void> _copyPostLink(RenderPreset preset) async {
+    await Clipboard.setData(ClipboardData(text: buildPostShareUrl(preset)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Post link copied.')),
+    );
+  }
+
+  Future<void> _copyCollectionLink(CollectionSummary? summary) async {
+    if (summary == null) return;
+    await Clipboard.setData(
+        ClipboardData(text: buildCollectionShareUrl(summary)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Collection link copied.')),
+    );
+  }
+
+  Future<void> _editPost(RenderPreset preset) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/editor/card-update'),
+        builder: (_) => _PostCardComposerPage.single(
+          name: preset.name,
+          mode: preset.mode,
+          payload: preset.payload,
+          existingPreset: preset,
+          editTarget: _ComposerEditTarget.card,
+          startBlankCard: false,
+        ),
+      ),
+    );
+    await _load();
+  }
+
+  Future<void> _togglePresetVisibility(RenderPreset preset) async {
+    try {
+      await _repository.setPresetVisibility(
+        presetId: preset.id,
+        isPublic: !preset.isPublic,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            preset.isPublic ? 'Post set to private.' : 'Post set to public.',
+          ),
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update visibility: $e')),
+      );
+    }
+  }
+
+  Future<void> _deletePreset(RenderPreset preset) async {
+    final bool shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete post?'),
+            content: const Text('This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldDelete) return;
+    try {
+      await _repository.deletePresetPost(preset.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post deleted.')),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e')),
+      );
+    }
+  }
+
+  Future<void> _removeSavedEntry(Map<String, dynamic> entry) async {
+    final String kind = entry['kind']?.toString() ?? '';
+    final RenderPreset? preset = entry['preset'] as RenderPreset?;
+    final CollectionSummary? collection =
+        entry['collection'] as CollectionSummary?;
+    try {
+      if (kind == 'saved_post' && preset != null) {
+        await _repository.toggleSavePreset(preset.id, save: false);
+      } else if (kind == 'saved_collection' && collection != null) {
+        await _repository.toggleSaveCollection(collection.id, save: false);
+      } else if (kind == 'watch_later_post' && preset != null) {
+        await _repository.toggleWatchLaterItem(
+          targetType: 'post',
+          targetId: preset.id,
+          watchLater: false,
+        );
+      } else if (kind == 'watch_later_collection' && collection != null) {
+        await _repository.toggleWatchLaterItem(
+          targetType: 'collection',
+          targetId: collection.id,
+          watchLater: false,
+        );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$kind removed.')),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Update failed: $e')),
+      );
+    }
   }
 
   Future<void> _editProfile() async {
@@ -10310,6 +10794,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   Widget _buildPresetGridTab({
     required List<RenderPreset> presets,
     required String emptyMessage,
+    bool enableOwnerActions = false,
   }) {
     final cs = Theme.of(context).colorScheme;
     if (presets.isEmpty) {
@@ -10345,72 +10830,133 @@ class _ProfileTabState extends State<_ProfileTab> {
                 preset.thumbnailPayload.isNotEmpty
                     ? preset.thumbnailPayload
                     : preset.payload;
-            return InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () => _openPost(preset),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: cs.surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: cs.outline.withValues(alpha: 0.2),
+            final String heroTag = 'post-detail-hero-${preset.id}';
+            final int viewsCount = _presetViewsById[preset.id] ?? 0;
+            final String authorName =
+                _authorById[preset.userId]?.displayName ??
+                    _profile?.displayName ??
+                    'Unknown creator';
+            final List<_BlurMenuEntry<String>> menuItems =
+                <_BlurMenuEntry<String>>[
+              const _BlurMenuEntry.item(value: 'share', label: 'Share'),
+              if (enableOwnerActions) const _BlurMenuEntry.divider(),
+              if (enableOwnerActions)
+                const _BlurMenuEntry.item(value: 'edit', label: 'Update'),
+              if (enableOwnerActions)
+                _BlurMenuEntry.item(
+                  value: 'visibility',
+                  label: preset.isPublic ? 'Make Private' : 'Make Public',
+                ),
+              if (enableOwnerActions)
+                const _BlurMenuEntry.item(value: 'delete', label: 'Delete'),
+            ];
+            final Widget topRightMeta = Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${_friendlyCount(viewsCount)} views · ${_friendlyTime(preset.createdAt)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AspectRatio(
-                      aspectRatio: 16 / 9,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                const SizedBox(width: 6),
+                BlurMenuButton<String>(
+                  tooltip: 'Post actions',
+                  items: menuItems,
+                  onSelected: (value) {
+                    if (value == 'share') _copyPostLink(preset);
+                    if (value == 'edit') _editPost(preset);
+                    if (value == 'visibility') _togglePresetVisibility(preset);
+                    if (value == 'delete') _deletePreset(preset);
+                  },
+                  icon: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.more_vert,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                ),
+              ],
+            );
+            return InkWell(
+              onTap: () => _openPost(preset),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AspectRatio(
+                    aspectRatio: _kGridPreviewAspectRatio,
+                    child: Hero(
+                      tag: heroTag,
+                      createRectTween: (begin, end) =>
+                          _EaseInOutRectTween(begin: begin, end: end),
+                      child: SvgCardShell(
+                        baseColor: const Color(0xFFF0F0F0),
+                        avatarImage: (_authorById[preset.userId]?.avatarUrl ??
+                                    _profile?.avatarUrl ??
+                                    '')
+                                .trim()
+                                .isNotEmpty
+                            ? NetworkImage(
+                                (_authorById[preset.userId]?.avatarUrl ??
+                                        _profile?.avatarUrl ??
+                                        '')
+                                    .trim(),
+                              )
+                            : null,
+                        topRightOverlay: topRightMeta,
                         child: _GridPresetPreview(
                           mode: mode,
                           payload: payload,
-                          borderRadius: BorderRadius.circular(8),
+                          clipper: const SvgCardClipper(),
                           pointerPassthrough: true,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      height: _profileTitleRowHeight,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Align(
-                          alignment: Alignment.topLeft,
-                          child: Text(
-                            title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: cs.onSurface,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: _profileTitleRowHeight,
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: cs.onSurface,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
-                    SizedBox(
-                      height: _profileMetaRowHeight,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            '${preset.mode.toUpperCase()} · ${_friendlyTime(preset.createdAt)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: cs.onSurfaceVariant,
-                              fontSize: 11,
-                            ),
-                          ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: _profileMetaRowHeight,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        authorName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontSize: 11,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             );
           },
@@ -10557,14 +11103,85 @@ class _ProfileTabState extends State<_ProfileTab> {
                         final String entityId = isCollection
                             ? collection.id
                             : (preset?.id ?? 'unknown');
-                        final String meta = switch (kind) {
-                          'saved_collection' => 'Saved collection',
-                          'watch_later_collection' => 'Watch later',
-                          'watch_later_post' => 'Watch later',
-                          _ => 'Saved post',
-                        };
+                        final int viewsCount = isCollection
+                            ? collection.viewsCount
+                            : (preset == null
+                                ? 0
+                                : (_presetViewsById[preset.id] ?? 0));
+                        final DateTime createdAt = isCollection
+                            ? collection.createdAt
+                            : (preset?.createdAt ??
+                                (entry['createdAt'] as DateTime));
+                        final String authorName = isCollection
+                            ? (collection.author?.displayName ??
+                                'Unknown creator')
+                            : (_authorById[preset?.userId ?? '']?.displayName ??
+                                'Unknown creator');
+                        final String? avatarUrl = isCollection
+                            ? collection.author?.avatarUrl
+                            : _authorById[preset?.userId ?? '']?.avatarUrl;
+                        final String heroTag = isCollection
+                            ? 'collection-detail-hero-${collection.id}-0'
+                            : 'post-detail-hero-${preset?.id ?? entityId}';
+                        final String removeLabel = kind.startsWith('watch_later')
+                            ? 'Remove from Watch Later'
+                            : 'Remove from Saved';
+                        final List<_BlurMenuEntry<String>> menuItems =
+                            <_BlurMenuEntry<String>>[
+                          _BlurMenuEntry.item(
+                            value: 'remove',
+                            label: removeLabel,
+                          ),
+                          const _BlurMenuEntry.item(
+                            value: 'share',
+                            label: 'Share',
+                          ),
+                        ];
+                        final Widget topRightMeta = Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '${_friendlyCount(viewsCount)} views · ${_friendlyTime(createdAt)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.9),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            BlurMenuButton<String>(
+                              tooltip: 'Saved item actions',
+                              items: menuItems,
+                              onSelected: (value) {
+                                if (value == 'remove') {
+                                  _removeSavedEntry(entry);
+                                }
+                                if (value == 'share') {
+                                  if (isCollection) {
+                                    _copyCollectionLink(collection);
+                                  } else if (preset != null) {
+                                    _copyPostLink(preset);
+                                  }
+                                }
+                              },
+                              icon: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.35),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.more_vert,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
                         return InkWell(
-                          borderRadius: BorderRadius.circular(12),
                           onTap: () {
                             if (isCollection) {
                               _openCollection(collection);
@@ -10574,71 +11191,67 @@ class _ProfileTabState extends State<_ProfileTab> {
                               _openPost(preset);
                             }
                           },
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: cs.surfaceContainerLow,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: cs.outline.withValues(alpha: 0.2),
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                AspectRatio(
-                                  aspectRatio: 16 / 9,
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              AspectRatio(
+                                aspectRatio: _kGridPreviewAspectRatio,
+                                child: Hero(
+                                  tag: heroTag,
+                                  createRectTween: (begin, end) =>
+                                      _EaseInOutRectTween(
+                                          begin: begin, end: end),
+                                  child: SvgCardShell(
+                                    baseColor: const Color(0xFFF0F0F0),
+                                    avatarImage: (avatarUrl ?? '')
+                                            .trim()
+                                            .isNotEmpty
+                                        ? NetworkImage(avatarUrl!.trim())
+                                        : null,
+                                    topRightOverlay: topRightMeta,
                                     child: _GridPresetPreview(
                                       mode: mode,
                                       payload: payload,
-                                      borderRadius: BorderRadius.circular(8),
+                                      clipper: const SvgCardClipper(),
                                       pointerPassthrough: true,
                                     ),
                                   ),
                                 ),
-                                const SizedBox(height: 4),
-                                SizedBox(
-                                  height: _profileTitleRowHeight,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8),
-                                    child: Align(
-                                      alignment: Alignment.topLeft,
-                                      child: Text(
-                                        title,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: cs.onSurface,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                height: _profileTitleRowHeight,
+                                child: Align(
+                                  alignment: Alignment.topLeft,
+                                  child: Text(
+                                    title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: cs.onSurface,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
                                     ),
                                   ),
                                 ),
-                                SizedBox(
-                                  height: _profileMetaRowHeight,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8),
-                                    child: Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                        '$meta · ${_friendlyTime(entry['createdAt'] as DateTime)}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: cs.onSurfaceVariant,
-                                          fontSize: 11,
-                                        ),
-                                      ),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                height: _profileMetaRowHeight,
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    authorName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: cs.onSurfaceVariant,
+                                      fontSize: 11,
                                     ),
                                   ),
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         );
                       },
@@ -10790,10 +11403,12 @@ class _ProfileTabState extends State<_ProfileTab> {
                   _buildPresetGridTab(
                     presets: _posts,
                     emptyMessage: 'No posts yet.',
+                    enableOwnerActions: true,
                   ),
                   _buildPresetGridTab(
                     presets: _history,
                     emptyMessage: 'No history yet.',
+                    enableOwnerActions: false,
                   ),
                 ],
               ),
@@ -14964,10 +15579,12 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final BorderRadius previewRadius = BorderRadius.circular(18);
     final bool enable3dMousePreview =
         !_showPublishStep && _thumbnailMode == '3d';
+    final bool isCardEditor = _isCardEditor;
     Widget previewSurface = _GridPresetPreview(
       mode: _thumbnailMode,
       payload: _thumbnailPayload,
       borderRadius: previewRadius,
+      clipper: isCardEditor ? const SvgCardClipper() : null,
       pointerPassthrough: !enable3dMousePreview,
     );
     if (!_showPublishStep && _thumbnailMode == '2d') {
@@ -14980,9 +15597,14 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         ),
       );
     }
-    final preview = AspectRatio(
-      aspectRatio: 16 / 9,
-      child: previewSurface,
+    final Widget preview = AspectRatio(
+      aspectRatio: isCardEditor ? _kGridPreviewAspectRatio : 16 / 9,
+      child: isCardEditor
+          ? SvgCardShell(
+              baseColor: const Color(0xFFF0F0F0),
+              child: previewSurface,
+            )
+          : previewSurface,
     );
 
     final String composerTitle = () {
@@ -15016,7 +15638,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           ),
         ),
         child: Text(
-          _isDetailEditor ? 'Detail Preview (16:9)' : 'Card Preview (16:9)',
+          _isDetailEditor
+              ? 'Detail Preview (16:9)'
+              : 'Card Preview (1661:960)',
           style: TextStyle(
             color: cs.onSurface,
             fontWeight: FontWeight.w700,
@@ -15460,6 +16084,16 @@ class _SettingsTab extends StatefulWidget {
   State<_SettingsTab> createState() => _SettingsTabState();
 }
 
+enum _SettingsSection {
+  tracker,
+  appearance,
+  profile,
+  notifications,
+  privacy,
+  playback,
+  about,
+}
+
 class _SettingsTabState extends State<_SettingsTab> {
   final AppRepository _repository = AppRepository.instance;
 
@@ -15470,6 +16104,10 @@ class _SettingsTabState extends State<_SettingsTab> {
   bool _prefsLoading = true;
   String? _prefsError;
   TrackerRuntimeConfig _trackerConfig = TrackerRuntimeConfig.defaults;
+  _SettingsSection _selectedSection = _SettingsSection.tracker;
+  AppUserProfile? _profile;
+  bool _profileLoading = true;
+  String? _profileError;
 
   @override
   void initState() {
@@ -15477,6 +16115,7 @@ class _SettingsTabState extends State<_SettingsTab> {
     _themeMode = widget.currentThemeMode;
     _cursorEnabled = TrackingService.instance.dartCursorEnabled;
     _loadTrackerPrefs();
+    _loadProfileSummary();
   }
 
   @override
@@ -15528,6 +16167,41 @@ class _SettingsTabState extends State<_SettingsTab> {
       setState(() {
         _prefsLoading = false;
         _prefsError = failure.message;
+      });
+    }
+  }
+
+  Future<void> _loadProfileSummary() async {
+    final user = _repository.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      setState(() {
+        _profileLoading = false;
+        _profileError = 'Sign in to manage profile settings.';
+      });
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _profileLoading = true;
+        _profileError = null;
+      });
+    }
+    try {
+      final profile = await QueryGuard.run(
+        () => _repository.fetchCurrentUserProfile(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _profileLoading = false;
+      });
+    } catch (e) {
+      final failure = QueryGuard.classify(e);
+      if (!mounted) return;
+      setState(() {
+        _profileLoading = false;
+        _profileError = failure.message;
       });
     }
   }
@@ -15621,63 +16295,134 @@ class _SettingsTabState extends State<_SettingsTab> {
     Navigator.pushReplacementNamed(context, '/feed');
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+  Future<void> _openEditProfile() async {
+    final profile = _profile;
+    if (profile == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _EditProfilePage(profile: profile),
+      ),
+    );
+    await _loadProfileSummary();
+  }
+
+  Widget _settingsNavItem({
+    required ColorScheme cs,
+    required _SettingsSection section,
+    required IconData icon,
+    required String label,
+    String? subtitle,
+  }) {
+    final bool selected = _selectedSection == section;
+    return ListTile(
+      selected: selected,
+      selectedTileColor: cs.primary.withValues(alpha: 0.14),
+      leading: Icon(
+        icon,
+        color: selected ? cs.primary : cs.onSurfaceVariant,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(color: cs.onSurface),
+      ),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle,
+              style: TextStyle(color: cs.onSurfaceVariant),
+            ),
+      onTap: () => setState(() => _selectedSection = section),
+    );
+  }
+
+  Widget _buildSettingsNav(ColorScheme cs, Color panelColor) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: panelColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+            child: Text(
+              'Settings',
+              style: TextStyle(
+                color: cs.onSurface,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
+          _settingsNavItem(
+            cs: cs,
+            section: _SettingsSection.tracker,
+            icon: Icons.track_changes_rounded,
+            label: 'Tracker',
+            subtitle: 'Tracking & cursor',
+          ),
+          _settingsNavItem(
+            cs: cs,
+            section: _SettingsSection.appearance,
+            icon: Icons.palette_rounded,
+            label: 'Appearance',
+            subtitle: 'Theme & blur',
+          ),
+          _settingsNavItem(
+            cs: cs,
+            section: _SettingsSection.profile,
+            icon: Icons.person_rounded,
+            label: 'Profile',
+            subtitle: 'Account settings',
+          ),
+          _settingsNavItem(
+            cs: cs,
+            section: _SettingsSection.notifications,
+            icon: Icons.notifications_rounded,
+            label: 'Notifications',
+            subtitle: 'Activity alerts',
+          ),
+          _settingsNavItem(
+            cs: cs,
+            section: _SettingsSection.privacy,
+            icon: Icons.lock_rounded,
+            label: 'Privacy & Safety',
+            subtitle: 'Visibility controls',
+          ),
+          _settingsNavItem(
+            cs: cs,
+            section: _SettingsSection.playback,
+            icon: Icons.storage_rounded,
+            label: 'Playback & Data',
+            subtitle: 'Quality & usage',
+          ),
+          _settingsNavItem(
+            cs: cs,
+            section: _SettingsSection.about,
+            icon: Icons.info_outline_rounded,
+            label: 'About',
+            subtitle: 'Version & help',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrackerSection(ColorScheme cs) {
     final tracking = TrackingService.instance;
     final bool mouseHoverSupported = tracking.supportsMouseHover;
     final bool accelerometerSupported = tracking.supportsAccelerometer;
     final bool gyroSupported = tracking.supportsGyro;
+    final String cursorModeValue =
+        _trackerConfig.cursorMode == 'iris' ? 'iris' : 'head';
 
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Theme',
-                style: TextStyle(
-                  color: cs.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Choose how DeepX looks.',
-                style: TextStyle(color: cs.onSurfaceVariant),
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                initialValue: _themeMode,
-                dropdownColor: cs.surfaceContainerHighest,
-                style: TextStyle(color: cs.onSurface),
-                items: const [
-                  DropdownMenuItem(value: 'dark', child: Text('Dark')),
-                  DropdownMenuItem(value: 'light', child: Text('Light')),
-                  DropdownMenuItem(value: 'system', child: Text('System')),
-                ],
-                onChanged: (value) {
-                  if (value != null) _setTheme(value);
-                },
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.4),
-                  border: const OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -15794,15 +16539,17 @@ class _SettingsTabState extends State<_SettingsTab> {
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
-                  initialValue: _trackerConfig.cursorMode,
+                  initialValue: cursorModeValue,
                   decoration: const InputDecoration(
                     labelText: 'Cursor Mode',
                     border: OutlineInputBorder(),
                   ),
                   items: const [
-                    DropdownMenuItem(value: 'head', child: Text('Head Pose')),
+                    DropdownMenuItem(
+                      value: 'head',
+                      child: Text('Auto (Head + Hand)'),
+                    ),
                     DropdownMenuItem(value: 'iris', child: Text('Iris')),
-                    DropdownMenuItem(value: 'hand', child: Text('Hand')),
                   ],
                   onChanged: _trackerEnabled
                       ? (value) {
@@ -15916,8 +16663,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed:
-                      _trackerEnabled ? _resetTrackerDefaults : null,
+                  onPressed: _trackerEnabled ? _resetTrackerDefaults : null,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Reset Tracker Defaults'),
                 ),
@@ -16282,7 +17028,14 @@ class _SettingsTabState extends State<_SettingsTab> {
             ],
           ),
         ),
-        const SizedBox(height: 12),
+      ],
+    );
+  }
+
+  Widget _buildAppearanceSection(ColorScheme cs) {
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -16294,7 +17047,7 @@ class _SettingsTabState extends State<_SettingsTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Session',
+                'Theme',
                 style: TextStyle(
                   color: cs.onSurface,
                   fontSize: 18,
@@ -16302,15 +17055,308 @@ class _SettingsTabState extends State<_SettingsTab> {
                 ),
               ),
               const SizedBox(height: 8),
-              FilledButton.tonalIcon(
-                onPressed: _confirmSignOut,
-                icon: const Icon(Icons.logout),
-                label: const Text('Logout'),
+              Text(
+                'Choose how DeepX looks.',
+                style: TextStyle(color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _themeMode,
+                dropdownColor: cs.surfaceContainerHighest,
+                style: TextStyle(color: cs.onSurface),
+                items: const [
+                  DropdownMenuItem(value: 'dark', child: Text('Dark')),
+                  DropdownMenuItem(value: 'light', child: Text('Light')),
+                  DropdownMenuItem(value: 'system', child: Text('System')),
+                ],
+                onChanged: (value) {
+                  if (value != null) _setTheme(value);
+                },
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.4),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+          ),
+          child: ValueListenableBuilder<AppearanceSettings>(
+            valueListenable: AppearanceSettingsService.instance.settings,
+            builder: (context, settings, _) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Ambient Blur',
+                    style: TextStyle(
+                      color: cs.onSurface,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Adjust blur strength for post and collection detail backgrounds.',
+                    style: TextStyle(color: cs.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 10),
+                  _appearanceSlider(
+                    label: 'Blur Sigma X',
+                    value: settings.ambientBlurSigmaX,
+                    onChanged:
+                        AppearanceSettingsService.instance.updateSigmaX,
+                  ),
+                  _appearanceSlider(
+                    label: 'Blur Sigma Y',
+                    value: settings.ambientBlurSigmaY,
+                    onChanged:
+                        AppearanceSettingsService.instance.updateSigmaY,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProfileSection(ColorScheme cs) {
+    final profile = _profile;
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Profile Settings',
+                style: TextStyle(
+                  color: cs.onSurface,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (_profileLoading)
+                const SizedBox(
+                  height: 60,
+                  child: _TopEdgeLoadingPane(label: 'Loading profile...'),
+                )
+              else if (_profileError != null)
+                SizedBox(
+                  height: 160,
+                  child: QueryRetryPane(
+                    title: _profileError,
+                    offline: _isOfflineErrorText(_profileError!),
+                    onRetry: _loadProfileSummary,
+                  ),
+                )
+              else if (profile == null)
+                Text(
+                  'Sign in to manage profile settings.',
+                  style: TextStyle(color: cs.onSurfaceVariant),
+                )
+              else ...[
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 22,
+                      backgroundImage:
+                          (profile.avatarUrl ?? '').trim().isNotEmpty
+                              ? NetworkImage(profile.avatarUrl!.trim())
+                              : null,
+                      child: (profile.avatarUrl ?? '').trim().isEmpty
+                          ? Text(
+                              profile.displayName.isNotEmpty
+                                  ? profile.displayName[0].toUpperCase()
+                                  : 'U',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            profile.displayName,
+                            style: TextStyle(
+                              color: cs.onSurface,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if ((profile.username ?? '').trim().isNotEmpty)
+                            Text(
+                              '@${profile.username}',
+                              style: TextStyle(color: cs.onSurfaceVariant),
+                            )
+                          else
+                            Text(
+                              profile.email,
+                              style: TextStyle(color: cs.onSurfaceVariant),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    FilledButton(
+                      onPressed: _openEditProfile,
+                      child: const Text('Edit Profile'),
+                    ),
+                    const SizedBox(width: 10),
+                    FilledButton.tonalIcon(
+                      onPressed: _confirmSignOut,
+                      icon: const Icon(Icons.logout),
+                      label: const Text('Sign Out'),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlaceholderSection({
+    required ColorScheme cs,
+    required String title,
+    required String description,
+  }) {
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: cs.onSurface,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                description,
+                style: TextStyle(color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Coming soon',
+                style: TextStyle(
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color panelColor = isDark ? const Color(0xFF1E1E1E) : cs.surface;
+
+    Widget sectionBody;
+    switch (_selectedSection) {
+      case _SettingsSection.tracker:
+        sectionBody = _buildTrackerSection(cs);
+        break;
+      case _SettingsSection.appearance:
+        sectionBody = _buildAppearanceSection(cs);
+        break;
+      case _SettingsSection.profile:
+        sectionBody = _buildProfileSection(cs);
+        break;
+      case _SettingsSection.notifications:
+        sectionBody = _buildPlaceholderSection(
+          cs: cs,
+          title: 'Notifications',
+          description: 'Manage push and email notifications.',
+        );
+        break;
+      case _SettingsSection.privacy:
+        sectionBody = _buildPlaceholderSection(
+          cs: cs,
+          title: 'Privacy & Safety',
+          description: 'Control visibility, moderation, and safety tools.',
+        );
+        break;
+      case _SettingsSection.playback:
+        sectionBody = _buildPlaceholderSection(
+          cs: cs,
+          title: 'Playback & Data',
+          description: 'Adjust quality preferences and data usage.',
+        );
+        break;
+      case _SettingsSection.about:
+        sectionBody = _buildPlaceholderSection(
+          cs: cs,
+          title: 'About',
+          description: 'Version details, policies, and support.',
+        );
+        break;
+    }
+
+    final Widget rightPanel = DecoratedBox(
+      decoration: BoxDecoration(
+        color: panelColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: sectionBody,
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 14, 10, 10),
+      child: Row(
+        children: [
+          SizedBox(width: 320, child: _buildSettingsNav(cs, panelColor)),
+          const SizedBox(width: 10),
+          Expanded(child: rightPanel),
+        ],
+      ),
     );
   }
 
@@ -16331,6 +17377,29 @@ class _SettingsTabState extends State<_SettingsTab> {
             value: value.clamp(min, max),
             min: min,
             max: max,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _appearanceSlider({
+    required String label,
+    required double value,
+    required ValueChanged<double> onChanged,
+  }) {
+    final double clamped = value.clamp(0, 100);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$label: ${clamped.toStringAsFixed(0)}'),
+          Slider(
+            value: clamped,
+            min: 0,
+            max: 100,
             onChanged: onChanged,
           ),
         ],
