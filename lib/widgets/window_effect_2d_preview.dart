@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../models/preset_payload_v2.dart';
 import '../models/tracking_frame.dart';
+import '../rendering_support.dart';
 import '../services/tracking_service.dart';
 
 enum WindowEffectLayerMode {
@@ -22,6 +23,8 @@ class WindowEffect2DPreview extends StatelessWidget {
     this.clipper,
     this.layerMode = WindowEffectLayerMode.combined,
     this.outsideOverflowMax = 100,
+    this.externalHeadPose,
+    this.useGlobalTracking = true,
   });
 
   final String mode;
@@ -30,6 +33,8 @@ class WindowEffect2DPreview extends StatelessWidget {
   final CustomClipper<Path>? clipper;
   final WindowEffectLayerMode layerMode;
   final double outsideOverflowMax;
+  final Map<String, double>? externalHeadPose;
+  final bool useGlobalTracking;
 
   @override
   Widget build(BuildContext context) {
@@ -52,49 +57,85 @@ class WindowEffect2DPreview extends StatelessWidget {
       );
     }
 
-    return ValueListenableBuilder<TrackingFrame>(
-      valueListenable: TrackingService.instance.frameNotifier,
-      builder: (context, frame, _) {
-        final TrackingFrame effectiveFrame = _applyFrameForControls(
-          frame: frame,
-          controls: controls,
-        );
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final Size size = constraints.biggest;
-            final List<Widget> inside = <Widget>[];
-            final List<Widget> outside = <Widget>[];
-            for (final layer in layers) {
-              if (!layer.visible || layer.name == 'turning_point') continue;
-              final bool isOutside =
-                  !layer.isRect && layer.order > turningOrder;
-              final Widget item = _buildLayer(
-                layer: layer,
-                frame: effectiveFrame,
-                controls: controls,
-                turningOrder: turningOrder,
-                canvasSize: size,
-                isOutsideLayer: isOutside,
+    Widget buildForFrame(TrackingFrame frame) {
+      final TrackingFrame effectiveFrame = _applyFrameForControls(
+        frame: frame,
+        controls: controls,
+      );
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final Size size = constraints.biggest;
+          final List<Widget> inside = <Widget>[];
+          final List<Widget> outside = <Widget>[];
+          for (final layer in layers) {
+            if (!layer.visible || layer.name == 'turning_point') continue;
+            final bool isOutside = !layer.isRect && layer.order > turningOrder;
+            final Widget item = _buildLayer(
+              layer: layer,
+              frame: effectiveFrame,
+              controls: controls,
+              turningOrder: turningOrder,
+              canvasSize: size,
+              isOutsideLayer: isOutside,
+            );
+            if (isOutside) {
+              outside.add(item);
+            } else {
+              inside.add(item);
+            }
+          }
+          Widget clipInside(Widget child) {
+            if (clipper != null) {
+              return ClipPath(
+                clipper: clipper!,
+                clipBehavior: Clip.antiAlias,
+                child: child,
               );
-              if (isOutside) {
-                outside.add(item);
-              } else {
-                inside.add(item);
-              }
             }
-            Widget clipInside(Widget child) {
-              if (clipper != null) {
-                return ClipPath(
-                  clipper: clipper!,
-                  clipBehavior: Clip.antiAlias,
-                  child: child,
-                );
-              }
-              return ClipRRect(borderRadius: borderRadius, child: child);
-            }
+            return ClipRRect(borderRadius: borderRadius, child: child);
+          }
 
-            if (layerMode == WindowEffectLayerMode.insideOnly) {
-              return clipInside(
+          if (layerMode == WindowEffectLayerMode.insideOnly) {
+            return clipInside(
+              ColoredBox(
+                color: Colors.black,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  fit: StackFit.expand,
+                  children: inside,
+                ),
+              ),
+            );
+          }
+
+          if (layerMode == WindowEffectLayerMode.outsideOnly) {
+            if (outside.isEmpty) return const SizedBox.shrink();
+            return Stack(
+              clipBehavior: Clip.none,
+              fit: StackFit.expand,
+              children: <Widget>[
+                Positioned(
+                  left: -outsideOverflowMax,
+                  right: -outsideOverflowMax,
+                  top: -outsideOverflowMax,
+                  bottom: -outsideOverflowMax,
+                  child: IgnorePointer(
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      fit: StackFit.expand,
+                      children: outside,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return Stack(
+            clipBehavior: Clip.none,
+            fit: StackFit.expand,
+            children: <Widget>[
+              clipInside(
                 ColoredBox(
                   color: Colors.black,
                   child: Stack(
@@ -103,67 +144,36 @@ class WindowEffect2DPreview extends StatelessWidget {
                     children: inside,
                   ),
                 ),
-              );
-            }
-
-            if (layerMode == WindowEffectLayerMode.outsideOnly) {
-              if (outside.isEmpty) return const SizedBox.shrink();
-              return Stack(
-                clipBehavior: Clip.none,
-                fit: StackFit.expand,
-                children: <Widget>[
-                  Positioned(
-                    left: -outsideOverflowMax,
-                    right: -outsideOverflowMax,
-                    top: -outsideOverflowMax,
-                    bottom: -outsideOverflowMax,
-                    child: IgnorePointer(
+              ),
+              if (outside.isNotEmpty)
+                Positioned(
+                  left: -outsideOverflowMax,
+                  right: -outsideOverflowMax,
+                  top: -outsideOverflowMax,
+                  bottom: -outsideOverflowMax,
+                  child: IgnorePointer(
+                    child: ClipRect(
                       child: Stack(
-                        clipBehavior: Clip.none,
+                        clipBehavior: Clip.hardEdge,
                         fit: StackFit.expand,
                         children: outside,
                       ),
                     ),
                   ),
-                ],
-              );
-            }
-
-            return Stack(
-              clipBehavior: Clip.none,
-              fit: StackFit.expand,
-              children: <Widget>[
-                clipInside(
-                  ColoredBox(
-                    color: Colors.black,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      fit: StackFit.expand,
-                      children: inside,
-                    ),
-                  ),
                 ),
-                if (outside.isNotEmpty)
-                  Positioned(
-                    left: -outsideOverflowMax,
-                    right: -outsideOverflowMax,
-                    top: -outsideOverflowMax,
-                    bottom: -outsideOverflowMax,
-                    child: IgnorePointer(
-                      child: ClipRect(
-                        child: Stack(
-                          clipBehavior: Clip.hardEdge,
-                          fit: StackFit.expand,
-                          children: outside,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        );
-      },
+            ],
+          );
+        },
+      );
+    }
+
+    if (externalHeadPose != null || !useGlobalTracking) {
+      return buildForFrame(trackingFrameFromHeadPose(externalHeadPose));
+    }
+
+    return ValueListenableBuilder<TrackingFrame>(
+      valueListenable: TrackingService.instance.frameNotifier,
+      builder: (context, frame, _) => buildForFrame(frame),
     );
   }
 

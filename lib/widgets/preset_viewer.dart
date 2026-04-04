@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../engine3d.dart';
 import '../layer_mode.dart';
 import '../models/preset_payload_v2.dart';
+import 'panorama_viewer_360.dart';
 
 class PresetViewer extends StatelessWidget {
   const PresetViewer({
@@ -40,6 +41,19 @@ class PresetViewer extends StatelessWidget {
     );
     if (adapted.mode == '2d') {
       return LayerMode(
+        cleanView: cleanView,
+        embedded: embedded,
+        embeddedStudio: embeddedStudio,
+        initialPresetPayload: adapted.toMap(),
+        externalHeadPose: headPose,
+        useGlobalTracking: useGlobalTracking,
+        pointerPassthrough: pointerPassthrough,
+        reanchorToken: reanchorToken,
+        studioSurface: studioSurface,
+      );
+    }
+    if (adapted.mode == '360') {
+      return PanoramaViewer360(
         cleanView: cleanView,
         embedded: embedded,
         embeddedStudio: embeddedStudio,

@@ -7,7 +7,7 @@ create extension if not exists pgcrypto;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'render_mode') THEN
-    CREATE TYPE public.render_mode AS ENUM ('2d', '3d');
+    CREATE TYPE public.render_mode AS ENUM ('2d', '3d', '360', 'post_studio_draft');
   END IF;
 END $$;
 

@@ -132,6 +132,7 @@ class SvgCardShell extends StatelessWidget {
     this.avatarImage,
     this.avatarFallbackColor = const Color(0xFF8E8E8E),
     this.topRightOverlay,
+    this.topRightOverlayBuilder,
   });
 
   final Widget child;
@@ -139,6 +140,8 @@ class SvgCardShell extends StatelessWidget {
   final ImageProvider? avatarImage;
   final Color avatarFallbackColor;
   final Widget? topRightOverlay;
+  final Widget Function(BuildContext context, Size size)?
+      topRightOverlayBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -152,6 +155,8 @@ class SvgCardShell extends StatelessWidget {
           _svgAvatarCenter.dx * sx,
           _svgAvatarCenter.dy * sy,
         );
+        final Widget? resolvedTopRightOverlay =
+            topRightOverlayBuilder?.call(context, size) ?? topRightOverlay;
         return Stack(
           clipBehavior: Clip.none,
           children: [
@@ -191,12 +196,8 @@ class SvgCardShell extends StatelessWidget {
                 ),
               ),
             ),
-            if (topRightOverlay != null)
-              Positioned(
-                top: 12 * sy,
-                right: 16 * sx,
-                child: topRightOverlay!,
-              ),
+            if (resolvedTopRightOverlay != null)
+              Positioned.fill(child: resolvedTopRightOverlay),
           ],
         );
       },
