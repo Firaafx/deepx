@@ -232,17 +232,6 @@ class _TopEdgeLoadingPaneState extends State<_TopEdgeLoadingPane>
                         },
                       ),
                     ),
-                    Align(
-                      alignment: Alignment.topCenter,
-                      child: SizedBox(
-                        height: widget.minHeight,
-                        child: LinearProgressIndicator(
-                          minHeight: widget.minHeight,
-                          backgroundColor: Colors.transparent,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -475,8 +464,6 @@ class _GridCardTextMeta extends StatelessWidget {
   const _GridCardTextMeta({
     required this.title,
     required this.author,
-    required this.titleHeight,
-    required this.authorHeight,
     required this.titleStyle,
     required this.authorStyle,
     this.onAuthorTap,
@@ -484,8 +471,6 @@ class _GridCardTextMeta extends StatelessWidget {
 
   final String title;
   final String author;
-  final double titleHeight;
-  final double authorHeight;
   final TextStyle titleStyle;
   final TextStyle authorStyle;
   final VoidCallback? onAuthorTap;
@@ -494,33 +479,22 @@ class _GridCardTextMeta extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          height: titleHeight,
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: titleStyle,
-            ),
-          ),
+        Text(
+          title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: titleStyle,
         ),
         const SizedBox(height: _kGridCardVerticalGap),
-        SizedBox(
-          height: authorHeight,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: InkWell(
-              onTap: onAuthorTap,
-              child: Text(
-                author,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: authorStyle,
-              ),
-            ),
+        InkWell(
+          onTap: onAuthorTap,
+          child: Text(
+            author,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: authorStyle,
           ),
         ),
       ],
@@ -551,52 +525,59 @@ class _GridCardTopRightOverlay extends StatelessWidget {
     final double iconSize = (18 * scale).clamp(14, 24).toDouble();
     final double triggerSize =
         (iconSize + (8 * scale)).clamp(18, 34).toDouble();
+    final bool hasMeta = metaText.trim().isNotEmpty;
+    final bool hasMenu = menuItems.isNotEmpty;
+    if (!hasMeta && !hasMenu) {
+      return const SizedBox.shrink();
+    }
     return Align(
       alignment: Alignment.topRight,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: size.width * 0.58),
-            child: Text(
-              metaText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.92),
-                fontSize: fontSize,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          SizedBox(width: gap),
-          BlurMenuButton<String>(
-            tooltip: tooltip,
-            items: menuItems,
-            onSelected: onSelected,
-            icon: SizedBox.square(
-              dimension: triggerSize,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.black.withValues(alpha: 0.34),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.18),
-                    width: 0.5,
-                  ),
-                ),
-                child: Center(
-                  child: Icon(
-                    Icons.more_vert,
-                    color: Colors.white,
-                    size: iconSize,
-                  ),
+          if (hasMeta)
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: size.width * 0.58),
+              child: Text(
+                metaText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
-          ),
+          if (hasMeta && hasMenu) SizedBox(width: gap),
+          if (hasMenu)
+            BlurMenuButton<String>(
+              tooltip: tooltip,
+              items: menuItems,
+              onSelected: onSelected,
+              icon: SizedBox.square(
+                dimension: triggerSize,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black.withValues(alpha: 0.34),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      width: 0.5,
+                    ),
+                  ),
+                  child: Center(
+                    child: Icon(
+                      Icons.more_vert,
+                      color: Colors.white,
+                      size: iconSize,
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -678,6 +659,10 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
 
   @override
   Widget build(BuildContext context) {
+    final bool usePreviewPlayback = _is360VideoPayload(
+      widget.payload,
+      fallbackMode: widget.mode,
+    );
     return MouseRegion(
       onEnter: (_) => setState(() => _realHover = true),
       onExit: (_) => setState(() => _realHover = false),
@@ -697,7 +682,7 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
               tooltip: widget.menuTooltip,
               onSelected: widget.onMenuSelected,
             ),
-            child: _GridPresetPreview(
+            child: _SharedPresetPreview(
               mode: widget.mode,
               payload: widget.payload,
               clipper: const SvgCardClipper(),
@@ -706,6 +691,16 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
               externalHeadPose: _active ? null : kNeutralPreviewHeadPose,
               outsideOverflowMax: widget.outsideOverflowMax,
               emptyChild: widget.emptyChild,
+              previewPlaybackMode: usePreviewPlayback,
+              videoPlayActive: _active,
+              posterTimeMs: _posterTimeMsFromPayload(
+                widget.payload,
+                fallbackMode: widget.mode,
+              ),
+              resetVideoOnActivate: usePreviewPlayback,
+              restorePosterOnDeactivate: usePreviewPlayback,
+              muted: true,
+              loop: true,
             ),
           ),
         ),
@@ -804,91 +799,59 @@ double _detailPreviewWidth({
 
 class _CardScopedAmbientBackdrop extends StatelessWidget {
   const _CardScopedAmbientBackdrop({
-    required this.ambientUrl,
+    required this.mode,
+    required this.payload,
     required this.previewWidth,
     required this.leftPadding,
     required this.topPadding,
     required this.desktop,
+    this.panoramaController,
   });
 
-  final String? ambientUrl;
+  final String mode;
+  final Map<String, dynamic> payload;
   final double previewWidth;
   final double leftPadding;
   final double topPadding;
   final bool desktop;
+  final PanoramaViewer360Controller? panoramaController;
+
+  Widget _buildFallbackAmbientImage(String normalizedUrl) {
+    return Image.network(
+      normalizedUrl,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final String normalizedUrl = (ambientUrl ?? '').trim();
-    final bool hasAmbient = normalizedUrl.isNotEmpty && previewWidth > 0;
+    final String normalizedUrl = (ambientImageUrlFromPayload(
+              payload,
+              fallbackMode: mode,
+            ) ??
+            '')
+        .trim();
+    final Map<String, dynamic>? ambient2dPayload =
+        ambientBackgroundPayloadFromPayload(
+      payload,
+      fallbackMode: mode,
+    );
+    final bool isPanorama = mode == '360';
+    final bool hasAmbient =
+        previewWidth > 0 &&
+        (isPanorama || ambient2dPayload != null || normalizedUrl.isNotEmpty);
     final double previewHeight = previewWidth / _kDetailPreviewAspectRatio;
     return ValueListenableBuilder<AppearanceSettings>(
       valueListenable: AppearanceSettingsService.instance.settings,
       builder: (context, settings, _) {
         final double sigmaX = settings.ambientBlurSigmaX;
         final double sigmaY = settings.ambientBlurSigmaY;
-        final double horizontalSpread = previewWidth * (desktop ? 0.24 : 0.18);
-        final double verticalSpread = previewHeight * (desktop ? 0.22 : 0.18);
-        final double fadeSigmaX = sigmaX * 0.78;
-        final double fadeSigmaY = sigmaY * 0.78;
-
-        Widget buildAmbientImage({
-          required BoxFit fit,
-          required Widget Function(Widget child) wrapper,
-        }) {
-          return wrapper(
-            Image.network(
-              normalizedUrl,
-              fit: fit,
-              errorBuilder: (_, __, ___) =>
-                  const ColoredBox(color: Colors.black),
-            ),
-          );
-        }
 
         return Stack(
           fit: StackFit.expand,
           children: [
             const ColoredBox(color: Colors.black),
-            if (hasAmbient)
-              Positioned(
-                left: leftPadding - horizontalSpread,
-                top: topPadding - verticalSpread,
-                width: previewWidth + (horizontalSpread * 2),
-                height: previewHeight + (verticalSpread * 2),
-                child: IgnorePointer(
-                  child: Opacity(
-                    opacity: 0.78,
-                    child: ShaderMask(
-                      blendMode: BlendMode.dstIn,
-                      shaderCallback: (bounds) {
-                        return RadialGradient(
-                          center: desktop
-                              ? const Alignment(-0.08, -0.18)
-                              : const Alignment(0, -0.14),
-                          radius: desktop ? 0.96 : 0.88,
-                          colors: [
-                            Colors.white,
-                            Colors.white.withValues(alpha: 0.64),
-                            Colors.transparent,
-                          ],
-                          stops: const [0.0, 0.58, 1.0],
-                        ).createShader(bounds);
-                      },
-                      child: buildAmbientImage(
-                        fit: BoxFit.cover,
-                        wrapper: (child) => ImageFiltered(
-                          imageFilter: ImageFilter.blur(
-                            sigmaX: fadeSigmaX,
-                            sigmaY: fadeSigmaY,
-                          ),
-                          child: child,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
             if (hasAmbient)
               Positioned(
                 left: leftPadding,
@@ -898,13 +861,38 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
                 child: IgnorePointer(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
-                    child: buildAmbientImage(
-                      fit: BoxFit.cover,
-                      wrapper: (child) => child,
+                    child: isPanorama
+                        ? _SyncedAmbientPanoramaSurface(
+                            payload: payload,
+                            primaryController: panoramaController,
+                          )
+                        : ambient2dPayload != null
+                            ? _SharedPresetPreview(
+                                mode: '2d',
+                                payload: ambient2dPayload,
+                                borderRadius: BorderRadius.circular(20),
+                                pointerPassthrough: true,
+                                outsideOverflowMax: 0,
+                              )
+                            : _buildFallbackAmbientImage(normalizedUrl),
+                  ),
+                ),
+              ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(
+                    sigmaX: sigmaX,
+                    sigmaY: sigmaY,
+                  ),
+                  child: ColoredBox(
+                    color: Colors.black.withValues(
+                      alpha: hasAmbient ? 0.12 : 0.0,
                     ),
                   ),
                 ),
               ),
+            ),
             Positioned.fill(
               child: DecoratedBox(
                 decoration: BoxDecoration(
@@ -929,6 +917,126 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _SyncedAmbientPanoramaSurface extends StatefulWidget {
+  const _SyncedAmbientPanoramaSurface({
+    required this.payload,
+    this.primaryController,
+  });
+
+  final Map<String, dynamic> payload;
+  final PanoramaViewer360Controller? primaryController;
+
+  @override
+  State<_SyncedAmbientPanoramaSurface> createState() =>
+      _SyncedAmbientPanoramaSurfaceState();
+}
+
+class _SyncedAmbientPanoramaSurfaceState
+    extends State<_SyncedAmbientPanoramaSurface> {
+  final PanoramaViewer360Controller _ambientController =
+      PanoramaViewer360Controller();
+  VoidCallback? _primaryListener;
+  int _lastSyncedTimeMs = -1;
+  bool? _lastPlaying;
+  bool? _lastLoop;
+  double? _lastPlaybackRate;
+
+  @override
+  void initState() {
+    super.initState();
+    _bindPrimaryController();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SyncedAmbientPanoramaSurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.primaryController != widget.primaryController) {
+      _unbindPrimaryController(oldWidget.primaryController);
+      _bindPrimaryController();
+    }
+  }
+
+  @override
+  void dispose() {
+    _unbindPrimaryController(widget.primaryController);
+    _ambientController.dispose();
+    super.dispose();
+  }
+
+  void _bindPrimaryController() {
+    final PanoramaViewer360Controller? primary = widget.primaryController;
+    if (primary == null) return;
+    _primaryListener = _syncFromPrimary;
+    primary.status.addListener(_primaryListener!);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncFromPrimary());
+  }
+
+  void _unbindPrimaryController(PanoramaViewer360Controller? controller) {
+    final VoidCallback? listener = _primaryListener;
+    if (controller != null && listener != null) {
+      controller.status.removeListener(listener);
+    }
+    _primaryListener = null;
+  }
+
+  void _syncFromPrimary() {
+    final PanoramaViewer360Controller? primary = widget.primaryController;
+    if (primary == null) return;
+    final PanoramaViewer360Status status = primary.value;
+    if (_lastLoop != status.loop) {
+      _lastLoop = status.loop;
+      _ambientController.setLoop(status.loop);
+    }
+    if (_lastPlaybackRate != status.playbackRate) {
+      _lastPlaybackRate = status.playbackRate;
+      _ambientController.setPlaybackRate(status.playbackRate);
+    }
+    _ambientController.setMuted(true);
+    _ambientController.setVolume(0);
+    if (!status.isVideo) return;
+    final bool playingChanged = _lastPlaying != status.playing;
+    final bool shouldSeek = _lastSyncedTimeMs < 0 ||
+        !status.playing ||
+        playingChanged ||
+        (status.currentTimeMs - _lastSyncedTimeMs).abs() > 700;
+    if (shouldSeek) {
+      _lastSyncedTimeMs = status.currentTimeMs;
+      _ambientController.seekToMs(status.currentTimeMs);
+    }
+    if (playingChanged) {
+      _lastPlaying = status.playing;
+      if (status.playing) {
+        _ambientController.play();
+      } else {
+        _ambientController.pause();
+      }
+      return;
+    }
+    if (!status.playing) {
+      _ambientController.pause();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final PanoramaViewer360Status status =
+        widget.primaryController?.value ?? const PanoramaViewer360Status.initial();
+    return PanoramaViewer360(
+      initialPresetPayload: widget.payload,
+      cleanView: true,
+      embedded: true,
+      pointerPassthrough: true,
+      controller: _ambientController,
+      qualityTier: 'low',
+      volume: 0,
+      muted: true,
+      loop: status.loop,
+      playbackRate: status.playbackRate,
+      videoPlayActive: status.playing,
     );
   }
 }
@@ -986,12 +1094,30 @@ class _LinearGlowPainter extends CustomPainter {
       final Rect rect = Rect.fromLTRB(left, 0, right, barHeight);
       final RRect rrect =
           RRect.fromRectAndRadius(rect, Radius.circular(barHeight / 2));
+      final LinearGradient barGradient = LinearGradient(
+        begin: isLtr ? Alignment.centerLeft : Alignment.centerRight,
+        end: isLtr ? Alignment.centerRight : Alignment.centerLeft,
+        colors: <Color>[
+          Colors.white.withValues(alpha: 0.0),
+          Colors.white.withValues(alpha: 0.86),
+        ],
+      );
+      final LinearGradient shineGradient = LinearGradient(
+        begin: isLtr ? Alignment.centerLeft : Alignment.centerRight,
+        end: isLtr ? Alignment.centerRight : Alignment.centerLeft,
+        colors: <Color>[
+          innerGlowColor.withValues(alpha: 0.0),
+          innerGlowColor,
+        ],
+      );
+      final Paint barPaint = Paint()..shader = barGradient.createShader(rect);
       final Paint outerPaint = Paint()
         ..color = glowColor
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, outerBlurSigma);
       final Paint innerPaint = Paint()
-        ..color = innerGlowColor
+        ..shader = shineGradient.createShader(rect)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, innerBlurSigma);
+      canvas.drawRRect(rrect, barPaint);
       canvas.drawRRect(rrect, outerPaint);
       canvas.drawRRect(rrect, innerPaint);
     }
@@ -1018,6 +1144,128 @@ class _LinearGlowPainter extends CustomPainter {
         oldDelegate.innerGlowColor != innerGlowColor ||
         oldDelegate.outerBlurSigma != outerBlurSigma ||
         oldDelegate.innerBlurSigma != innerBlurSigma;
+  }
+}
+
+double _gridTextBlockHeight({
+  required TextStyle titleStyle,
+  required TextStyle authorStyle,
+}) {
+  final double titleFontSize = titleStyle.fontSize ?? 14;
+  final double authorFontSize = authorStyle.fontSize ?? 12;
+  final double titleLineHeight = titleFontSize * (titleStyle.height ?? 1.2);
+  final double authorLineHeight = authorFontSize * (authorStyle.height ?? 1.2);
+  return (titleLineHeight * 2) +
+      authorLineHeight +
+      _kGridCardVerticalGap;
+}
+
+double _mapDouble(dynamic value, double fallback) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+int _mapInt(dynamic value, int fallback) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+String _formatDurationClock(int milliseconds) {
+  final int totalSeconds = math.max(0, milliseconds ~/ 1000);
+  final int hours = totalSeconds ~/ 3600;
+  final int minutes = (totalSeconds % 3600) ~/ 60;
+  final int seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
+}
+
+bool _has2DOutsideOverflow(PresetPayloadV2 adapted) {
+  if (adapted.mode != '2d') return false;
+  final Map<String, dynamic> scene = adapted.scene;
+  final double turningOrder = (() {
+    final dynamic raw = scene['turning_point'];
+    if (raw is Map) {
+      return _mapDouble(raw['order'], 0);
+    }
+    return 0.0;
+  })();
+  for (final MapEntry<String, dynamic> entry in scene.entries) {
+    if (entry.key == 'turning_point' || entry.value is! Map) {
+      continue;
+    }
+    final Map<String, dynamic> layer = Map<String, dynamic>.from(
+      entry.value as Map,
+    );
+    if (layer['isVisible'] == false) continue;
+    if (layer['isRect'] == true) continue;
+    if (_mapDouble(layer['order'], 0) > turningOrder) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _has3DOutsideOverflow(PresetPayloadV2 adapted) {
+  if (adapted.mode != '3d') return false;
+  final Map<String, dynamic> scene = adapted.scene;
+  for (final String key in <String>['models', 'lights', 'audios']) {
+    final dynamic raw = scene[key];
+    if (raw is! List) continue;
+    for (final dynamic item in raw) {
+      if (item is! Map) continue;
+      final String windowLayer =
+          (item['windowLayer']?.toString().toLowerCase() ?? 'inside');
+      if (windowLayer == 'outside') return true;
+    }
+  }
+  return false;
+}
+
+bool _previewNeedsOutsideOverlay({
+  required String mode,
+  required Map<String, dynamic> payload,
+}) {
+  final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
+    payload,
+    fallbackMode: mode,
+  );
+  return _has2DOutsideOverflow(adapted) || _has3DOutsideOverflow(adapted);
+}
+
+bool _is360VideoPayload(
+  Map<String, dynamic> payload, {
+  required String fallbackMode,
+}) {
+  try {
+    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
+      payload,
+      fallbackMode: fallbackMode,
+    );
+    if (adapted.mode != '360') return false;
+    return (adapted.scene['assetKind'] ?? 'image').toString() == 'video';
+  } catch (_) {
+    return false;
+  }
+}
+
+int _posterTimeMsFromPayload(
+  Map<String, dynamic> payload, {
+  required String fallbackMode,
+}) {
+  try {
+    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
+      payload,
+      fallbackMode: fallbackMode,
+    );
+    final dynamic raw = adapted.controls['posterTimeMs'];
+    if (raw is int) return raw.clamp(0, 86400000);
+    if (raw is num) return raw.toInt().clamp(0, 86400000);
+    return int.tryParse(raw?.toString() ?? '')?.clamp(0, 86400000) ?? 0;
+  } catch (_) {
+    return 0;
   }
 }
 
@@ -1537,17 +1785,42 @@ class _StandalonePublicProfileRoutePageState
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
                                   child: _HoverActivatedPreviewRegion(
-                                    builder: (active) => _GridPresetPreview(
-                                      mode: entry['mode']?.toString() ?? '2d',
-                                      payload: (entry['payload'] as Map?)
-                                              ?.cast<String, dynamic>() ??
-                                          const <String, dynamic>{},
-                                      borderRadius: BorderRadius.circular(8),
-                                      useGlobalTracking: active,
-                                      externalHeadPose: active
-                                          ? null
-                                          : kNeutralPreviewHeadPose,
-                                    ),
+                                    builder: (active) {
+                                      final String entryMode =
+                                          entry['mode']?.toString() ?? '2d';
+                                      final Map<String, dynamic> entryPayload =
+                                          (entry['payload'] as Map?)
+                                                  ?.cast<String, dynamic>() ??
+                                              const <String, dynamic>{};
+                                      final bool usePreviewPlayback =
+                                          _is360VideoPayload(
+                                        entryPayload,
+                                        fallbackMode: entryMode,
+                                      );
+                                      return _SharedPresetPreview(
+                                        mode: entryMode,
+                                        payload: entryPayload,
+                                        borderRadius:
+                                            BorderRadius.circular(8),
+                                        useGlobalTracking: active,
+                                        externalHeadPose: active
+                                            ? null
+                                            : kNeutralPreviewHeadPose,
+                                        previewPlaybackMode:
+                                            usePreviewPlayback,
+                                        videoPlayActive: active,
+                                        posterTimeMs: _posterTimeMsFromPayload(
+                                          entryPayload,
+                                          fallbackMode: entryMode,
+                                        ),
+                                        resetVideoOnActivate:
+                                            usePreviewPlayback,
+                                        restorePosterOnDeactivate:
+                                            usePreviewPlayback,
+                                        muted: true,
+                                        loop: true,
+                                      );
+                                    },
                                   ),
                                 ),
                               ),
@@ -2532,12 +2805,16 @@ class _HomeFeedTab extends StatefulWidget {
 }
 
 const double _kGridPreviewAspectRatio = 1661 / 960;
-const double _kFeedCardTitleRowHeight = 40;
-const double _kFeedCardAuthorRowHeight = 18;
-const double _kFeedCardMetaSpacingHeight = _kGridCardVerticalGap * 2;
-const double _kFeedCardFixedMetaHeight = _kFeedCardTitleRowHeight +
-    _kFeedCardAuthorRowHeight +
-    _kFeedCardMetaSpacingHeight;
+
+double _feedCardFixedMetaHeight() {
+  return _gridTextBlockHeight(
+    titleStyle: const TextStyle(
+      fontWeight: FontWeight.w700,
+      fontSize: 14,
+    ),
+    authorStyle: const TextStyle(fontSize: 12),
+  );
+}
 
 class _HomeFeedTabState extends State<_HomeFeedTab> {
   final AppRepository _repository = AppRepository.instance;
@@ -2569,7 +2846,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
             ((crossAxisCount - 1) * crossAxisSpacing)) /
         crossAxisCount;
     final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
-    final double cardHeight = previewHeight + _kFeedCardFixedMetaHeight;
+    final double cardHeight = previewHeight + _feedCardFixedMetaHeight();
     return itemWidth / cardHeight;
   }
 
@@ -3133,7 +3410,7 @@ class _CollectionTabState extends State<_CollectionTab> {
             ((crossAxisCount - 1) * crossAxisSpacing)) /
         crossAxisCount;
     final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
-    final double cardHeight = previewHeight + _kFeedCardFixedMetaHeight;
+    final double cardHeight = previewHeight + _feedCardFixedMetaHeight();
     return itemWidth / cardHeight;
   }
 
@@ -3835,8 +4112,6 @@ class _CollectionFeedTile extends StatelessWidget {
                   ? summary.name
                   : 'Untitled collection',
               author: summary.author?.displayName ?? 'Unknown creator',
-              titleHeight: _kFeedCardTitleRowHeight,
-              authorHeight: _kFeedCardAuthorRowHeight,
               titleStyle: TextStyle(
                 color: cs.onSurface,
                 fontWeight: FontWeight.w700,
@@ -3850,6 +4125,71 @@ class _CollectionFeedTile extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SuggestionGridCard extends StatelessWidget {
+  const _SuggestionGridCard({
+    required this.heroTag,
+    required this.mode,
+    required this.payload,
+    required this.title,
+    required this.author,
+    required this.metaText,
+    required this.onTap,
+    this.avatarImage,
+    this.outsideOverflowMax = 100,
+  });
+
+  final String heroTag;
+  final String mode;
+  final Map<String, dynamic> payload;
+  final String title;
+  final String author;
+  final String metaText;
+  final VoidCallback onTap;
+  final ImageProvider? avatarImage;
+  final double outsideOverflowMax;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AspectRatio(
+            aspectRatio: _kGridPreviewAspectRatio,
+            child: _GridCardPreviewSurface(
+              heroTag: heroTag,
+              mode: mode,
+              payload: payload,
+              avatarImage: avatarImage,
+              metaText: metaText,
+              menuItems: const <_BlurMenuEntry<String>>[],
+              menuTooltip: '',
+              onMenuSelected: (_) {},
+              outsideOverflowMax: outsideOverflowMax,
+            ),
+          ),
+          const SizedBox(height: _kGridCardVerticalGap),
+          _GridCardTextMeta(
+            title: title,
+            author: author,
+            titleStyle: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+            authorStyle: TextStyle(
+              color: Colors.white.withValues(alpha: 0.75),
+              fontSize: 11,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3963,8 +4303,6 @@ class _FeedTile extends StatelessWidget {
                   ? post.preset.title
                   : post.preset.name,
               author: post.author?.displayName ?? 'Unknown creator',
-              titleHeight: _kFeedCardTitleRowHeight,
-              authorHeight: _kFeedCardAuthorRowHeight,
               titleStyle: TextStyle(
                 color: cs.onSurface,
                 fontWeight: FontWeight.w700,
@@ -3998,6 +4336,18 @@ class _OverlayParallaxPreview extends StatefulWidget {
     required this.pointerPassthrough,
     required this.enableOutsideOverlay,
     required this.outsideOverflowMax,
+    this.useGlobalTracking = true,
+    this.externalHeadPose,
+    this.emptyChild,
+    this.panoramaController,
+    this.show360PlayerControls = false,
+    this.previewPlaybackMode = false,
+    this.videoPlayActive = true,
+    this.posterTimeMs,
+    this.resetVideoOnActivate = false,
+    this.restorePosterOnDeactivate = false,
+    this.muted = true,
+    this.loop = true,
   });
 
   final String mode;
@@ -4007,6 +4357,18 @@ class _OverlayParallaxPreview extends StatefulWidget {
   final bool pointerPassthrough;
   final bool enableOutsideOverlay;
   final double outsideOverflowMax;
+  final bool useGlobalTracking;
+  final Map<String, double>? externalHeadPose;
+  final Widget? emptyChild;
+  final PanoramaViewer360Controller? panoramaController;
+  final bool show360PlayerControls;
+  final bool previewPlaybackMode;
+  final bool videoPlayActive;
+  final int? posterTimeMs;
+  final bool resetVideoOnActivate;
+  final bool restorePosterOnDeactivate;
+  final bool muted;
+  final bool loop;
 
   @override
   State<_OverlayParallaxPreview> createState() =>
@@ -4087,6 +4449,17 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
                   pointerPassthrough: true,
                   layerMode: _GridPresetPreviewLayerMode.outsideOnly,
                   outsideOverflowMax: widget.outsideOverflowMax,
+                  useGlobalTracking: widget.useGlobalTracking,
+                  externalHeadPose: widget.externalHeadPose,
+                  panoramaController: widget.panoramaController,
+                  show360PlayerControls: widget.show360PlayerControls,
+                  previewPlaybackMode: widget.previewPlaybackMode,
+                  videoPlayActive: widget.videoPlayActive,
+                  posterTimeMs: widget.posterTimeMs,
+                  resetVideoOnActivate: widget.resetVideoOnActivate,
+                  restorePosterOnDeactivate: widget.restorePosterOnDeactivate,
+                  muted: widget.muted,
+                  loop: widget.loop,
                 ),
               ),
             ),
@@ -4121,6 +4494,18 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
         clipper: widget.clipper,
         pointerPassthrough: widget.pointerPassthrough,
         outsideOverflowMax: widget.outsideOverflowMax,
+        useGlobalTracking: widget.useGlobalTracking,
+        externalHeadPose: widget.externalHeadPose,
+        emptyChild: widget.emptyChild,
+        panoramaController: widget.panoramaController,
+        show360PlayerControls: widget.show360PlayerControls,
+        previewPlaybackMode: widget.previewPlaybackMode,
+        videoPlayActive: widget.videoPlayActive,
+        posterTimeMs: widget.posterTimeMs,
+        resetVideoOnActivate: widget.resetVideoOnActivate,
+        restorePosterOnDeactivate: widget.restorePosterOnDeactivate,
+        muted: widget.muted,
+        loop: widget.loop,
       );
     }
     _ensureOutsideOverlay();
@@ -4137,9 +4522,91 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
             pointerPassthrough: widget.pointerPassthrough,
             layerMode: _GridPresetPreviewLayerMode.insideOnly,
             outsideOverflowMax: widget.outsideOverflowMax,
+            useGlobalTracking: widget.useGlobalTracking,
+            externalHeadPose: widget.externalHeadPose,
+            emptyChild: widget.emptyChild,
+            panoramaController: widget.panoramaController,
+            show360PlayerControls: widget.show360PlayerControls,
+            previewPlaybackMode: widget.previewPlaybackMode,
+            videoPlayActive: widget.videoPlayActive,
+            posterTimeMs: widget.posterTimeMs,
+            resetVideoOnActivate: widget.resetVideoOnActivate,
+            restorePosterOnDeactivate: widget.restorePosterOnDeactivate,
+            muted: widget.muted,
+            loop: widget.loop,
           ),
         );
       },
+    );
+  }
+}
+
+class _SharedPresetPreview extends StatelessWidget {
+  const _SharedPresetPreview({
+    required this.mode,
+    required this.payload,
+    this.borderRadius = const BorderRadius.all(Radius.circular(16)),
+    this.clipper,
+    this.pointerPassthrough = true,
+    this.outsideOverflowMax = 100,
+    this.useGlobalTracking = true,
+    this.externalHeadPose,
+    this.emptyChild,
+    this.panoramaController,
+    this.show360PlayerControls = false,
+    this.previewPlaybackMode = false,
+    this.videoPlayActive = true,
+    this.posterTimeMs,
+    this.resetVideoOnActivate = false,
+    this.restorePosterOnDeactivate = false,
+    this.muted = true,
+    this.loop = true,
+  });
+
+  final String mode;
+  final Map<String, dynamic> payload;
+  final BorderRadius borderRadius;
+  final CustomClipper<Path>? clipper;
+  final bool pointerPassthrough;
+  final double outsideOverflowMax;
+  final bool useGlobalTracking;
+  final Map<String, double>? externalHeadPose;
+  final Widget? emptyChild;
+  final PanoramaViewer360Controller? panoramaController;
+  final bool show360PlayerControls;
+  final bool previewPlaybackMode;
+  final bool videoPlayActive;
+  final int? posterTimeMs;
+  final bool resetVideoOnActivate;
+  final bool restorePosterOnDeactivate;
+  final bool muted;
+  final bool loop;
+
+  @override
+  Widget build(BuildContext context) {
+    return _OverlayParallaxPreview(
+      mode: mode,
+      payload: payload,
+      borderRadius: borderRadius,
+      clipper: clipper,
+      pointerPassthrough: pointerPassthrough,
+      enableOutsideOverlay: _previewNeedsOutsideOverlay(
+        mode: mode,
+        payload: payload,
+      ),
+      outsideOverflowMax: outsideOverflowMax,
+      useGlobalTracking: useGlobalTracking,
+      externalHeadPose: externalHeadPose,
+      emptyChild: emptyChild,
+      panoramaController: panoramaController,
+      show360PlayerControls: show360PlayerControls,
+      previewPlaybackMode: previewPlaybackMode,
+      videoPlayActive: videoPlayActive,
+      posterTimeMs: posterTimeMs,
+      resetVideoOnActivate: resetVideoOnActivate,
+      restorePosterOnDeactivate: restorePosterOnDeactivate,
+      muted: muted,
+      loop: loop,
     );
   }
 }
@@ -4156,6 +4623,15 @@ class _GridPresetPreview extends StatelessWidget {
     this.useGlobalTracking = true,
     this.externalHeadPose,
     this.emptyChild,
+    this.panoramaController,
+    this.show360PlayerControls = false,
+    this.previewPlaybackMode = false,
+    this.videoPlayActive = true,
+    this.posterTimeMs,
+    this.resetVideoOnActivate = false,
+    this.restorePosterOnDeactivate = false,
+    this.muted = true,
+    this.loop = true,
   });
 
   final String mode;
@@ -4168,6 +4644,15 @@ class _GridPresetPreview extends StatelessWidget {
   final bool useGlobalTracking;
   final Map<String, double>? externalHeadPose;
   final Widget? emptyChild;
+  final PanoramaViewer360Controller? panoramaController;
+  final bool show360PlayerControls;
+  final bool previewPlaybackMode;
+  final bool videoPlayActive;
+  final int? posterTimeMs;
+  final bool resetVideoOnActivate;
+  final bool restorePosterOnDeactivate;
+  final bool muted;
+  final bool loop;
 
   @override
   Widget build(BuildContext context) {
@@ -4222,6 +4707,41 @@ class _GridPresetPreview extends StatelessWidget {
         useGlobalTracking: useGlobalTracking,
         externalHeadPose: externalHeadPose,
       );
+    }
+
+    if (adapted.mode == '360') {
+      if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
+        return const SizedBox.shrink();
+      }
+      final Widget viewer = PanoramaViewer360(
+        initialPresetPayload: adapted.toMap(),
+        cleanView: true,
+        embedded: true,
+        controller: panoramaController,
+        showPlayerControls: show360PlayerControls,
+        previewPlaybackMode: previewPlaybackMode,
+        videoPlayActive: videoPlayActive,
+        posterTimeMs: posterTimeMs ??
+            _posterTimeMsFromPayload(
+              adapted.toMap(),
+              fallbackMode: adapted.mode,
+            ),
+        resetVideoOnActivate: resetVideoOnActivate,
+        restorePosterOnDeactivate: restorePosterOnDeactivate,
+        muted: muted,
+        loop: loop,
+        useGlobalTracking: useGlobalTracking,
+        externalHeadPose: externalHeadPose,
+        pointerPassthrough: pointerPassthrough,
+      );
+      if (clipper != null) {
+        return ClipPath(
+          clipper: clipper!,
+          clipBehavior: Clip.antiAlias,
+          child: viewer,
+        );
+      }
+      return ClipRRect(borderRadius: borderRadius, child: viewer);
     }
 
     if (adapted.mode != '3d') {
@@ -4524,7 +5044,7 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                     tag: heroTag,
                     createRectTween: (begin, end) =>
                         _EaseInOutRectTween(begin: begin, end: end),
-                    child: _GridPresetPreview(
+                    child: _SharedPresetPreview(
                       mode: mode,
                       payload: payload,
                       borderRadius: BorderRadius.zero,
@@ -4563,6 +5083,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   final TextEditingController _commentController = TextEditingController();
   final FocusNode _immersiveFocusNode =
       FocusNode(debugLabel: 'detail-immersive-focus');
+  final PanoramaViewer360Controller _detail360Controller =
+      PanoramaViewer360Controller();
   final ScrollController _leftPaneScrollController = ScrollController();
   final ScrollController _rightPaneScrollController = ScrollController();
   final ScrollController _chipRailScrollController = ScrollController();
@@ -4620,12 +5142,17 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     _leftPaneScrollController.dispose();
     _rightPaneScrollController.dispose();
     _chipRailScrollController.dispose();
+    _detail360Controller.dispose();
     super.dispose();
   }
 
   String get _detailHeroTag => 'post-detail-hero-${_post.preset.id}';
 
   Future<void> _openFullscreenViewer() async {
+    if (_post.preset.mode == '360') {
+      _detail360Controller.toggleFullscreen();
+      return;
+    }
     await _openDetailFullscreenViewer(
       context,
       heroTag: _detailHeroTag,
@@ -5133,10 +5660,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     final String heroTag = _detailHeroTag;
     final String previewMode = _post.preset.mode;
     final Map<String, dynamic> previewPayload = _post.preset.payload;
-    final String? ambientUrl = ambientImageUrlFromPayload(
-      _post.preset.payload,
-      fallbackMode: _post.preset.mode,
-    );
     final List<FeedPost> suggestions = _filteredSuggestions();
     final String title =
         _post.preset.title.isNotEmpty ? _post.preset.title : _post.preset.name;
@@ -5406,6 +5929,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     }
 
     Widget buildPreviewCard() {
+      final bool isPanorama = previewMode == '360';
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap:
@@ -5420,12 +5944,17 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             fit: StackFit.expand,
             children: [
               Positioned.fill(
-                child: _GridPresetPreview(
+                child: _SharedPresetPreview(
                   mode: previewMode,
                   payload: previewPayload,
                   borderRadius: BorderRadius.circular(16),
-                  pointerPassthrough: true,
+                  pointerPassthrough: !isPanorama,
                   outsideOverflowMax: 100,
+                  panoramaController:
+                      isPanorama ? _detail360Controller : null,
+                  show360PlayerControls: isPanorama,
+                  muted: true,
+                  loop: true,
                 ),
               ),
               Positioned(
@@ -5436,14 +5965,15 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
                 ),
               ),
-              Positioned(
-                right: 8,
-                bottom: 8,
-                child: IconButton.filledTonal(
-                  onPressed: _openFullscreenViewer,
-                  icon: const Icon(Icons.fullscreen, size: 20),
+              if (!isPanorama)
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: IconButton.filledTonal(
+                    onPressed: _openFullscreenViewer,
+                    icon: const Icon(Icons.fullscreen, size: 20),
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -5655,76 +6185,28 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                         const Divider(color: Colors.white24, height: 14),
                     itemBuilder: (context, index) {
                       final item = suggestions[index];
-                      return InkWell(
+                      final String mode =
+                          item.preset.thumbnailMode ?? item.preset.mode;
+                      final Map<String, dynamic> payload =
+                          item.preset.thumbnailPayload.isNotEmpty
+                              ? item.preset.thumbnailPayload
+                              : item.preset.payload;
+                      return _SuggestionGridCard(
+                        heroTag: 'post-detail-hero-${item.preset.id}',
+                        mode: mode,
+                        payload: payload,
+                        title: item.preset.title.isNotEmpty
+                            ? item.preset.title
+                            : item.preset.name,
+                        author: item.author?.displayName ?? 'Unknown creator',
+                        metaText:
+                            '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.preset.createdAt)}',
+                        avatarImage:
+                            (item.author?.avatarUrl ?? '').trim().isNotEmpty
+                                ? NetworkImage(item.author!.avatarUrl!.trim())
+                                : null,
                         onTap: () => _openSuggestedPost(item),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 140,
-                              height: 78,
-                              child: Hero(
-                                tag: 'post-detail-hero-${item.preset.id}',
-                                createRectTween: (begin, end) =>
-                                    _EaseInOutRectTween(begin: begin, end: end),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: IgnorePointer(
-                                    child: _GridPresetPreview(
-                                      mode: item.preset.thumbnailMode ??
-                                          item.preset.mode,
-                                      payload: item.preset.thumbnailPayload
-                                              .isNotEmpty
-                                          ? item.preset.thumbnailPayload
-                                          : item.preset.payload,
-                                      pointerPassthrough: true,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item.preset.title.isNotEmpty
-                                        ? item.preset.title
-                                        : item.preset.name,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    item.author?.displayName ??
-                                        'Unknown creator',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.75),
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  Text(
-                                    '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.preset.createdAt)}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.62),
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                        outsideOverflowMax: 100,
                       );
                     },
                   ),
@@ -5784,11 +6266,13 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
               children: [
                 Positioned.fill(
                   child: _CardScopedAmbientBackdrop(
-                    ambientUrl: ambientUrl,
+                    mode: previewMode,
+                    payload: previewPayload,
                     previewWidth: previewWidth,
                     leftPadding: _kDetailContentPadding,
                     topPadding: _kDetailContentPadding,
                     desktop: desktop,
+                    panoramaController: _detail360Controller,
                   ),
                 ),
                 Positioned.fill(
@@ -5908,6 +6392,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   String? _studioSelected2dLayerKey;
   String? _studioSelected3dToken;
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
+  final PanoramaViewer360Controller _studio360PreviewController =
+      PanoramaViewer360Controller();
 
   @override
   void initState() {
@@ -5923,6 +6409,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     _studioDraftDebounce?.cancel();
     unawaited(_persistStudioDraftNow());
     _collectionNameController.dispose();
+    _studio360PreviewController.dispose();
     super.dispose();
   }
 
@@ -6383,7 +6870,15 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       initialPresetPayload: _payloadMatchesMode(livePayload, '360')
           ? livePayload
           : (activeItem?.mode == '360' ? activeItem!.snapshot : null),
-      pointerPassthrough: true,
+      controller: _studio360PreviewController,
+      showPlayerControls: true,
+      muted: true,
+      loop: true,
+      posterTimeMs: _mapInt(
+        _studio360Controls()['posterTimeMs'],
+        0,
+      ),
+      pointerPassthrough: false,
       reanchorToken: _studioReanchorToken,
       studioSurface: true,
     );
@@ -7809,6 +8304,77 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                     _studioSet360ControlField('zoomSensitivity', value),
               ),
             ],
+            if (assetKind == 'video') ...[
+              const SizedBox(height: 8),
+              ValueListenableBuilder<PanoramaViewer360Status>(
+                valueListenable: _studio360PreviewController.status,
+                builder: (context, status, _) {
+                  final int durationMs = math.max(
+                    status.durationMs,
+                    _mapInt(controls['posterTimeMs'], 0),
+                  );
+                  final int posterTimeMs =
+                      _mapInt(controls['posterTimeMs'], 0).clamp(
+                    0,
+                    durationMs <= 0 ? 86400000 : durationMs,
+                  );
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Cover Frame: ${_formatDurationClock(posterTimeMs)}',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                      if (durationMs > 0)
+                        _studioSlider(
+                          label: 'Cover Time',
+                          min: 0,
+                          max: durationMs / 1000,
+                          value: posterTimeMs / 1000,
+                          onChanged: (value) => _studioSet360ControlField(
+                            'posterTimeMs',
+                            (value * 1000).round(),
+                          ),
+                        )
+                      else
+                        Text(
+                          'Play the preview once to load the full duration.',
+                          style: TextStyle(
+                            color: cs.onSurfaceVariant,
+                            fontSize: 12,
+                          ),
+                        ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: status.isVideo
+                                ? () => _studioSet360ControlField(
+                                      'posterTimeMs',
+                                      status.currentTimeMs,
+                                    )
+                                : null,
+                            icon: const Icon(Icons.bookmark_outline, size: 16),
+                            label: const Text('Use Current Frame'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: status.isVideo
+                                ? () => _studio360PreviewController.seekToMs(
+                                      posterTimeMs,
+                                    )
+                                : null,
+                            icon: const Icon(Icons.image_outlined, size: 16),
+                            label: const Text('Preview Cover Frame'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
           ],
         ),
       );
@@ -9104,6 +9670,8 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   final SwipableStackController _stackController = SwipableStackController();
   final TextEditingController _collectionCommentController =
       TextEditingController();
+  final PanoramaViewer360Controller _detail360Controller =
+      PanoramaViewer360Controller();
   final FocusNode _swipeFocusNode =
       FocusNode(debugLabel: 'collection-detail-swipe-focus');
   final ScrollController _leftPaneScrollController = ScrollController();
@@ -9135,6 +9703,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   Offset? _swipeStartGlobal;
   DateTime? _swipeStartAt;
   bool _swipeCaptured = false;
+  bool _active360PreviewHover = false;
 
   bool get _mine {
     final String? me = _repository.currentUser?.id;
@@ -9160,6 +9729,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     _leftPaneScrollController.dispose();
     _rightPaneScrollController.dispose();
     _chipRailScrollController.dispose();
+    _detail360Controller.dispose();
     _stackController
       ..removeListener(_onStackChanged)
       ..dispose();
@@ -9875,6 +10445,10 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     CollectionItemSnapshot item,
     int index,
   ) async {
+    if (item.mode == '360' && index == _index) {
+      _detail360Controller.toggleFullscreen();
+      return;
+    }
     await _openDetailFullscreenViewer(
       context,
       heroTag: _collectionHeroTag(index),
@@ -9883,24 +10457,40 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     );
   }
 
-  Widget _buildCard(CollectionItemSnapshot item) {
-    return Stack(
-      clipBehavior: Clip.none,
-      fit: StackFit.expand,
-      children: [
-        const Positioned.fill(
-          child: ColoredBox(color: Colors.transparent),
-        ),
-        IgnorePointer(
-          child: _GridPresetPreview(
+  Widget _buildCard(
+    CollectionItemSnapshot item, {
+    required bool active,
+  }) {
+    final bool isPanorama = active && item.mode == '360';
+    return MouseRegion(
+      onEnter: (_) {
+        if (!isPanorama || _active360PreviewHover) return;
+        setState(() => _active360PreviewHover = true);
+      },
+      onExit: (_) {
+        if (!isPanorama && !_active360PreviewHover) return;
+        setState(() => _active360PreviewHover = false);
+      },
+      child: Stack(
+        clipBehavior: Clip.none,
+        fit: StackFit.expand,
+        children: [
+          const Positioned.fill(
+            child: ColoredBox(color: Colors.transparent),
+          ),
+          _SharedPresetPreview(
             mode: item.mode,
             payload: item.snapshot,
             borderRadius: BorderRadius.circular(16),
-            pointerPassthrough: true,
+            pointerPassthrough: !isPanorama,
             outsideOverflowMax: 100,
+            panoramaController: isPanorama ? _detail360Controller : null,
+            show360PlayerControls: isPanorama,
+            muted: true,
+            loop: true,
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -9913,12 +10503,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     final CollectionItemSnapshot? activeItem = hasItems
         ? detail.items[_index.clamp(0, detail.items.length - 1)]
         : null;
-    final String? ambientUrl = activeItem == null
-        ? null
-        : ambientImageUrlFromPayload(
-            activeItem.snapshot,
-            fallbackMode: activeItem.mode,
-          );
     final List<CollectionSummary> suggestions = _filteredSuggestions();
     if (_loading) {
       return const Scaffold(
@@ -10273,6 +10857,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           ),
         );
       }
+      final bool activePanorama = activeItem.mode == '360';
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap:
@@ -10300,7 +10885,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   }
                   final item = detail.items[props.index];
                   final bool active = props.index == _index;
-                  final Widget card = _buildCard(item);
+                  final Widget card = _buildCard(item, active: active);
                   if (!active) return card;
                   return Hero(
                     tag: _collectionHeroTag(props.index),
@@ -10319,14 +10904,16 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                 icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
               ),
             ),
-            Positioned(
-              right: 8,
-              bottom: 8,
-              child: IconButton.filledTonal(
-                onPressed: () => _openCollectionFullscreen(activeItem, _index),
-                icon: const Icon(Icons.fullscreen, size: 20),
+            if (!activePanorama)
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: IconButton.filledTonal(
+                  onPressed: () =>
+                      _openCollectionFullscreen(activeItem, _index),
+                  icon: const Icon(Icons.fullscreen, size: 20),
+                ),
               ),
-            ),
           ],
         ),
       );
@@ -10541,7 +11128,25 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                         const Divider(color: Colors.white24, height: 14),
                     itemBuilder: (context, index) {
                       final item = suggestions[index];
-                      return InkWell(
+                      final String mode =
+                          item.thumbnailMode ?? item.firstItem?.mode ?? '2d';
+                      final Map<String, dynamic> payload =
+                          item.thumbnailPayload.isNotEmpty
+                              ? item.thumbnailPayload
+                              : (item.firstItem?.snapshot ??
+                                  const <String, dynamic>{});
+                      return _SuggestionGridCard(
+                        heroTag: 'collection-detail-hero-${item.id}-0',
+                        mode: mode,
+                        payload: payload,
+                        title: item.name,
+                        author: item.author?.displayName ?? 'Unknown creator',
+                        metaText:
+                            '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.createdAt)}',
+                        avatarImage:
+                            (item.author?.avatarUrl ?? '').trim().isNotEmpty
+                                ? NetworkImage(item.author!.avatarUrl!.trim())
+                                : null,
                         onTap: () => _pushHeroRoute(
                           context,
                           builder: (_) => _CollectionDetailPage(
@@ -10551,73 +11156,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                           name: buildCollectionRoutePathForSummary(item),
                           replace: true,
                         ),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 140,
-                              height: 78,
-                              child: Hero(
-                                tag: 'collection-detail-hero-${item.id}-0',
-                                createRectTween: (begin, end) =>
-                                    _EaseInOutRectTween(begin: begin, end: end),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: IgnorePointer(
-                                    child: _GridPresetPreview(
-                                      mode: item.thumbnailMode ??
-                                          item.firstItem?.mode ??
-                                          '2d',
-                                      payload: item.thumbnailPayload.isNotEmpty
-                                          ? item.thumbnailPayload
-                                          : (item.firstItem?.snapshot ??
-                                              const <String, dynamic>{}),
-                                      pointerPassthrough: true,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item.name,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    item.author?.displayName ??
-                                        'Unknown creator',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.75),
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  Text(
-                                    '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.createdAt)}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.62),
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                        outsideOverflowMax: 100,
                       );
                     },
                   ),
@@ -10651,6 +11190,16 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         autofocus: true,
         onKeyEvent: (event) {
           if (event is! KeyDownEvent) return;
+          final bool activePanorama =
+              activeItem != null && activeItem.mode == '360';
+          final bool panoramaOwnsKeys = activePanorama &&
+              (_active360PreviewHover || _detail360Controller.value.fullscreen);
+          if (event.logicalKey == LogicalKeyboardKey.keyF &&
+              activeItem != null) {
+            _openCollectionFullscreen(activeItem, _index);
+            return;
+          }
+          if (panoramaOwnsKeys) return;
           if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
             _swipeByDirection(SwipeDirection.left);
           } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
@@ -10661,9 +11210,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             _swipeByDirection(SwipeDirection.down);
           } else if (event.logicalKey == LogicalKeyboardKey.keyR) {
             _rewindSwipe();
-          } else if (event.logicalKey == LogicalKeyboardKey.keyF &&
-              activeItem != null) {
-            _openCollectionFullscreen(activeItem, _index);
           }
         },
         child: LayoutBuilder(
@@ -10750,11 +11296,13 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               children: [
                 Positioned.fill(
                   child: _CardScopedAmbientBackdrop(
-                    ambientUrl: ambientUrl,
+                    mode: activeItem?.mode ?? '2d',
+                    payload: activeItem?.snapshot ?? const <String, dynamic>{},
                     previewWidth: previewWidth,
                     leftPadding: _kDetailContentPadding,
                     topPadding: _kDetailContentPadding,
                     desktop: desktop,
+                    panoramaController: _detail360Controller,
                   ),
                 ),
                 Positioned.fill(
@@ -10843,11 +11391,15 @@ enum _SavedGridFilter {
 
 class _ProfileTabState extends State<_ProfileTab> {
   final AppRepository _repository = AppRepository.instance;
-  static const double _profileTitleRowHeight = 34;
-  static const double _profileMetaRowHeight = 16;
-  static const double _profileCardExtraHeight = (_kGridCardVerticalGap * 2) +
-      _profileTitleRowHeight +
-      _profileMetaRowHeight;
+  double _profileCardExtraHeight() {
+    return _gridTextBlockHeight(
+      titleStyle: const TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+      ),
+      authorStyle: const TextStyle(fontSize: 11),
+    );
+  }
 
   bool _loading = true;
   String? _error;
@@ -11292,7 +11844,7 @@ class _ProfileTabState extends State<_ProfileTab> {
             ((crossAxisCount - 1) * crossAxisSpacing)) /
         crossAxisCount;
     final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
-    final double cardHeight = previewHeight + _profileCardExtraHeight;
+    final double cardHeight = previewHeight + _profileCardExtraHeight();
     return itemWidth / cardHeight;
   }
 
@@ -11396,8 +11948,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                   _GridCardTextMeta(
                     title: title,
                     author: authorName,
-                    titleHeight: _profileTitleRowHeight,
-                    authorHeight: _profileMetaRowHeight,
                     titleStyle: TextStyle(
                       color: cs.onSurface,
                       fontSize: 12,
@@ -11649,8 +12199,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                               _GridCardTextMeta(
                                 title: title,
                                 author: authorName,
-                                titleHeight: _profileTitleRowHeight,
-                                authorHeight: _profileMetaRowHeight,
                                 titleStyle: TextStyle(
                                   color: cs.onSurface,
                                   fontSize: 12,
@@ -12327,12 +12875,16 @@ class _ChatTabState extends State<_ChatTab> {
                               final bool active = _activeChat?.id == chat.id;
                               return ListTile(
                                 selected: active,
-                                selectedTileColor:
-                                    cs.primary.withValues(alpha: 0.14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                selectedTileColor: Colors.white,
                                 title: Text(
                                   chat.titleFor(
                                       _repository.currentUser?.id ?? ''),
-                                  style: TextStyle(color: cs.onSurface),
+                                  style: TextStyle(
+                                    color: active ? Colors.black : cs.onSurface,
+                                  ),
                                 ),
                                 subtitle: Text(
                                   chat.lastMessage ??
@@ -12341,7 +12893,11 @@ class _ChatTabState extends State<_ChatTab> {
                                           : 'Direct message'),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(color: cs.onSurfaceVariant),
+                                  style: TextStyle(
+                                    color: active
+                                        ? Colors.black54
+                                        : cs.onSurfaceVariant,
+                                  ),
                                 ),
                                 onTap: () => _selectChat(chat),
                               );
@@ -13053,6 +13609,8 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   List<CollectionDraftItem> _editableCollectionItems = <CollectionDraftItem>[];
   Map<String, dynamic>? _pullSourcePayload;
   String? _pullSourceMode;
+  final PanoramaViewer360Controller _composer360PreviewController =
+      PanoramaViewer360Controller();
 
   bool get _isCardEditor => widget.editTarget == _ComposerEditTarget.card;
   bool get _isDetailEditor => widget.editTarget == _ComposerEditTarget.detail;
@@ -13266,6 +13824,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     _mentionController.removeListener(_onMentionQueryChanged);
     _mentionController.dispose();
     _mentionDebounce?.cancel();
+    _composer360PreviewController.dispose();
     super.dispose();
   }
 
@@ -15474,6 +16033,78 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                   _set360ControlField('zoomSensitivity', value),
             ),
           ],
+          if (assetKind == 'video') ...[
+            const SizedBox(height: 8),
+            ValueListenableBuilder<PanoramaViewer360Status>(
+              valueListenable: _composer360PreviewController.status,
+              builder: (context, status, _) {
+                final int durationMs = math.max(
+                  status.durationMs,
+                  _mapInt(controls['posterTimeMs'], 0),
+                );
+                final int posterTimeMs =
+                    _mapInt(controls['posterTimeMs'], 0).clamp(
+                  0,
+                  durationMs <= 0 ? 86400000 : durationMs,
+                );
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Cover Frame: ${_formatDurationClock(posterTimeMs)}',
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                    if (durationMs > 0)
+                      _composerSlider(
+                        label: 'Cover Time',
+                        min: 0,
+                        max: durationMs / 1000,
+                        value: posterTimeMs / 1000,
+                        onChanged: (value) => _set360ControlField(
+                          'posterTimeMs',
+                          (value * 1000).round(),
+                        ),
+                      )
+                    else
+                      Text(
+                        'Play the preview once to load the full duration.',
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: status.isVideo
+                              ? () => _set360ControlField(
+                                    'posterTimeMs',
+                                    status.currentTimeMs,
+                                  )
+                              : null,
+                          icon: const Icon(Icons.bookmark_outline, size: 16),
+                          label: const Text('Use Current Frame'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: status.isVideo
+                              ? () =>
+                                  _composer360PreviewController.seekToMs(
+                                    posterTimeMs,
+                                  )
+                              : null,
+                          icon: const Icon(Icons.image_outlined, size: 16),
+                          label: const Text('Preview Cover Frame'),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -16279,13 +16910,27 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final bool enable3dMousePreview =
         !_showPublishStep && _thumbnailMode == '3d';
     final bool isCardEditor = _isCardEditor;
-    Widget previewSurface = _GridPresetPreview(
+    Widget previewSurface = _SharedPresetPreview(
       mode: _thumbnailMode,
       payload: _thumbnailPayload,
       borderRadius: previewRadius,
       clipper: isCardEditor ? const SvgCardClipper() : null,
       pointerPassthrough: !enable3dMousePreview,
     );
+    if (_thumbnailMode == '360') {
+      previewSurface = _SharedPresetPreview(
+        mode: _thumbnailMode,
+        payload: _thumbnailPayload,
+        borderRadius: previewRadius,
+        clipper: isCardEditor ? const SvgCardClipper() : null,
+        pointerPassthrough: false,
+        panoramaController: _composer360PreviewController,
+        show360PlayerControls: true,
+        posterTimeMs: _mapInt(_thumbnail360Controls()['posterTimeMs'], 0),
+        muted: true,
+        loop: true,
+      );
+    }
     if (!_showPublishStep && _thumbnailMode == '2d') {
       previewSurface = Listener(
         onPointerSignal: _handle2DPreviewPointerSignal,
@@ -17016,20 +17661,23 @@ class _SettingsTabState extends State<_SettingsTab> {
     final bool selected = _selectedSection == section;
     return ListTile(
       selected: selected,
-      selectedTileColor: cs.primary.withValues(alpha: 0.14),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      selectedTileColor: Colors.white,
       leading: Icon(
         icon,
-        color: selected ? cs.primary : cs.onSurfaceVariant,
+        color: selected ? Colors.black : cs.onSurfaceVariant,
       ),
       title: Text(
         label,
-        style: TextStyle(color: cs.onSurface),
+        style: TextStyle(color: selected ? Colors.black : cs.onSurface),
       ),
       subtitle: subtitle == null
           ? null
           : Text(
               subtitle,
-              style: TextStyle(color: cs.onSurfaceVariant),
+              style: TextStyle(
+                color: selected ? Colors.black54 : cs.onSurfaceVariant,
+              ),
             ),
       onTap: () => setState(() => _selectedSection = section),
     );

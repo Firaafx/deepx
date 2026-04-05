@@ -1335,8 +1335,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
             let effectiveRelX = relX;
             let effectiveRelY = relY;
             let effectiveRelZ = relZ;
-            let effectiveRelYaw = relYaw + mouseYawOffset;
-            let effectiveRelPitch = relPitch + mousePitchOffset;
+            let effectiveRelYaw = relYaw + (relX * 42) + mouseYawOffset;
+            let effectiveRelPitch = relPitch + (relY * 30) + mousePitchOffset;
             effectiveRelZ += mouseZoomOffset;
             const relEuler = new THREE.Euler(effectiveRelPitch * Math.PI / 180, -effectiveRelYaw * Math.PI / 180, 0, 'YXZ');
             switch (cameraMode) {
@@ -1818,8 +1818,8 @@ class _Engine3DPageState extends State<Engine3DPage> {
             let effectiveRelX = relX;
             let effectiveRelY = relY;
             let effectiveRelZ = relZ;
-            let effectiveRelYaw = relYaw + mouseYawOffset;
-            let effectiveRelPitch = relPitch + mousePitchOffset;
+            let effectiveRelYaw = relYaw + (relX * 42) + mouseYawOffset;
+            let effectiveRelPitch = relPitch + (relY * 30) + mousePitchOffset;
             effectiveRelZ += mouseZoomOffset;
             const relEuler = new THREE.Euler(effectiveRelPitch * Math.PI / 180, -effectiveRelYaw * Math.PI / 180, 0, 'YXZ');
             switch (cameraMode) {

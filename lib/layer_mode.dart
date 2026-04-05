@@ -1194,14 +1194,16 @@ class _LayerModeState extends State<LayerMode> {
     double shiftSign = depthFactor.sign;
     double zoomDirSign = depthFactor.sign;
     double effectiveDepth = depthFactor.abs();
-    double devX = headX - anchorHeadX;
-    double devY = headY - anchorHeadY;
     double tiltXcalc = yaw / 60.0;
     double tiltYcalc = pitch / 40.0;
+    double devX = headX - anchorHeadX;
+    double devY = headY - anchorHeadY;
+    final double blendedShiftXInput = devX + (tiltXcalc * 0.75);
+    final double blendedShiftYInput = devY + (tiltYcalc * 0.75);
     double shiftX = isEditMode
         ? config.x
         : (config.canShift
-            ? ((devX *
+            ? ((blendedShiftXInput *
                         shiftSens *
                         effectiveDepth *
                         80.0 *
@@ -1214,7 +1216,7 @@ class _LayerModeState extends State<LayerMode> {
     double shiftY = isEditMode
         ? config.y
         : (config.canShift
-            ? ((-devY *
+            ? ((-blendedShiftYInput *
                         shiftSens *
                         effectiveDepth *
                         80.0 *

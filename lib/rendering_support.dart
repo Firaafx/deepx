@@ -63,6 +63,7 @@ Map<String, dynamic> default360Controls() {
     'yawSensitivity': 1.0,
     'pitchSensitivity': 1.0,
     'zoomSensitivity': 1.0,
+    'posterTimeMs': 0,
   };
 }
 
@@ -141,6 +142,55 @@ String? ambientImageUrlFromPayload(
     if (layers.isEmpty) return null;
     final String url = (layers.first.value['url'] ?? '').toString().trim();
     return url.isEmpty ? null : url;
+  } catch (_) {
+    return null;
+  }
+}
+
+Map<String, dynamic>? ambientBackgroundPayloadFromPayload(
+  Map<String, dynamic> payload, {
+  required String fallbackMode,
+}) {
+  try {
+    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
+      payload,
+      fallbackMode: fallbackMode,
+    );
+    if (adapted.mode != '2d') return null;
+    final List<MapEntry<String, Map<String, dynamic>>> layers =
+        adapted.scene.entries
+            .where((entry) => entry.value is Map)
+            .map(
+              (entry) => MapEntry(
+                entry.key,
+                Map<String, dynamic>.from(entry.value as Map),
+              ),
+            )
+            .where(
+              (entry) =>
+                  entry.key != 'turning_point' &&
+                  entry.value['isVisible'] != false &&
+                  entry.value['isRect'] != true,
+            )
+            .toList();
+    layers.sort((a, b) {
+      final double aOrder = _safeDouble(a.value['order'], 0);
+      final double bOrder = _safeDouble(b.value['order'], 0);
+      return aOrder.compareTo(bOrder);
+    });
+    if (layers.isEmpty) return null;
+    final Map<String, dynamic> nextScene = <String, dynamic>{};
+    final dynamic turningPoint = adapted.scene['turning_point'];
+    if (turningPoint is Map) {
+      nextScene['turning_point'] = Map<String, dynamic>.from(turningPoint);
+    }
+    nextScene[layers.first.key] = Map<String, dynamic>.from(layers.first.value);
+    return PresetPayloadV2(
+      mode: adapted.mode,
+      scene: nextScene,
+      controls: Map<String, dynamic>.from(adapted.controls),
+      meta: Map<String, dynamic>.from(adapted.meta),
+    ).toMap();
   } catch (_) {
     return null;
   }

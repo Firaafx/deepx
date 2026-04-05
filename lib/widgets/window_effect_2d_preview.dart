@@ -247,9 +247,13 @@ class WindowEffect2DPreview extends StatelessWidget {
 
     final double devX = frame.headX - controls.anchorHeadX;
     final double devY = frame.headY - controls.anchorHeadY;
+    final double tiltXcalc = frame.yaw / 60.0;
+    final double tiltYcalc = frame.pitch / 40.0;
+    final double blendedShiftXInput = devX + (tiltXcalc * 0.75);
+    final double blendedShiftYInput = devY + (tiltYcalc * 0.75);
 
     final double targetShiftX = layer.canShift
-        ? ((devX *
+        ? ((blendedShiftXInput *
                     controls.shiftSens *
                     effectiveDepth *
                     80.0 *
@@ -261,7 +265,7 @@ class WindowEffect2DPreview extends StatelessWidget {
         : layer.x;
 
     final double shiftY = layer.canShift
-        ? ((-devY *
+        ? ((-blendedShiftYInput *
                     controls.shiftSens *
                     effectiveDepth *
                     80.0 *
@@ -316,8 +320,6 @@ class WindowEffect2DPreview extends StatelessWidget {
             .clamp(layer.minScale, layer.maxScale)
         : layer.scale;
 
-    final double tiltXcalc = frame.yaw / 60.0;
-    final double tiltYcalc = frame.pitch / 40.0;
     Matrix4 tiltTransform = Matrix4.identity();
     if (layer.canTilt) {
       tiltTransform.setEntry(3, 2, 0.001);

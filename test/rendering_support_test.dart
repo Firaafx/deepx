@@ -32,6 +32,7 @@ void main() {
     expect(adapted.scene['assetKind'], 'image');
     expect(adapted.controls['baseFov'], 75);
     expect(adapted.controls['zoomSensitivity'], 1.0);
+    expect(adapted.controls['posterTimeMs'], 0);
     expect(adapted.meta['editor'], 'composer');
   });
 
@@ -96,6 +97,47 @@ void main() {
       ambientImageUrlFromPayload(blank360Payload(), fallbackMode: '360'),
       isNull,
     );
+  });
+
+  test('ambientBackgroundPayloadFromPayload keeps only the lowest visible layer',
+      () {
+    final Map<String, dynamic> payload = <String, dynamic>{
+      'schemaVersion': PresetPayloadV2.schemaVersion,
+      'mode': '2d',
+      'scene': <String, dynamic>{
+        'turning_point': <String, dynamic>{'order': 0},
+        'background': <String, dynamic>{
+          'order': -10,
+          'url': 'https://example.com/bg.png',
+          'isVisible': true,
+        },
+        'foreground': <String, dynamic>{
+          'order': 10,
+          'url': 'https://example.com/fg.png',
+          'isVisible': true,
+        },
+        'bezel': <String, dynamic>{
+          'order': -20,
+          'isRect': true,
+          'isVisible': true,
+        },
+      },
+      'controls': <String, dynamic>{'deadZoneX': 0.05},
+      'meta': <String, dynamic>{'editor': 'composer'},
+    };
+
+    final Map<String, dynamic>? ambientPayload =
+        ambientBackgroundPayloadFromPayload(payload, fallbackMode: '2d');
+    expect(ambientPayload, isNotNull);
+
+    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
+      ambientPayload!,
+      fallbackMode: '2d',
+    );
+    expect(adapted.scene.keys, containsAll(<String>['turning_point', 'background']));
+    expect(adapted.scene.keys, isNot(contains('foreground')));
+    expect(adapted.scene.keys, isNot(contains('bezel')));
+    expect(adapted.controls['deadZoneX'], 0.05);
   });
 
   test('tracking helpers neutralize inactive previews and honor cursor bounds',
