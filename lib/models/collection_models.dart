@@ -53,6 +53,10 @@ class CollectionSummary {
     this.myReaction = 0,
     this.isSavedByCurrentUser = false,
     this.isWatchLater = false,
+    this.isPaid = false,
+    this.priceCents,
+    this.accentColorHex,
+    this.viewerHasPaid = false,
   });
 
   final String id;
@@ -78,6 +82,10 @@ class CollectionSummary {
   final int myReaction;
   final bool isSavedByCurrentUser;
   final bool isWatchLater;
+  final bool isPaid;
+  final int? priceCents;
+  final String? accentColorHex;
+  final bool viewerHasPaid;
 }
 
 class CollectionDetail {

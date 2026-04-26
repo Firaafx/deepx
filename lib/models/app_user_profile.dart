@@ -9,6 +9,7 @@ class AppUserProfile {
     this.gender,
     this.birthDate,
     required this.onboardingCompleted,
+    this.isVerified = false,
   });
 
   final String userId;
@@ -20,6 +21,7 @@ class AppUserProfile {
   final String? gender;
   final DateTime? birthDate;
   final bool onboardingCompleted;
+  final bool isVerified;
 
   String get displayName {
     final String full = (fullName ?? '').trim();
@@ -43,6 +45,7 @@ class AppUserProfile {
           ? null
           : DateTime.tryParse(map['birth_date'].toString()),
       onboardingCompleted: map['onboarding_completed'] == true,
+      isVerified: map['is_verified'] == true,
     );
   }
 
@@ -57,6 +60,7 @@ class AppUserProfile {
       'gender': gender,
       'birth_date': birthDate?.toIso8601String(),
       'onboarding_completed': onboardingCompleted,
+      'is_verified': isVerified,
     };
   }
 }

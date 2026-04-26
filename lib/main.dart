@@ -169,7 +169,7 @@ class _MyAppState extends State<MyApp> {
           brightness: Brightness.dark,
           seedColor: const Color(0xFF0095F6),
         ),
-        scaffoldBackgroundColor: const Color(0xFF000000),
+        scaffoldBackgroundColor: const Color(0xFF101213),
         cardColor: const Color(0xFF121212),
         progressIndicatorTheme: const ProgressIndicatorThemeData(
           color: Colors.white,
@@ -290,7 +290,7 @@ class _SupabaseConfigMissingPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Color(0xFF101213),
       body: Center(
         child: Text(
           'Missing Supabase config.\nRun with --dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...',

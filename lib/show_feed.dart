@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 // ignore: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:html' as html;
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -31,6 +33,7 @@ import 'models/watch_later_item.dart';
 import 'rendering_support.dart';
 import 'services/app_repository.dart';
 import 'services/appearance_settings_service.dart';
+import 'services/cache_service.dart';
 import 'services/query_guard.dart';
 import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
@@ -458,130 +461,38 @@ class _BlurMenuCard<T> extends StatelessWidget {
   }
 }
 
-const double _kGridCardVerticalGap = 1;
+const double _kSvgGridGapToCardRatio = 0.084;
+const double _kSvgGridSideMarginToCardRatio = 0.0605;
 
-class _GridCardTextMeta extends StatelessWidget {
-  const _GridCardTextMeta({
-    required this.title,
-    required this.author,
-    required this.titleStyle,
-    required this.authorStyle,
-    this.onAuthorTap,
+class _SvgGridLayoutSpec {
+  const _SvgGridLayoutSpec({
+    required this.crossAxisSpacing,
+    required this.mainAxisSpacing,
+    required this.sidePadding,
   });
 
-  final String title;
-  final String author;
-  final TextStyle titleStyle;
-  final TextStyle authorStyle;
-  final VoidCallback? onAuthorTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          title,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: titleStyle,
-        ),
-        const SizedBox(height: _kGridCardVerticalGap),
-        InkWell(
-          onTap: onAuthorTap,
-          child: Text(
-            author,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: authorStyle,
-          ),
-        ),
-      ],
-    );
-  }
+  final double crossAxisSpacing;
+  final double mainAxisSpacing;
+  final double sidePadding;
 }
 
-class _GridCardTopRightOverlay extends StatelessWidget {
-  const _GridCardTopRightOverlay({
-    required this.size,
-    required this.metaText,
-    required this.menuItems,
-    required this.tooltip,
-    required this.onSelected,
-  });
-
-  final Size size;
-  final String metaText;
-  final List<_BlurMenuEntry<String>> menuItems;
-  final String tooltip;
-  final ValueChanged<String> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final double scale = (size.width / 360).clamp(0.72, 1.2).toDouble();
-    final double fontSize = (11 * scale).clamp(8.5, 14).toDouble();
-    final double gap = (4 * scale).clamp(2, 8).toDouble();
-    final double iconSize = (18 * scale).clamp(14, 24).toDouble();
-    final double triggerSize =
-        (iconSize + (8 * scale)).clamp(18, 34).toDouble();
-    final bool hasMeta = metaText.trim().isNotEmpty;
-    final bool hasMenu = menuItems.isNotEmpty;
-    if (!hasMeta && !hasMenu) {
-      return const SizedBox.shrink();
-    }
-    return Align(
-      alignment: Alignment.topRight,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (hasMeta)
-            ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: size.width * 0.58),
-              child: Text(
-                metaText,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.92),
-                  fontSize: fontSize,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          if (hasMeta && hasMenu) SizedBox(width: gap),
-          if (hasMenu)
-            BlurMenuButton<String>(
-              tooltip: tooltip,
-              items: menuItems,
-              onSelected: onSelected,
-              icon: SizedBox.square(
-                dimension: triggerSize,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.black.withValues(alpha: 0.34),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.18),
-                      width: 0.5,
-                    ),
-                  ),
-                  child: Center(
-                    child: Icon(
-                      Icons.more_vert,
-                      color: Colors.white,
-                      size: iconSize,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+_SvgGridLayoutSpec _svgGridLayoutSpec({
+  required double viewportWidth,
+  required int crossAxisCount,
+}) {
+  final double safeWidth = math.max(1, viewportWidth);
+  final int safeCount = math.max(1, crossAxisCount);
+  final double denominator = safeCount +
+      ((safeCount - 1) * _kSvgGridGapToCardRatio) +
+      (2 * _kSvgGridSideMarginToCardRatio);
+  final double cardWidth = safeWidth / denominator;
+  final double gap = cardWidth * _kSvgGridGapToCardRatio;
+  final double side = cardWidth * _kSvgGridSideMarginToCardRatio;
+  return _SvgGridLayoutSpec(
+    crossAxisSpacing: gap,
+    mainAxisSpacing: gap,
+    sidePadding: side,
+  );
 }
 
 class _GridCardPreviewSurface extends StatefulWidget {
@@ -589,23 +500,37 @@ class _GridCardPreviewSurface extends StatefulWidget {
     required this.heroTag,
     required this.mode,
     required this.payload,
+    required this.title,
+    required this.verticalUsername,
+    required this.priceText,
     required this.avatarImage,
+    required this.isVerified,
+    required this.accentColor,
     required this.metaText,
+    required this.showCollectionCount,
+    required this.collectionCountText,
     required this.menuItems,
-    required this.menuTooltip,
     required this.onMenuSelected,
-    this.outsideOverflowMax = 100,
+    this.onAvatarTap,
+    this.outsideOverflowMax = 0,
     this.emptyChild,
   });
 
   final String heroTag;
   final String mode;
   final Map<String, dynamic> payload;
+  final String title;
+  final String verticalUsername;
+  final String priceText;
   final ImageProvider? avatarImage;
+  final bool isVerified;
+  final Color accentColor;
   final String metaText;
+  final bool showCollectionCount;
+  final String collectionCountText;
   final List<_BlurMenuEntry<String>> menuItems;
-  final String menuTooltip;
   final ValueChanged<String> onMenuSelected;
+  final VoidCallback? onAvatarTap;
   final double outsideOverflowMax;
   final Widget? emptyChild;
 
@@ -663,6 +588,36 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
       widget.payload,
       fallbackMode: widget.mode,
     );
+    final int usernameChars =
+        widget.verticalUsername.trim().isEmpty
+            ? 1
+            : widget.verticalUsername.trim().replaceAll('@', '').length.clamp(1, 6);
+    final bool twoLineTitle = _cardTitleNeedsTwoLines(
+      context,
+      widget.title,
+    );
+    final double metaWidthFactor = _cardMetaWidthFactor(
+      context,
+      widget.metaText,
+    );
+    final SvgCardClipper clipper = SvgCardClipper(
+      usernameCharCount: usernameChars,
+      metaWidthFactor: metaWidthFactor,
+      twoLineTitle: twoLineTitle,
+    );
+    final List<SvgCardMenuAction> menuActions = widget.menuItems
+        .map((item) {
+          if (item.isDivider) return const SvgCardMenuAction.divider();
+          final String value = item.value ?? '';
+          if (value.isEmpty) return const SvgCardMenuAction.divider();
+          return SvgCardMenuAction(
+            value: value,
+            label: item.label ?? value,
+            enabled: item.enabled,
+          );
+        })
+        .toList();
+
     return MouseRegion(
       onEnter: (_) => setState(() => _realHover = true),
       onExit: (_) => setState(() => _realHover = false),
@@ -673,19 +628,23 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
           createRectTween: (begin, end) =>
               _EaseInOutRectTween(begin: begin, end: end),
           child: SvgCardShell(
-            baseColor: const Color(0xFFF0F0F0),
+            baseColor: const Color(0x00000000),
+            title: widget.title,
+            metaText: widget.metaText,
+            verticalUsername: widget.verticalUsername,
+            priceLabel: widget.priceText,
+            showCollectionCount: widget.showCollectionCount,
+            collectionCountLabel: widget.collectionCountText,
+            isVerified: widget.isVerified,
+            accentColor: widget.accentColor,
             avatarImage: widget.avatarImage,
-            topRightOverlayBuilder: (context, size) => _GridCardTopRightOverlay(
-              size: size,
-              metaText: widget.metaText,
-              menuItems: widget.menuItems,
-              tooltip: widget.menuTooltip,
-              onSelected: widget.onMenuSelected,
-            ),
+            onAvatarTap: widget.onAvatarTap,
+            menuItems: menuActions,
+            onMenuSelected: widget.onMenuSelected,
             child: _SharedPresetPreview(
               mode: widget.mode,
               payload: widget.payload,
-              clipper: const SvgCardClipper(),
+              clipper: clipper,
               pointerPassthrough: true,
               useGlobalTracking: _active,
               externalHeadPose: _active ? null : kNeutralPreviewHeadPose,
@@ -786,7 +745,8 @@ class _EaseInOutRectTween extends RectTween {
 
 const double _kDetailContentPadding = 14;
 const double _kDetailPanelGap = 12;
-const double _kDetailPanelWidth = 360;
+const double _kDetailPrimaryRatio = 0.8;
+const double _kDetailSecondaryRatio = 0.2;
 const double _kDetailPreviewAspectRatio = 16 / 9;
 
 double _detailPreviewWidth({
@@ -794,7 +754,17 @@ double _detailPreviewWidth({
   required bool desktop,
 }) {
   if (!desktop) return contentWidth;
-  return math.max(0, contentWidth - _kDetailPanelWidth - _kDetailPanelGap);
+  final double usable = math.max(0, contentWidth - _kDetailPanelGap);
+  return usable * _kDetailPrimaryRatio;
+}
+
+double _detailSidePanelWidth({
+  required double contentWidth,
+  required bool desktop,
+}) {
+  if (!desktop) return contentWidth;
+  final double usable = math.max(0, contentWidth - _kDetailPanelGap);
+  return usable * _kDetailSecondaryRatio;
 }
 
 class _CardScopedAmbientBackdrop extends StatelessWidget {
@@ -820,7 +790,8 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
     return Image.network(
       normalizedUrl,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
+      errorBuilder: (_, __, ___) =>
+          const ColoredBox(color: Color(0xFF101213)),
     );
   }
 
@@ -851,7 +822,7 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
         return Stack(
           fit: StackFit.expand,
           children: [
-            const ColoredBox(color: Colors.black),
+            const ColoredBox(color: Color(0xFF101213)),
             if (hasAmbient)
               Positioned(
                 left: leftPadding,
@@ -1147,17 +1118,40 @@ class _LinearGlowPainter extends CustomPainter {
   }
 }
 
-double _gridTextBlockHeight({
-  required TextStyle titleStyle,
-  required TextStyle authorStyle,
-}) {
-  final double titleFontSize = titleStyle.fontSize ?? 14;
-  final double authorFontSize = authorStyle.fontSize ?? 12;
-  final double titleLineHeight = titleFontSize * (titleStyle.height ?? 1.2);
-  final double authorLineHeight = authorFontSize * (authorStyle.height ?? 1.2);
-  return (titleLineHeight * 2) +
-      authorLineHeight +
-      _kGridCardVerticalGap;
+bool _cardTitleNeedsTwoLines(BuildContext context, String raw) {
+  final String text = raw.trim();
+  if (text.isEmpty) return false;
+  final TextPainter painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: GoogleFonts.inter(
+        fontSize: 10,
+        fontWeight: FontWeight.w400,
+      ),
+    ),
+    maxLines: 2,
+    ellipsis: '...',
+    textDirection: Directionality.of(context),
+  )..layout(maxWidth: 240);
+  return painter.computeLineMetrics().length > 1;
+}
+
+double _cardMetaWidthFactor(BuildContext context, String raw) {
+  final String text = raw.trim();
+  if (text.isEmpty) return 0;
+  final TextPainter painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: GoogleFonts.inter(
+        fontSize: 9,
+        fontWeight: FontWeight.w400,
+      ),
+    ),
+    maxLines: 1,
+    textDirection: Directionality.of(context),
+  )..layout(maxWidth: 9999);
+  final double measured = painter.width + 14;
+  return ((measured - 70) / 130).clamp(0.0, 1.0).toDouble();
 }
 
 double _mapDouble(dynamic value, double fallback) {
@@ -1169,6 +1163,39 @@ int _mapInt(dynamic value, int fallback) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+Color _cardAccentColorFromHex(
+  String? raw, {
+  Color fallback = const Color(0xFFFD4687),
+}) {
+  final String value = (raw ?? '').trim();
+  if (value.isEmpty) return fallback;
+  final String normalized = value.startsWith('#') ? value.substring(1) : value;
+  if (normalized.length != 6) return fallback;
+  final int? parsed = int.tryParse('FF$normalized', radix: 16);
+  if (parsed == null) return fallback;
+  return Color(parsed);
+}
+
+String _cardPriceLabel({
+  required bool isPaid,
+  required int? priceCents,
+  required bool viewerHasPaid,
+}) {
+  if (!isPaid || viewerHasPaid) return 'Free';
+  final int cents = (priceCents ?? 0).clamp(0, 999999999);
+  if (cents == 0) return 'Free';
+  final String dollars = (cents / 100).toStringAsFixed(cents % 100 == 0 ? 0 : 2);
+  return '\$$dollars';
+}
+
+String _verticalUsernameForCard(AppUserProfile? profile) {
+  final String username = (profile?.username ?? '').trim();
+  if (username.isNotEmpty) return username;
+  final String full = (profile?.fullName ?? '').trim();
+  if (full.isNotEmpty) return full.replaceAll(' ', '');
+  return 'U';
 }
 
 String _formatDurationClock(int milliseconds) {
@@ -1334,7 +1361,7 @@ class _StandalonePostRoutePageState extends State<StandalonePostRoutePage> {
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: Color(0xFF101213),
         body: _TopEdgeLoadingPane(label: 'Loading post...'),
       );
     }
@@ -1418,7 +1445,7 @@ class _StandaloneCollectionRoutePageState
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: Color(0xFF101213),
         body: _TopEdgeLoadingPane(label: 'Loading collection...'),
       );
     }
@@ -1537,6 +1564,10 @@ class _StandalonePublicProfileRoutePageState
       );
     }
     final profile = _profile!;
+    final ImageProvider? profileAvatarImage =
+        (profile.avatarUrl ?? '').trim().isNotEmpty
+            ? NetworkImage(profile.avatarUrl!.trim())
+            : null;
     final stats = _stats ??
         const ProfileStats(
           followersCount: 0,
@@ -1549,14 +1580,24 @@ class _StandalonePublicProfileRoutePageState
       for (final post in _posts) {
         entries.add(<String, dynamic>{
           'kind': 'post',
+          'id': post.id,
           'title': post.title.isNotEmpty ? post.title : post.name,
           'meta':
-              '${post.mode.toUpperCase()} · ${_friendlyTime(post.createdAt)}',
+              '${post.mode.toUpperCase()} • ${_friendlyTime(post.createdAt)}',
           'mode': post.thumbnailMode ?? post.mode,
           'payload': post.thumbnailPayload.isNotEmpty
               ? post.thumbnailPayload
               : post.payload,
           'tapPath': buildPostRoutePathForPreset(post),
+          'heroTag': 'post-detail-hero-${post.id}',
+          'priceText': _cardPriceLabel(
+            isPaid: post.isPaid,
+            priceCents: post.priceCents,
+            viewerHasPaid: post.viewerHasPaid,
+          ),
+          'accentHex': post.accentColorHex,
+          'showCollectionCount': false,
+          'collectionCountText': '',
         });
       }
     }
@@ -1565,15 +1606,25 @@ class _StandalonePublicProfileRoutePageState
       for (final collection in _collections) {
         entries.add(<String, dynamic>{
           'kind': 'collection',
+          'id': collection.id,
           'title': collection.name.isNotEmpty ? collection.name : 'Collection',
           'meta':
-              '${collection.itemsCount} items · ${_friendlyTime(collection.createdAt)}',
+              '${collection.itemsCount} items • ${_friendlyTime(collection.createdAt)}',
           'mode':
               collection.thumbnailMode ?? collection.firstItem?.mode ?? '2d',
           'payload': collection.thumbnailPayload.isNotEmpty
               ? collection.thumbnailPayload
               : (collection.firstItem?.snapshot ?? const <String, dynamic>{}),
           'tapPath': buildCollectionRoutePathForSummary(collection),
+          'heroTag': 'collection-detail-hero-${collection.id}-0',
+          'priceText': _cardPriceLabel(
+            isPaid: collection.isPaid,
+            priceCents: collection.priceCents,
+            viewerHasPaid: collection.viewerHasPaid,
+          ),
+          'accentHex': collection.accentColorHex,
+          'showCollectionCount': true,
+          'collectionCountText': '${collection.itemsCount}',
         });
       }
     }
@@ -1757,108 +1808,101 @@ class _StandalonePublicProfileRoutePageState
                 ),
               )
             else
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
-                sliver: SliverGrid(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final entry = entries[index];
-                      final String title = entry['title']?.toString() ?? '';
-                      final String meta = entry['meta']?.toString() ?? '';
-                      final String path = entry['tapPath']?.toString() ?? '/';
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () => Navigator.pushNamed(context, path),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerLow,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: cs.outline.withValues(alpha: 0.2),
-                            ),
-                          ),
-                          padding: const EdgeInsets.all(8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: _HoverActivatedPreviewRegion(
-                                    builder: (active) {
-                                      final String entryMode =
-                                          entry['mode']?.toString() ?? '2d';
-                                      final Map<String, dynamic> entryPayload =
-                                          (entry['payload'] as Map?)
-                                                  ?.cast<String, dynamic>() ??
-                                              const <String, dynamic>{};
-                                      final bool usePreviewPlayback =
-                                          _is360VideoPayload(
-                                        entryPayload,
-                                        fallbackMode: entryMode,
-                                      );
-                                      return _SharedPresetPreview(
-                                        mode: entryMode,
-                                        payload: entryPayload,
-                                        borderRadius:
-                                            BorderRadius.circular(8),
-                                        useGlobalTracking: active,
-                                        externalHeadPose: active
-                                            ? null
-                                            : kNeutralPreviewHeadPose,
-                                        previewPlaybackMode:
-                                            usePreviewPlayback,
-                                        videoPlayActive: active,
-                                        posterTimeMs: _posterTimeMsFromPayload(
-                                          entryPayload,
-                                          fallbackMode: entryMode,
+              SliverLayoutBuilder(
+                builder: (context, constraints) {
+                  final double width = constraints.crossAxisExtent;
+                  int crossAxisCount = 1;
+                  if (width >= 1500) {
+                    crossAxisCount = 4;
+                  } else if (width >= 1150) {
+                    crossAxisCount = 3;
+                  } else if (width >= 760) {
+                    crossAxisCount = 2;
+                  }
+                  final _SvgGridLayoutSpec gridSpec = _svgGridLayoutSpec(
+                    viewportWidth: width,
+                    crossAxisCount: crossAxisCount,
+                  );
+                  return SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                      gridSpec.sidePadding,
+                      4,
+                      gridSpec.sidePadding,
+                      gridSpec.mainAxisSpacing,
+                    ),
+                    sliver: SliverGrid(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final entry = entries[index];
+                          final String title = entry['title']?.toString() ?? '';
+                          final String meta = entry['meta']?.toString() ?? '';
+                          final String path = entry['tapPath']?.toString() ?? '/';
+                          final String mode = entry['mode']?.toString() ?? '2d';
+                          final Map<String, dynamic> payload =
+                              (entry['payload'] as Map?)
+                                      ?.cast<String, dynamic>() ??
+                                  const <String, dynamic>{};
+                          final String heroTag =
+                              entry['heroTag']?.toString() ??
+                                  'public-profile-card-$index';
+                          final bool showCollectionCount =
+                              entry['showCollectionCount'] == true;
+                          final String collectionCountText =
+                              entry['collectionCountText']?.toString() ?? '';
+                          return Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => Navigator.pushNamed(context, path),
+                              child: _GridCardPreviewSurface(
+                                heroTag: heroTag,
+                                mode: mode,
+                                payload: payload,
+                                title: title,
+                                verticalUsername: _verticalUsernameForCard(
+                                  profile,
+                                ),
+                                priceText:
+                                    entry['priceText']?.toString() ?? 'Free',
+                                avatarImage: profileAvatarImage,
+                                isVerified: profile.isVerified,
+                                accentColor: _cardAccentColorFromHex(
+                                  entry['accentHex']?.toString(),
+                                ),
+                                metaText: meta,
+                                showCollectionCount: showCollectionCount,
+                                collectionCountText: collectionCountText,
+                                menuItems: const <_BlurMenuEntry<String>>[],
+                                onAvatarTap: () =>
+                                    _openPublicProfileRoute(context, profile),
+                                onMenuSelected: (_) {},
+                                outsideOverflowMax: 0,
+                                emptyChild: showCollectionCount
+                                    ? Container(
+                                        color: cs.surfaceContainerLow,
+                                        child: Center(
+                                          child: Icon(
+                                            Icons.collections_bookmark_outlined,
+                                            color: cs.onSurfaceVariant,
+                                            size: 34,
+                                          ),
                                         ),
-                                        resetVideoOnActivate:
-                                            usePreviewPlayback,
-                                        restorePosterOnDeactivate:
-                                            usePreviewPlayback,
-                                        muted: true,
-                                        loop: true,
-                                      );
-                                    },
-                                  ),
-                                ),
+                                      )
+                                    : null,
                               ),
-                              const SizedBox(height: 6),
-                              Text(
-                                title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: cs.onSurface,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                meta,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: cs.onSurfaceVariant,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                    childCount: entries.length,
-                  ),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 1,
-                  ),
-                ),
+                            ),
+                          );
+                        },
+                        childCount: entries.length,
+                      ),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        mainAxisSpacing: gridSpec.mainAxisSpacing,
+                        crossAxisSpacing: gridSpec.crossAxisSpacing,
+                        childAspectRatio: _kGridPreviewAspectRatio,
+                      ),
+                    ),
+                  );
+                },
               ),
           ],
         ),
@@ -2343,16 +2387,16 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
       await _promptSignIn();
       return;
     }
+    final NavigatorState navigator = Navigator.of(context);
+    if (!mounted) return;
+    if (tab == _ShellTab.home) {
+      await CacheService.instance.markDomainDirty(CacheDomain.feed);
+    } else if (tab == _ShellTab.collection) {
+      await CacheService.instance.markDomainDirty(CacheDomain.collections);
+    }
     if (!mounted) return;
     final String targetPath = _pathForTab(tab);
-    final String? currentPath = ModalRoute.of(context)?.settings.name;
-    if (currentPath == targetPath) {
-      if (_activeTab != tab) {
-        setState(() => _activeTab = tab);
-      }
-      return;
-    }
-    Navigator.of(context).pushReplacement(
+    navigator.pushReplacement(
       PageRouteBuilder<void>(
         settings: RouteSettings(name: targetPath),
         transitionDuration: Duration.zero,
@@ -2806,16 +2850,6 @@ class _HomeFeedTab extends StatefulWidget {
 
 const double _kGridPreviewAspectRatio = 1661 / 960;
 
-double _feedCardFixedMetaHeight() {
-  return _gridTextBlockHeight(
-    titleStyle: const TextStyle(
-      fontWeight: FontWeight.w700,
-      fontSize: 14,
-    ),
-    authorStyle: const TextStyle(fontSize: 12),
-  );
-}
-
 class _HomeFeedTabState extends State<_HomeFeedTab> {
   final AppRepository _repository = AppRepository.instance;
   static const double _chipRailTop = 56;
@@ -2839,15 +2873,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     required double width,
     required int crossAxisCount,
   }) {
-    const double horizontalPadding = 14 * 2;
-    const double crossAxisSpacing = 12;
-    final double itemWidth = (width -
-            horizontalPadding -
-            ((crossAxisCount - 1) * crossAxisSpacing)) /
-        crossAxisCount;
-    final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
-    final double cardHeight = previewHeight + _feedCardFixedMetaHeight();
-    return itemWidth / cardHeight;
+    return _kGridPreviewAspectRatio;
   }
 
   @override
@@ -2904,6 +2930,9 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
           mode: post.preset.mode,
           payload: post.preset.payload,
           existingPreset: post.preset,
+          initialIsPaid: post.preset.isPaid,
+          initialPriceCents: post.preset.priceCents,
+          initialAccentColorHex: post.preset.accentColorHex,
           editTarget: _ComposerEditTarget.card,
           startBlankCard: false,
         ),
@@ -3314,16 +3343,25 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
                 } else if (width >= 760) {
                   crossAxisCount = 2;
                 }
+                final _SvgGridLayoutSpec gridSpec = _svgGridLayoutSpec(
+                  viewportWidth: width,
+                  crossAxisCount: crossAxisCount,
+                );
 
                 return GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14).copyWith(
+                  padding: EdgeInsets.fromLTRB(
+                    gridSpec.sidePadding,
+                    0,
+                    gridSpec.sidePadding,
+                    gridSpec.mainAxisSpacing,
+                  ).copyWith(
                     top: _chipRailTop + _chipRailHeight + 12,
                   ),
                   itemCount: visiblePosts.length,
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
+                    crossAxisSpacing: gridSpec.crossAxisSpacing,
+                    mainAxisSpacing: gridSpec.mainAxisSpacing,
                     childAspectRatio: _feedGridCardAspectRatio(
                       width: width,
                       crossAxisCount: crossAxisCount,
@@ -3403,15 +3441,7 @@ class _CollectionTabState extends State<_CollectionTab> {
     required double width,
     required int crossAxisCount,
   }) {
-    const double horizontalPadding = 14 * 2;
-    const double crossAxisSpacing = 12;
-    final double itemWidth = (width -
-            horizontalPadding -
-            ((crossAxisCount - 1) * crossAxisSpacing)) /
-        crossAxisCount;
-    final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
-    final double cardHeight = previewHeight + _feedCardFixedMetaHeight();
-    return itemWidth / cardHeight;
+    return _kGridPreviewAspectRatio;
   }
 
   @override
@@ -3561,6 +3591,9 @@ class _CollectionTabState extends State<_CollectionTab> {
           tags: summary.tags,
           mentionUserIds: summary.mentionUserIds,
           published: summary.published,
+          initialIsPaid: summary.isPaid,
+          initialPriceCents: summary.priceCents,
+          initialAccentColorHex: summary.accentColorHex,
           initialCardPayload: summary.thumbnailPayload,
           initialCardMode: summary.thumbnailMode,
           editTarget: _ComposerEditTarget.card,
@@ -3939,16 +3972,25 @@ class _CollectionTabState extends State<_CollectionTab> {
                 } else if (width >= 760) {
                   crossAxisCount = 2;
                 }
+                final _SvgGridLayoutSpec gridSpec = _svgGridLayoutSpec(
+                  viewportWidth: width,
+                  crossAxisCount: crossAxisCount,
+                );
 
                 return GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14).copyWith(
+                  padding: EdgeInsets.fromLTRB(
+                    gridSpec.sidePadding,
+                    0,
+                    gridSpec.sidePadding,
+                    gridSpec.mainAxisSpacing,
+                  ).copyWith(
                     top: _chipRailTop + _chipRailHeight + 12,
                   ),
                   itemCount: visibleCollections.length,
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
+                    crossAxisSpacing: gridSpec.crossAxisSpacing,
+                    mainAxisSpacing: gridSpec.mainAxisSpacing,
                     childAspectRatio: _collectionGridCardAspectRatio(
                       width: width,
                       crossAxisCount: crossAxisCount,
@@ -4065,65 +4107,56 @@ class _CollectionFeedTile extends StatelessWidget {
       );
     }
     final String metaText =
-        '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)} · ${summary.itemsCount} items';
+        '${_friendlyCount(summary.viewsCount)} views • ${_friendlyTime(summary.createdAt)} • ${summary.itemsCount} items';
+    final Color accentColor = _cardAccentColorFromHex(summary.accentColorHex);
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AspectRatio(
-              aspectRatio: _kGridPreviewAspectRatio,
-              child: _GridCardPreviewSurface(
-                heroTag: heroTag,
-                mode: previewMode,
-                payload: previewPayload,
-                avatarImage: avatarImage,
-                metaText: metaText,
-                menuItems: menuItems,
-                menuTooltip: 'Collection actions',
-                onMenuSelected: (value) {
-                  if (value == 'watch_later') onWatchLater();
-                  if (value == 'share') onShare();
-                  if (value == 'report') onReport();
-                  if (value == 'not_interested') onNotInterested();
-                  if (value == 'dont_recommend') onDontRecommend();
-                  if (value == 'update') onUpdate?.call();
-                  if (value == 'visibility') onToggleVisibility?.call();
-                  if (value == 'delete') onDelete?.call();
-                },
-                outsideOverflowMax: 100,
-                emptyChild: Container(
-                  color: cs.surfaceContainerLow,
-                  child: Center(
-                    child: Icon(
-                      Icons.collections_bookmark_outlined,
-                      color: cs.onSurfaceVariant,
-                      size: 34,
-                    ),
-                  ),
+        child: AspectRatio(
+          aspectRatio: _kGridPreviewAspectRatio,
+          child: _GridCardPreviewSurface(
+            heroTag: heroTag,
+            mode: previewMode,
+            payload: previewPayload,
+            title:
+                summary.name.isNotEmpty ? summary.name : 'Untitled collection',
+            verticalUsername: _verticalUsernameForCard(summary.author),
+            priceText: _cardPriceLabel(
+              isPaid: summary.isPaid,
+              priceCents: summary.priceCents,
+              viewerHasPaid: summary.viewerHasPaid,
+            ),
+            avatarImage: avatarImage,
+            isVerified: summary.author?.isVerified == true,
+            accentColor: accentColor,
+            metaText: metaText,
+            showCollectionCount: true,
+            collectionCountText: '${summary.itemsCount}',
+            menuItems: menuItems,
+            onAvatarTap: onOpenAuthorProfile,
+            onMenuSelected: (value) {
+              if (value == 'watch_later') onWatchLater();
+              if (value == 'share') onShare();
+              if (value == 'report') onReport();
+              if (value == 'not_interested') onNotInterested();
+              if (value == 'dont_recommend') onDontRecommend();
+              if (value == 'update') onUpdate?.call();
+              if (value == 'visibility') onToggleVisibility?.call();
+              if (value == 'delete') onDelete?.call();
+            },
+            outsideOverflowMax: 0,
+            emptyChild: Container(
+              color: cs.surfaceContainerLow,
+              child: Center(
+                child: Icon(
+                  Icons.collections_bookmark_outlined,
+                  color: cs.onSurfaceVariant,
+                  size: 34,
                 ),
               ),
             ),
-            const SizedBox(height: _kGridCardVerticalGap),
-            _GridCardTextMeta(
-              title: summary.name.isNotEmpty
-                  ? summary.name
-                  : 'Untitled collection',
-              author: summary.author?.displayName ?? 'Unknown creator',
-              titleStyle: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
-              ),
-              authorStyle: TextStyle(
-                color: cs.onSurfaceVariant,
-                fontSize: 12,
-              ),
-              onAuthorTap: onOpenAuthorProfile,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -4138,9 +4171,15 @@ class _SuggestionGridCard extends StatelessWidget {
     required this.title,
     required this.author,
     required this.metaText,
+    required this.priceText,
+    required this.isVerified,
+    required this.accentColor,
+    this.showCollectionCount = false,
+    this.collectionCountText = '',
     required this.onTap,
+    this.onAvatarTap,
     this.avatarImage,
-    this.outsideOverflowMax = 100,
+    this.outsideOverflowMax = 0,
   });
 
   final String heroTag;
@@ -4149,7 +4188,13 @@ class _SuggestionGridCard extends StatelessWidget {
   final String title;
   final String author;
   final String metaText;
+  final String priceText;
+  final bool isVerified;
+  final Color accentColor;
+  final bool showCollectionCount;
+  final String collectionCountText;
   final VoidCallback onTap;
+  final VoidCallback? onAvatarTap;
   final ImageProvider? avatarImage;
   final double outsideOverflowMax;
 
@@ -4157,39 +4202,26 @@ class _SuggestionGridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AspectRatio(
-            aspectRatio: _kGridPreviewAspectRatio,
-            child: _GridCardPreviewSurface(
-              heroTag: heroTag,
-              mode: mode,
-              payload: payload,
-              avatarImage: avatarImage,
-              metaText: metaText,
-              menuItems: const <_BlurMenuEntry<String>>[],
-              menuTooltip: '',
-              onMenuSelected: (_) {},
-              outsideOverflowMax: outsideOverflowMax,
-            ),
-          ),
-          const SizedBox(height: _kGridCardVerticalGap),
-          _GridCardTextMeta(
-            title: title,
-            author: author,
-            titleStyle: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-            ),
-            authorStyle: TextStyle(
-              color: Colors.white.withValues(alpha: 0.75),
-              fontSize: 11,
-            ),
-          ),
-        ],
+      child: AspectRatio(
+        aspectRatio: _kGridPreviewAspectRatio,
+        child: _GridCardPreviewSurface(
+          heroTag: heroTag,
+          mode: mode,
+          payload: payload,
+          title: title,
+          verticalUsername: author.replaceAll('@', '').replaceAll(' ', ''),
+          priceText: priceText,
+          avatarImage: avatarImage,
+          isVerified: isVerified,
+          accentColor: accentColor,
+          metaText: metaText,
+          showCollectionCount: showCollectionCount,
+          collectionCountText: collectionCountText,
+          menuItems: const <_BlurMenuEntry<String>>[],
+          onMenuSelected: (_) {},
+          onAvatarTap: onAvatarTap,
+          outsideOverflowMax: outsideOverflowMax,
+        ),
       ),
     );
   }
@@ -4226,7 +4258,6 @@ class _FeedTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final String previewMode = post.preset.thumbnailMode ?? post.preset.mode;
     final Map<String, dynamic> previewPayload =
         post.preset.thumbnailPayload.isNotEmpty
@@ -4265,56 +4296,47 @@ class _FeedTile extends StatelessWidget {
       );
     }
     final String metaText =
-        '${_friendlyCount(post.viewsCount)} views · ${_friendlyTime(post.preset.createdAt)}';
+        '${_friendlyCount(post.viewsCount)} views • ${_friendlyTime(post.preset.createdAt)}';
+    final Color accentColor = _cardAccentColorFromHex(post.preset.accentColorHex);
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AspectRatio(
-              aspectRatio: _kGridPreviewAspectRatio,
-              child: _GridCardPreviewSurface(
-                heroTag: heroTag,
-                mode: previewMode,
-                payload: previewPayload,
-                avatarImage: avatarImage,
-                metaText: metaText,
-                menuItems: menuItems,
-                menuTooltip: 'Post actions',
-                onMenuSelected: (value) {
-                  if (value == 'watch_later') onWatchLater();
-                  if (value == 'share') onShare();
-                  if (value == 'report') onReport();
-                  if (value == 'not_interested') onNotInterested();
-                  if (value == 'dont_recommend') onDontRecommend();
-                  if (value == 'edit') onEdit?.call();
-                  if (value == 'visibility') onToggleVisibility?.call();
-                  if (value == 'delete') onDelete?.call();
-                },
-                outsideOverflowMax: 100,
-              ),
+        child: AspectRatio(
+          aspectRatio: _kGridPreviewAspectRatio,
+          child: _GridCardPreviewSurface(
+            heroTag: heroTag,
+            mode: previewMode,
+            payload: previewPayload,
+            title:
+                post.preset.title.isNotEmpty ? post.preset.title : post.preset.name,
+            verticalUsername: _verticalUsernameForCard(post.author),
+            priceText: _cardPriceLabel(
+              isPaid: post.preset.isPaid,
+              priceCents: post.preset.priceCents,
+              viewerHasPaid: post.preset.viewerHasPaid,
             ),
-            const SizedBox(height: _kGridCardVerticalGap),
-            _GridCardTextMeta(
-              title: post.preset.title.isNotEmpty
-                  ? post.preset.title
-                  : post.preset.name,
-              author: post.author?.displayName ?? 'Unknown creator',
-              titleStyle: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
-              ),
-              authorStyle: TextStyle(
-                color: cs.onSurfaceVariant,
-                fontSize: 12,
-              ),
-              onAuthorTap: onOpenAuthorProfile,
-            ),
-          ],
+            avatarImage: avatarImage,
+            isVerified: post.author?.isVerified == true,
+            accentColor: accentColor,
+            metaText: metaText,
+            showCollectionCount: false,
+            collectionCountText: '',
+            menuItems: menuItems,
+            onAvatarTap: onOpenAuthorProfile,
+            onMenuSelected: (value) {
+              if (value == 'watch_later') onWatchLater();
+              if (value == 'share') onShare();
+              if (value == 'report') onReport();
+              if (value == 'not_interested') onNotInterested();
+              if (value == 'dont_recommend') onDontRecommend();
+              if (value == 'edit') onEdit?.call();
+              if (value == 'visibility') onToggleVisibility?.call();
+              if (value == 'delete') onDelete?.call();
+            },
+            outsideOverflowMax: 0,
+          ),
         ),
       ),
     );
@@ -4493,7 +4515,8 @@ class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
         borderRadius: widget.borderRadius,
         clipper: widget.clipper,
         pointerPassthrough: widget.pointerPassthrough,
-        outsideOverflowMax: widget.outsideOverflowMax,
+        layerMode: _GridPresetPreviewLayerMode.insideOnly,
+        outsideOverflowMax: 0,
         useGlobalTracking: widget.useGlobalTracking,
         externalHeadPose: widget.externalHeadPose,
         emptyChild: widget.emptyChild,
@@ -4561,6 +4584,7 @@ class _SharedPresetPreview extends StatelessWidget {
     this.restorePosterOnDeactivate = false,
     this.muted = true,
     this.loop = true,
+    this.allowOutsideOverflow = false,
   });
 
   final String mode;
@@ -4581,6 +4605,7 @@ class _SharedPresetPreview extends StatelessWidget {
   final bool restorePosterOnDeactivate;
   final bool muted;
   final bool loop;
+  final bool allowOutsideOverflow;
 
   @override
   Widget build(BuildContext context) {
@@ -4590,10 +4615,11 @@ class _SharedPresetPreview extends StatelessWidget {
       borderRadius: borderRadius,
       clipper: clipper,
       pointerPassthrough: pointerPassthrough,
-      enableOutsideOverlay: _previewNeedsOutsideOverlay(
-        mode: mode,
-        payload: payload,
-      ),
+      enableOutsideOverlay: allowOutsideOverflow &&
+          _previewNeedsOutsideOverlay(
+            mode: mode,
+            payload: payload,
+          ),
       outsideOverflowMax: outsideOverflowMax,
       useGlobalTracking: useGlobalTracking,
       externalHeadPose: externalHeadPose,
@@ -5033,7 +5059,7 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
       child: Focus(
         autofocus: true,
         child: Scaffold(
-          backgroundColor: Colors.black,
+          backgroundColor: const Color(0xFF101213),
           body: Stack(
             children: [
               Positioned.fill(
@@ -5472,91 +5498,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     await _loadComments();
   }
 
-  Future<void> _editOwnPost() async {
-    final updated = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        settings: const RouteSettings(name: '/post/editor/detail-update'),
-        builder: (_) => _PostCardComposerPage.single(
-          name: _post.preset.name,
-          mode: _post.preset.mode,
-          payload: _post.preset.payload,
-          existingPreset: _post.preset,
-          editTarget: _ComposerEditTarget.detail,
-          startBlankCard: false,
-        ),
-      ),
-    );
-    if (updated == true) {
-      final refreshed = await _repository.fetchFeedPostById(_post.preset.id);
-      if (!mounted || refreshed == null) return;
-      setState(() => _post = refreshed);
-    }
-  }
-
-  Future<void> _toggleOwnVisibility() async {
-    try {
-      await _repository.setPresetVisibility(
-        presetId: _post.preset.id,
-        isPublic: !_post.preset.isPublic,
-      );
-      final refreshed = await _repository.fetchFeedPostById(_post.preset.id);
-      if (!mounted) return;
-      if (refreshed != null) {
-        setState(() => _post = refreshed);
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _post.preset.isPublic
-                ? 'Post set to private.'
-                : 'Post set to public.',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update visibility: $e')),
-      );
-    }
-  }
-
-  Future<void> _deleteOwnPost() async {
-    final bool shouldDelete = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Delete post?'),
-            content: const Text('This action cannot be undone.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Delete'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    if (!shouldDelete) return;
-    try {
-      await _repository.deletePresetPost(_post.preset.id);
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Post deleted.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Delete failed: $e')),
-      );
-    }
-  }
-
   String _displayFilterName(String filter) {
     if (filter == 'FromUser') {
       final username = _post.author?.username?.trim();
@@ -5851,7 +5792,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       ),
                       const SizedBox(width: 10),
                       Text(
-                        '${_friendlyCount(_post.viewsCount)} views · ${_friendlyTime(_post.preset.createdAt)}',
+                        '${_friendlyCount(_post.viewsCount)} views • ${_friendlyTime(_post.preset.createdAt)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
@@ -5949,7 +5890,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   payload: previewPayload,
                   borderRadius: BorderRadius.circular(16),
                   pointerPassthrough: !isPanorama,
-                  outsideOverflowMax: 100,
+                  outsideOverflowMax: 0,
                   panoramaController:
                       isPanorama ? _detail360Controller : null,
                   show360PlayerControls: isPanorama,
@@ -6143,32 +6084,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const SizedBox.shrink(),
-              const Spacer(),
-              if (_mine)
-                BlurMenuButton<String>(
-                  tooltip: 'Post actions',
-                  items: [
-                    const _BlurMenuEntry.item(value: 'edit', label: 'Update'),
-                    _BlurMenuEntry.item(
-                      value: 'visibility',
-                      label: _post.preset.isPublic
-                          ? 'Make Private'
-                          : 'Make Public',
-                    ),
-                    const _BlurMenuEntry.item(value: 'delete', label: 'Delete'),
-                  ],
-                  onSelected: (value) {
-                    if (value == 'edit') _editOwnPost();
-                    if (value == 'visibility') _toggleOwnVisibility();
-                    if (value == 'delete') _deleteOwnPost();
-                  },
-                  icon: const Icon(Icons.more_vert, color: Colors.white),
-                ),
-            ],
-          ),
+          const SizedBox.shrink(),
           buildFilterRail(),
           const SizedBox(height: 8),
           Expanded(
@@ -6181,8 +6097,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                 : ListView.separated(
                     controller: _rightPaneScrollController,
                     itemCount: suggestions.length.clamp(0, 24),
-                    separatorBuilder: (_, __) =>
-                        const Divider(color: Colors.white24, height: 14),
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
                       final item = suggestions[index];
                       final String mode =
@@ -6200,13 +6115,23 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                             : item.preset.name,
                         author: item.author?.displayName ?? 'Unknown creator',
                         metaText:
-                            '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.preset.createdAt)}',
+                            '${_friendlyCount(item.viewsCount)} views • ${_friendlyTime(item.preset.createdAt)}',
+                        priceText: _cardPriceLabel(
+                          isPaid: item.preset.isPaid,
+                          priceCents: item.preset.priceCents,
+                          viewerHasPaid: item.preset.viewerHasPaid,
+                        ),
+                        isVerified: item.author?.isVerified == true,
+                        accentColor:
+                            _cardAccentColorFromHex(item.preset.accentColorHex),
                         avatarImage:
                             (item.author?.avatarUrl ?? '').trim().isNotEmpty
                                 ? NetworkImage(item.author!.avatarUrl!.trim())
                                 : null,
+                        onAvatarTap: () =>
+                            _openPublicProfileRoute(context, item.author),
                         onTap: () => _openSuggestedPost(item),
-                        outsideOverflowMax: 100,
+                        outsideOverflowMax: 0,
                       );
                     },
                   ),
@@ -6218,13 +6143,14 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     Widget buildRightPanel({
       required bool desktop,
       required double viewportHeight,
+      required double panelWidth,
     }) {
       final Widget body =
           _commentsOpen ? buildCommentsPanel() : buildSuggestionsPanel();
       final EdgeInsets panelPadding =
           desktop ? const EdgeInsets.fromLTRB(10, 0, 2, 0) : EdgeInsets.zero;
       return SizedBox(
-        width: desktop ? 360 : double.infinity,
+        width: desktop ? panelWidth : double.infinity,
         height: desktop ? viewportHeight : 640,
         child: Padding(
           padding: panelPadding,
@@ -6234,7 +6160,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     }
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF101213),
       body: KeyboardListener(
         autofocus: true,
         focusNode: _immersiveFocusNode,
@@ -6251,6 +6177,10 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             final double contentWidth =
                 viewport.maxWidth - (_kDetailContentPadding * 2);
             final double previewWidth = _detailPreviewWidth(
+              contentWidth: contentWidth,
+              desktop: desktop,
+            );
+            final double sideWidth = _detailSidePanelWidth(
               contentWidth: contentWidth,
               desktop: desktop,
             );
@@ -6287,7 +6217,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                         ? Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
+                              SizedBox(
+                                width: previewWidth,
                                 child: Scrollbar(
                                   controller: _leftPaneScrollController,
                                   child: SingleChildScrollView(
@@ -6300,6 +6231,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                               buildRightPanel(
                                 desktop: true,
                                 viewportHeight: viewport.maxHeight - 28,
+                                panelWidth: sideWidth,
                               ),
                             ],
                           )
@@ -6312,6 +6244,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                                 buildRightPanel(
                                   desktop: false,
                                   viewportHeight: viewport.maxHeight,
+                                  panelWidth: contentWidth,
                                 ),
                               ],
                             ),
@@ -9705,14 +9638,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   bool _swipeCaptured = false;
   bool _active360PreviewHover = false;
 
-  bool get _mine {
-    final String? me = _repository.currentUser?.id;
-    if (me == null) return false;
-    final String ownerId =
-        _detail?.summary.userId ?? widget.initialSummary?.userId ?? '';
-    return ownerId == me;
-  }
-
   @override
   void initState() {
     super.initState();
@@ -10082,107 +10007,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     );
   }
 
-  Future<void> _toggleVisibility() async {
-    final summary = _detail?.summary;
-    if (summary == null) return;
-    try {
-      await _repository.setCollectionPublished(
-        collectionId: summary.id,
-        published: !summary.published,
-      );
-      await _load();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            summary.published
-                ? 'Collection set to private.'
-                : 'Collection set to public.',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update collection: $e')),
-      );
-    }
-  }
-
-  Future<void> _updateCollection() async {
-    final detail = _detail;
-    if (detail == null) return;
-    final bool updated = await Navigator.push<bool>(
-          context,
-          MaterialPageRoute(
-            settings: const RouteSettings(
-                name: '/post/editor/collection-detail-update'),
-            builder: (_) => _PostCardComposerPage.collection(
-              collectionId: detail.summary.id,
-              collectionName: detail.summary.name,
-              collectionDescription: detail.summary.description,
-              tags: detail.summary.tags,
-              mentionUserIds: detail.summary.mentionUserIds,
-              published: detail.summary.published,
-              initialCardPayload: detail.summary.thumbnailPayload,
-              initialCardMode: detail.summary.thumbnailMode,
-              editTarget: _ComposerEditTarget.detail,
-              startBlankCard: false,
-              items: detail.items
-                  .map(
-                    (item) => CollectionDraftItem(
-                      mode: item.mode,
-                      name: item.name,
-                      snapshot: item.snapshot,
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-        ) ??
-        false;
-    if (updated) {
-      await _load();
-    }
-  }
-
-  Future<void> _deleteCollection() async {
-    final summary = _detail?.summary;
-    if (summary == null) return;
-    final bool shouldDelete = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Delete collection?'),
-            content: const Text('This action cannot be undone.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Delete'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    if (!shouldDelete) return;
-    try {
-      await _repository.deleteCollection(summary.id);
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Collection deleted.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Delete failed: $e')),
-      );
-    }
-  }
-
   CollectionSummary? get _activeSummary =>
       _detail?.summary ?? widget.initialSummary;
 
@@ -10483,7 +10307,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             payload: item.snapshot,
             borderRadius: BorderRadius.circular(16),
             pointerPassthrough: !isPanorama,
-            outsideOverflowMax: 100,
+            outsideOverflowMax: 0,
             panoramaController: isPanorama ? _detail360Controller : null,
             show360PlayerControls: isPanorama,
             muted: true,
@@ -10506,13 +10330,13 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     final List<CollectionSummary> suggestions = _filteredSuggestions();
     if (_loading) {
       return const Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: Color(0xFF101213),
         body: _TopEdgeLoadingPane(label: 'Loading collection...'),
       );
     }
     if (_error != null) {
       return Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: const Color(0xFF101213),
         body: QueryRetryPane(
           title: _error,
           offline: _isOfflineErrorText(_error!),
@@ -10522,7 +10346,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     }
     if (summary == null || detail == null) {
       return Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: Color(0xFF101213),
         body: Center(
           child: Text(
             'Collection unavailable.',
@@ -10730,7 +10554,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                       ),
                       const SizedBox(width: 10),
                       Text(
-                        '${_friendlyCount(summary.viewsCount)} views · ${_friendlyTime(summary.createdAt)}',
+                        '${_friendlyCount(summary.viewsCount)} views • ${_friendlyTime(summary.createdAt)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
@@ -11086,30 +10910,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const SizedBox.shrink(),
-              const Spacer(),
-              if (_mine)
-                BlurMenuButton<String>(
-                  tooltip: 'Collection actions',
-                  items: [
-                    const _BlurMenuEntry.item(value: 'update', label: 'Update'),
-                    _BlurMenuEntry.item(
-                      value: 'visibility',
-                      label: summary.published ? 'Make Private' : 'Make Public',
-                    ),
-                    const _BlurMenuEntry.item(value: 'delete', label: 'Delete'),
-                  ],
-                  onSelected: (value) {
-                    if (value == 'update') _updateCollection();
-                    if (value == 'visibility') _toggleVisibility();
-                    if (value == 'delete') _deleteCollection();
-                  },
-                  icon: const Icon(Icons.more_vert, color: Colors.white),
-                ),
-            ],
-          ),
+          const SizedBox.shrink(),
           const SizedBox(height: 6),
           buildSwipeControlRail(),
           buildFilterRail(),
@@ -11124,8 +10925,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                 : ListView.separated(
                     controller: _rightPaneScrollController,
                     itemCount: suggestions.length.clamp(0, 24),
-                    separatorBuilder: (_, __) =>
-                        const Divider(color: Colors.white24, height: 14),
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
                       final item = suggestions[index];
                       final String mode =
@@ -11142,11 +10942,23 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                         title: item.name,
                         author: item.author?.displayName ?? 'Unknown creator',
                         metaText:
-                            '${_friendlyCount(item.viewsCount)} views · ${_friendlyTime(item.createdAt)}',
+                            '${_friendlyCount(item.viewsCount)} views • ${_friendlyTime(item.createdAt)}',
+                        priceText: _cardPriceLabel(
+                          isPaid: item.isPaid,
+                          priceCents: item.priceCents,
+                          viewerHasPaid: item.viewerHasPaid,
+                        ),
+                        isVerified: item.author?.isVerified == true,
+                        accentColor:
+                            _cardAccentColorFromHex(item.accentColorHex),
+                        showCollectionCount: true,
+                        collectionCountText: '${item.itemsCount}',
                         avatarImage:
                             (item.author?.avatarUrl ?? '').trim().isNotEmpty
                                 ? NetworkImage(item.author!.avatarUrl!.trim())
                                 : null,
+                        onAvatarTap: () =>
+                            _openPublicProfileRoute(context, item.author),
                         onTap: () => _pushHeroRoute(
                           context,
                           builder: (_) => _CollectionDetailPage(
@@ -11156,7 +10968,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                           name: buildCollectionRoutePathForSummary(item),
                           replace: true,
                         ),
-                        outsideOverflowMax: 100,
+                        outsideOverflowMax: 0,
                       );
                     },
                   ),
@@ -11168,13 +10980,14 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     Widget buildRightPanel({
       required bool desktop,
       required double viewportHeight,
+      required double panelWidth,
     }) {
       final Widget body =
           _commentsOpen ? buildCommentsPanel() : buildSuggestionsPanel();
       final EdgeInsets panelPadding =
           desktop ? const EdgeInsets.fromLTRB(10, 0, 2, 0) : EdgeInsets.zero;
       return SizedBox(
-        width: desktop ? 360 : double.infinity,
+        width: desktop ? panelWidth : double.infinity,
         height: desktop ? viewportHeight : 640,
         child: Padding(
           padding: panelPadding,
@@ -11184,7 +10997,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     }
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF101213),
       body: KeyboardListener(
         focusNode: _swipeFocusNode,
         autofocus: true,
@@ -11222,6 +11035,10 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               contentWidth: contentWidth,
               desktop: desktop,
             );
+            final double sideWidth = _detailSidePanelWidth(
+              contentWidth: contentWidth,
+              desktop: desktop,
+            );
             final double previewHeight =
                 previewWidth / _kDetailPreviewAspectRatio;
             final Widget leftScroll = Scrollbar(
@@ -11245,17 +11062,18 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   right: 0,
                   top: 0,
                   bottom: 0,
-                  width: _kDetailPanelWidth,
+                  width: sideWidth,
                   child: buildRightPanel(
                     desktop: true,
                     viewportHeight: viewport.maxHeight - 28,
+                    panelWidth: sideWidth,
                   ),
                 ),
                 Positioned(
                   left: 0,
                   top: 0,
                   bottom: 0,
-                  right: _kDetailPanelWidth + _kDetailPanelGap,
+                  right: sideWidth + _kDetailPanelGap,
                   child: leftScroll,
                 ),
                 Positioned(
@@ -11279,6 +11097,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                       buildRightPanel(
                         desktop: false,
                         viewportHeight: viewport.maxHeight,
+                        panelWidth: contentWidth,
                       ),
                     ],
                   ),
@@ -11391,15 +11210,6 @@ enum _SavedGridFilter {
 
 class _ProfileTabState extends State<_ProfileTab> {
   final AppRepository _repository = AppRepository.instance;
-  double _profileCardExtraHeight() {
-    return _gridTextBlockHeight(
-      titleStyle: const TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w700,
-      ),
-      authorStyle: const TextStyle(fontSize: 11),
-    );
-  }
 
   bool _loading = true;
   String? _error;
@@ -11593,6 +11403,9 @@ class _ProfileTabState extends State<_ProfileTab> {
           mode: preset.mode,
           payload: preset.payload,
           existingPreset: preset,
+          initialIsPaid: preset.isPaid,
+          initialPriceCents: preset.priceCents,
+          initialAccentColorHex: preset.accentColorHex,
           editTarget: _ComposerEditTarget.card,
           startBlankCard: false,
         ),
@@ -11837,15 +11650,7 @@ class _ProfileTabState extends State<_ProfileTab> {
     required double width,
     required int crossAxisCount,
   }) {
-    const double horizontalPadding = 12 * 2;
-    const double crossAxisSpacing = 10;
-    final double itemWidth = (width -
-            horizontalPadding -
-            ((crossAxisCount - 1) * crossAxisSpacing)) /
-        crossAxisCount;
-    final double previewHeight = itemWidth / _kGridPreviewAspectRatio;
-    final double cardHeight = previewHeight + _profileCardExtraHeight();
-    return itemWidth / cardHeight;
+    return _kGridPreviewAspectRatio;
   }
 
   Widget _buildPresetGridTab({
@@ -11865,13 +11670,22 @@ class _ProfileTabState extends State<_ProfileTab> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final int crossAxisCount = _profileGridColumns(constraints.maxWidth);
+        final _SvgGridLayoutSpec gridSpec = _svgGridLayoutSpec(
+          viewportWidth: constraints.maxWidth,
+          crossAxisCount: crossAxisCount,
+        );
         return GridView.builder(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          padding: EdgeInsets.fromLTRB(
+            gridSpec.sidePadding,
+            10,
+            gridSpec.sidePadding,
+            gridSpec.mainAxisSpacing,
+          ),
           itemCount: presets.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
+            crossAxisSpacing: gridSpec.crossAxisSpacing,
+            mainAxisSpacing: gridSpec.mainAxisSpacing,
             childAspectRatio: _profileGridAspectRatio(
               width: constraints.maxWidth,
               crossAxisCount: crossAxisCount,
@@ -11918,47 +11732,40 @@ class _ProfileTabState extends State<_ProfileTab> {
             ];
             return InkWell(
               onTap: () => _openPost(preset),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AspectRatio(
-                    aspectRatio: _kGridPreviewAspectRatio,
-                    child: _GridCardPreviewSurface(
-                      heroTag: heroTag,
-                      mode: mode,
-                      payload: payload,
-                      avatarImage:
-                          avatarUrl == null ? null : NetworkImage(avatarUrl),
-                      metaText:
-                          '${_friendlyCount(viewsCount)} views · ${_friendlyTime(preset.createdAt)}',
-                      menuItems: menuItems,
-                      menuTooltip: 'Post actions',
-                      onMenuSelected: (value) {
-                        if (value == 'share') _copyPostLink(preset);
-                        if (value == 'edit') _editPost(preset);
-                        if (value == 'visibility') {
-                          _togglePresetVisibility(preset);
-                        }
-                        if (value == 'delete') _deletePreset(preset);
-                      },
-                      outsideOverflowMax: 100,
-                    ),
+              child: AspectRatio(
+                aspectRatio: _kGridPreviewAspectRatio,
+                child: _GridCardPreviewSurface(
+                  heroTag: heroTag,
+                  mode: mode,
+                  payload: payload,
+                  title: title,
+                  verticalUsername: authorName,
+                  priceText: _cardPriceLabel(
+                    isPaid: preset.isPaid,
+                    priceCents: preset.priceCents,
+                    viewerHasPaid: preset.viewerHasPaid,
                   ),
-                  const SizedBox(height: _kGridCardVerticalGap),
-                  _GridCardTextMeta(
-                    title: title,
-                    author: authorName,
-                    titleStyle: TextStyle(
-                      color: cs.onSurface,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    authorStyle: TextStyle(
-                      color: cs.onSurfaceVariant,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
+                  avatarImage:
+                      avatarUrl == null ? null : NetworkImage(avatarUrl),
+                  isVerified: _authorById[preset.userId]?.isVerified == true,
+                  accentColor: _cardAccentColorFromHex(preset.accentColorHex),
+                  metaText:
+                      '${_friendlyCount(viewsCount)} views • ${_friendlyTime(preset.createdAt)}',
+                  showCollectionCount: false,
+                  collectionCountText: '',
+                  menuItems: menuItems,
+                  onAvatarTap: () =>
+                      _openPublicProfileRoute(context, _authorById[preset.userId]),
+                  onMenuSelected: (value) {
+                    if (value == 'share') _copyPostLink(preset);
+                    if (value == 'edit') _editPost(preset);
+                    if (value == 'visibility') {
+                      _togglePresetVisibility(preset);
+                    }
+                    if (value == 'delete') _deletePreset(preset);
+                  },
+                  outsideOverflowMax: 0,
+                ),
               ),
             );
           },
@@ -11973,6 +11780,10 @@ class _ProfileTabState extends State<_ProfileTab> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final int crossAxisCount = _profileGridColumns(constraints.maxWidth);
+        final _SvgGridLayoutSpec gridSpec = _svgGridLayoutSpec(
+          viewportWidth: constraints.maxWidth,
+          crossAxisCount: crossAxisCount,
+        );
         return Column(
           children: [
             SingleChildScrollView(
@@ -12062,12 +11873,17 @@ class _ProfileTabState extends State<_ProfileTab> {
                       ),
                     )
                   : GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                      padding: EdgeInsets.fromLTRB(
+                        gridSpec.sidePadding,
+                        4,
+                        gridSpec.sidePadding,
+                        gridSpec.mainAxisSpacing,
+                      ),
                       itemCount: entries.length,
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: crossAxisCount,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
+                        crossAxisSpacing: gridSpec.crossAxisSpacing,
+                        mainAxisSpacing: gridSpec.mainAxisSpacing,
                         childAspectRatio: _profileGridAspectRatio(
                           width: constraints.maxWidth,
                           crossAxisCount: crossAxisCount,
@@ -12150,66 +11966,83 @@ class _ProfileTabState extends State<_ProfileTab> {
                               _openPost(preset);
                             }
                           },
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              AspectRatio(
-                                aspectRatio: _kGridPreviewAspectRatio,
-                                child: _GridCardPreviewSurface(
-                                  heroTag: heroTag,
-                                  mode: mode,
-                                  payload: payload,
-                                  avatarImage:
-                                      (avatarUrl ?? '').trim().isNotEmpty
-                                          ? NetworkImage(avatarUrl!.trim())
-                                          : null,
-                                  metaText:
-                                      '${_friendlyCount(viewsCount)} views · ${_friendlyTime(createdAt)}',
-                                  menuItems: menuItems,
-                                  menuTooltip: 'Saved item actions',
-                                  onMenuSelected: (value) {
-                                    if (value == 'remove') {
-                                      _removeSavedEntry(entry);
-                                    }
-                                    if (value == 'share') {
-                                      if (isCollection) {
-                                        _copyCollectionLink(collection);
-                                      } else if (preset != null) {
-                                        _copyPostLink(preset);
-                                      }
-                                    }
-                                  },
-                                  outsideOverflowMax: 100,
-                                  emptyChild: isCollection
-                                      ? Container(
-                                          color: cs.surfaceContainerLow,
-                                          child: Center(
-                                            child: Icon(
-                                              Icons
-                                                  .collections_bookmark_outlined,
-                                              color: cs.onSurfaceVariant,
-                                              size: 34,
-                                            ),
-                                          ),
-                                        )
-                                      : null,
-                                ),
+                          child: AspectRatio(
+                            aspectRatio: _kGridPreviewAspectRatio,
+                            child: _GridCardPreviewSurface(
+                              heroTag: heroTag,
+                              mode: mode,
+                              payload: payload,
+                              title: title,
+                              verticalUsername: authorName,
+                              priceText: _cardPriceLabel(
+                                isPaid: isCollection
+                                    ? collection.isPaid
+                                    : (preset?.isPaid ?? false),
+                                priceCents: isCollection
+                                    ? collection.priceCents
+                                    : preset?.priceCents,
+                                viewerHasPaid: isCollection
+                                    ? collection.viewerHasPaid
+                                    : (preset?.viewerHasPaid ?? false),
                               ),
-                              const SizedBox(height: _kGridCardVerticalGap),
-                              _GridCardTextMeta(
-                                title: title,
-                                author: authorName,
-                                titleStyle: TextStyle(
-                                  color: cs.onSurface,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                                authorStyle: TextStyle(
-                                  color: cs.onSurfaceVariant,
-                                  fontSize: 11,
-                                ),
+                              avatarImage: (avatarUrl ?? '').trim().isNotEmpty
+                                  ? NetworkImage(avatarUrl!.trim())
+                                  : null,
+                              isVerified: isCollection
+                                  ? collection.author?.isVerified == true
+                                  : _authorById[preset?.userId ?? '']
+                                          ?.isVerified ==
+                                      true,
+                              accentColor: _cardAccentColorFromHex(
+                                isCollection
+                                    ? collection.accentColorHex
+                                    : preset?.accentColorHex,
                               ),
-                            ],
+                              metaText:
+                                  '${_friendlyCount(viewsCount)} views • ${_friendlyTime(createdAt)}',
+                              showCollectionCount: isCollection,
+                              collectionCountText:
+                                  isCollection ? '${collection.itemsCount}' : '',
+                              menuItems: menuItems,
+                              onAvatarTap: () {
+                                if (isCollection) {
+                                  _openPublicProfileRoute(
+                                    context,
+                                    collection.author,
+                                  );
+                                } else {
+                                  _openPublicProfileRoute(
+                                    context,
+                                    _authorById[preset?.userId ?? ''],
+                                  );
+                                }
+                              },
+                              onMenuSelected: (value) {
+                                if (value == 'remove') {
+                                  _removeSavedEntry(entry);
+                                }
+                                if (value == 'share') {
+                                  if (isCollection) {
+                                    _copyCollectionLink(collection);
+                                  } else if (preset != null) {
+                                    _copyPostLink(preset);
+                                  }
+                                }
+                              },
+                              outsideOverflowMax: 0,
+                              emptyChild: isCollection
+                                  ? Container(
+                                      color: cs.surfaceContainerLow,
+                                      child: Center(
+                                        child: Icon(
+                                          Icons.collections_bookmark_outlined,
+                                          color: cs.onSurfaceVariant,
+                                          size: 34,
+                                        ),
+                                      ),
+                                    )
+                                  : null,
+                            ),
                           ),
                         );
                       },
@@ -12873,33 +12706,43 @@ class _ChatTabState extends State<_ChatTab> {
                             itemBuilder: (context, index) {
                               final chat = _chats[index];
                               final bool active = _activeChat?.id == chat.id;
-                              return ListTile(
-                                selected: active,
-                                shape: RoundedRectangleBorder(
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                child: Material(
+                                  color: active ? Colors.white : Colors.transparent,
                                   borderRadius: BorderRadius.circular(14),
-                                ),
-                                selectedTileColor: Colors.white,
-                                title: Text(
-                                  chat.titleFor(
-                                      _repository.currentUser?.id ?? ''),
-                                  style: TextStyle(
-                                    color: active ? Colors.black : cs.onSurface,
+                                  child: ListTile(
+                                    selected: active,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    selectedTileColor: Colors.transparent,
+                                    title: Text(
+                                      chat.titleFor(
+                                          _repository.currentUser?.id ?? ''),
+                                      style: TextStyle(
+                                        color: active ? Colors.black : cs.onSurface,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      chat.lastMessage ??
+                                          (chat.isGroup
+                                              ? 'Group chat'
+                                              : 'Direct message'),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: active
+                                            ? Colors.black54
+                                            : cs.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    onTap: () => _selectChat(chat),
                                   ),
                                 ),
-                                subtitle: Text(
-                                  chat.lastMessage ??
-                                      (chat.isGroup
-                                          ? 'Group chat'
-                                          : 'Direct message'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: active
-                                        ? Colors.black54
-                                        : cs.onSurfaceVariant,
-                                  ),
-                                ),
-                                onTap: () => _selectChat(chat),
                               );
                             },
                           ),
@@ -13498,6 +13341,9 @@ class _PostCardComposerPage extends StatefulWidget {
     required this.mode,
     required this.payload,
     this.existingPreset,
+    this.initialIsPaid = false,
+    this.initialPriceCents,
+    this.initialAccentColorHex,
     this.editTarget = _ComposerEditTarget.card,
     this.startBlankCard = true,
   })  : kind = _ComposerKind.single,
@@ -13519,6 +13365,9 @@ class _PostCardComposerPage extends StatefulWidget {
     required this.mentionUserIds,
     required this.published,
     required this.items,
+    this.initialIsPaid = false,
+    this.initialPriceCents,
+    this.initialAccentColorHex,
     this.initialCardPayload = const <String, dynamic>{},
     this.initialCardMode,
     this.editTarget = _ComposerEditTarget.card,
@@ -13534,6 +13383,9 @@ class _PostCardComposerPage extends StatefulWidget {
   final String mode;
   final Map<String, dynamic> payload;
   final RenderPreset? existingPreset;
+  final bool initialIsPaid;
+  final int? initialPriceCents;
+  final String? initialAccentColorHex;
 
   final String? collectionId;
   final String collectionName;
@@ -13587,6 +13439,8 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   late final TextEditingController _descriptionController;
   late final TextEditingController _tagsController;
   final TextEditingController _mentionController = TextEditingController();
+  final TextEditingController _priceController = TextEditingController();
+  late final TextEditingController _accentHexController;
 
   final Set<String> _selectedMentionIds = <String>{};
   final Map<String, AppUserProfile> _selectedMentionProfiles =
@@ -13600,8 +13454,11 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   bool _submitting = false;
   bool _uploadingLayerImage = false;
   bool _isPublic = true;
+  bool _isPaidContent = false;
+  bool _resolvingAccentColor = false;
   bool _showPublishStep = false;
   int _thumbnailIndex = 0;
+  String _accentColorHex = '#FD4687';
   String? _selected2dLayerKey;
   String? _selected3dToken;
   late String _thumbnailMode;
@@ -13809,10 +13666,28 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         _thumbnailPayload = _blankPayloadForMode('2d');
       }
     }
+    final bool seedIsPaid = widget.kind == _ComposerKind.single
+        ? (widget.existingPreset?.isPaid ?? widget.initialIsPaid)
+        : widget.initialIsPaid;
+    final int? seedPriceCents = widget.kind == _ComposerKind.single
+        ? (widget.existingPreset?.priceCents ?? widget.initialPriceCents)
+        : widget.initialPriceCents;
+    final String? seedAccentHex = widget.kind == _ComposerKind.single
+        ? (widget.existingPreset?.accentColorHex ?? widget.initialAccentColorHex)
+        : widget.initialAccentColorHex;
+    _isPaidContent = seedIsPaid;
+    if (_isPaidContent) {
+      _priceController.text = _priceInputFromCents(seedPriceCents);
+    }
+    _accentColorHex = _normalizeAccentHex(seedAccentHex) ?? '#FD4687';
+    _accentHexController = TextEditingController(text: _accentColorHex);
     _ensure3DWindowLayerDefaults();
     _ensureTurningPointLayer();
     _ensure2DLayerSelection();
     _ensure3DSelection();
+    if ((seedAccentHex ?? '').trim().isEmpty) {
+      unawaited(_autoDetectAccentColor());
+    }
     _mentionController.addListener(_onMentionQueryChanged);
   }
 
@@ -13821,6 +13696,8 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     _titleController.dispose();
     _descriptionController.dispose();
     _tagsController.dispose();
+    _priceController.dispose();
+    _accentHexController.dispose();
     _mentionController.removeListener(_onMentionQueryChanged);
     _mentionController.dispose();
     _mentionDebounce?.cancel();
@@ -13882,6 +13759,218 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       _selectedMentionIds.remove(userId);
       _selectedMentionProfiles.remove(userId);
     });
+  }
+
+  String _priceInputFromCents(int? cents) {
+    final int value = (cents ?? 0).clamp(0, 999999999);
+    if (value <= 0) return '';
+    if (value % 100 == 0) {
+      return (value ~/ 100).toString();
+    }
+    return (value / 100).toStringAsFixed(2);
+  }
+
+  int? _priceInputToCents(String raw) {
+    final String text = raw.trim();
+    if (text.isEmpty) return null;
+    final double? parsed = double.tryParse(text);
+    if (parsed == null || parsed.isNaN || parsed.isInfinite || parsed < 0) {
+      return null;
+    }
+    return (parsed * 100).round().clamp(0, 999999999).toInt();
+  }
+
+  String? _normalizeAccentHex(String? raw) {
+    final String value = (raw ?? '').trim();
+    if (value.isEmpty) return null;
+    final String normalized = value.startsWith('#') ? value : '#$value';
+    if (!RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(normalized)) return null;
+    return normalized.toUpperCase();
+  }
+
+  void _applyAccentText(String raw) {
+    final String? normalized = _normalizeAccentHex(raw);
+    if (normalized == null) return;
+    if (!mounted) return;
+    setState(() => _accentColorHex = normalized);
+  }
+
+  String? _extractAccentFromPayload(Map<String, dynamic> payload) {
+    bool usableAccent(String hex) {
+      final int? parsed = int.tryParse(hex.substring(1), radix: 16);
+      if (parsed == null) return false;
+      final int red = (parsed >> 16) & 0xFF;
+      final int green = (parsed >> 8) & 0xFF;
+      final int blue = parsed & 0xFF;
+      final int maxChannel = math.max(red, math.max(green, blue));
+      final int minChannel = math.min(red, math.min(green, blue));
+      final int intensity = red + green + blue;
+      final int spread = maxChannel - minChannel;
+      return intensity > 120 && spread > 14;
+    }
+
+    String? findHexInValue(dynamic value) {
+      if (value == null) return null;
+      if (value is String) {
+        final String? normalized = _normalizeAccentHex(value);
+        if (normalized == null) return null;
+        return usableAccent(normalized) ? normalized : null;
+      }
+      if (value is num) {
+        final int numeric = value.toInt();
+        if (numeric >= 0x000000 && numeric <= 0xFFFFFF) {
+          final String normalized =
+              '#${numeric.toRadixString(16).padLeft(6, '0')}'.toUpperCase();
+          return usableAccent(normalized) ? normalized : null;
+        }
+      }
+      return null;
+    }
+
+    final List<dynamic> queue = <dynamic>[payload];
+    int visited = 0;
+    while (queue.isNotEmpty && visited < 900) {
+      visited += 1;
+      final dynamic current = queue.removeAt(0);
+      if (current is Map) {
+        for (final MapEntry<dynamic, dynamic> entry in current.entries) {
+          final String key = entry.key.toString().toLowerCase();
+          if (key.contains('accent')) {
+            final String? accent = findHexInValue(entry.value);
+            if (accent != null) return accent;
+          }
+          if (key.contains('color') ||
+              key.contains('stroke') ||
+              key.contains('fill')) {
+            final String? color = findHexInValue(entry.value);
+            if (color != null) return color;
+          }
+          if (entry.value is Map || entry.value is List) {
+            queue.add(entry.value);
+          }
+        }
+      } else if (current is List) {
+        for (final dynamic value in current) {
+          if (value is Map || value is List) {
+            queue.add(value);
+            continue;
+          }
+          final String? color = findHexInValue(value);
+          if (color != null) return color;
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<String?> _sampleAccentFromImageUrl(String? imageUrl) async {
+    if (!kIsWeb) return null;
+    final String normalizedUrl = (imageUrl ?? '').trim();
+    if (normalizedUrl.isEmpty) return null;
+    try {
+      final html.ImageElement image = html.ImageElement()
+        ..crossOrigin = 'anonymous'
+        ..src = normalizedUrl;
+      await image.onLoad.first.timeout(const Duration(seconds: 6));
+      final html.CanvasElement canvas =
+          html.CanvasElement(width: 20, height: 20);
+      final html.CanvasRenderingContext2D context = canvas.context2D;
+      context.drawImageScaled(image, 0, 0, 20, 20);
+      final html.ImageData pixelData = context.getImageData(0, 0, 20, 20);
+      final List<int> bytes = pixelData.data;
+      int red = 0;
+      int green = 0;
+      int blue = 0;
+      int count = 0;
+      for (int i = 0; i + 3 < bytes.length; i += 4) {
+        final int alpha = bytes[i + 3];
+        if (alpha < 24) continue;
+        red += bytes[i];
+        green += bytes[i + 1];
+        blue += bytes[i + 2];
+        count += 1;
+      }
+      if (count == 0) return null;
+      red = (red / count).round().clamp(0, 255);
+      green = (green / count).round().clamp(0, 255);
+      blue = (blue / count).round().clamp(0, 255);
+      return '#${red.toRadixString(16).padLeft(2, '0')}${green.toRadixString(16).padLeft(2, '0')}${blue.toRadixString(16).padLeft(2, '0')}'
+          .toUpperCase();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _autoDetectAccentColor() async {
+    if (_resolvingAccentColor) return;
+    if (mounted) {
+      setState(() => _resolvingAccentColor = true);
+    }
+    try {
+      String? detected = _extractAccentFromPayload(_thumbnailPayload);
+      detected ??= await _sampleAccentFromImageUrl(
+        ambientImageUrlFromPayload(
+          _thumbnailPayload,
+          fallbackMode: _thumbnailMode,
+        ),
+      );
+      if (!mounted || detected == null) return;
+      final String resolvedAccent = detected;
+      setState(() {
+        _accentColorHex = resolvedAccent;
+        _accentHexController.text = _accentColorHex;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _resolvingAccentColor = false);
+      }
+    }
+  }
+
+  Future<void> _pickAccentFromScreen() async {
+    if (!kIsWeb) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('EyeDropper is supported on web only.')),
+      );
+      return;
+    }
+    try {
+      final JSAny? eyeDropperCtorAny = globalContext['EyeDropper'];
+      if (eyeDropperCtorAny == null || eyeDropperCtorAny.isUndefinedOrNull) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('EyeDropper is not supported in this browser.'),
+          ),
+        );
+        return;
+      }
+      final JSFunction eyeDropperCtor = eyeDropperCtorAny as JSFunction;
+      final JSObject picker =
+          eyeDropperCtor.callAsConstructorVarArgs<JSObject>(const <JSAny?>[]);
+      final JSPromise<JSAny?> openPromise = picker.callMethodVarArgs<
+          JSPromise<JSAny?>>('open'.toJS, const <JSAny?>[]);
+      final JSAny? result = await openPromise.toDart;
+      String? sampledHex;
+      if (result is JSObject) {
+        final JSAny? rawHex = result['sRGBHex'];
+        if (rawHex != null && rawHex.isDefinedAndNotNull && rawHex is JSString) {
+          sampledHex = rawHex.toDart;
+        }
+      }
+      final String? normalized = _normalizeAccentHex(sampledHex);
+      if (normalized == null || !mounted) return;
+      setState(() {
+        _accentColorHex = normalized;
+        _accentHexController.text = normalized;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Color pick canceled.')),
+      );
+    }
   }
 
   List<String> _parseTags(String raw) {
@@ -16778,6 +16867,24 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       );
       return;
     }
+    final int? priceCents =
+        _isPaidContent ? _priceInputToCents(_priceController.text) : null;
+    if (_isPaidContent && (priceCents == null || priceCents <= 0)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid paid amount.')),
+      );
+      return;
+    }
+    final String? accentColorHex = _normalizeAccentHex(
+          _accentHexController.text,
+        ) ??
+        _normalizeAccentHex(_accentColorHex);
+    if (accentColorHex == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Accent color must be a valid hex.')),
+      );
+      return;
+    }
 
     setState(() => _submitting = true);
     try {
@@ -16801,6 +16908,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               payload: canonicalPayload,
               mode: _thumbnailMode,
               visibility: _isPublic ? 'public' : 'private',
+              isPaid: _isPaidContent,
+              priceCents: priceCents,
+              accentColorHex: accentColorHex,
             );
           } else {
             await _repository.updatePresetCard(
@@ -16812,6 +16922,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               thumbnailPayload: canonicalPayload,
               thumbnailMode: _thumbnailMode,
               visibility: _isPublic ? 'public' : 'private',
+              isPaid: _isPaidContent,
+              priceCents: priceCents,
+              accentColorHex: accentColorHex,
             );
           }
         } else {
@@ -16826,6 +16939,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             visibility: _isPublic ? 'public' : 'private',
             thumbnailPayload: canonicalPayload,
             thumbnailMode: _thumbnailMode,
+            isPaid: _isPaidContent,
+            priceCents: priceCents,
+            accentColorHex: accentColorHex,
           );
         }
         if (mentions.isNotEmpty) {
@@ -16852,6 +16968,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             thumbnailMode: _thumbnailMode,
             publish: _isPublic,
             items: _editableCollectionItems,
+            isPaid: _isPaidContent,
+            priceCents: priceCents,
+            accentColorHex: accentColorHex,
           );
         } else {
           resolvedCollectionId = collectionId;
@@ -16864,6 +16983,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               mentionUserIds: mentions,
               publish: _isPublic,
               items: _editableCollectionItems,
+              isPaid: _isPaidContent,
+              priceCents: priceCents,
+              accentColorHex: accentColorHex,
             );
           } else {
             await _repository.updateCollectionCard(
@@ -16876,6 +16998,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               items: _editableCollectionItems,
               thumbnailPayload: canonicalPayload,
               thumbnailMode: _thumbnailMode,
+              isPaid: _isPaidContent,
+              priceCents: priceCents,
+              accentColorHex: accentColorHex,
             );
           }
         }
@@ -16910,12 +17035,19 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     final bool enable3dMousePreview =
         !_showPublishStep && _thumbnailMode == '3d';
     final bool isCardEditor = _isCardEditor;
+    final int? previewPriceCents = _priceInputToCents(_priceController.text);
+    final String previewPriceLabel = _cardPriceLabel(
+      isPaid: _isPaidContent,
+      priceCents: previewPriceCents,
+      viewerHasPaid: false,
+    );
     Widget previewSurface = _SharedPresetPreview(
       mode: _thumbnailMode,
       payload: _thumbnailPayload,
       borderRadius: previewRadius,
       clipper: isCardEditor ? const SvgCardClipper() : null,
       pointerPassthrough: !enable3dMousePreview,
+      allowOutsideOverflow: true,
     );
     if (_thumbnailMode == '360') {
       previewSurface = _SharedPresetPreview(
@@ -16924,6 +17056,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         borderRadius: previewRadius,
         clipper: isCardEditor ? const SvgCardClipper() : null,
         pointerPassthrough: false,
+        allowOutsideOverflow: true,
         panoramaController: _composer360PreviewController,
         show360PlayerControls: true,
         posterTimeMs: _mapInt(_thumbnail360Controls()['posterTimeMs'], 0),
@@ -16946,6 +17079,13 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       child: isCardEditor
           ? SvgCardShell(
               baseColor: const Color(0xFFF0F0F0),
+              accentColor: _cardAccentColorFromHex(_accentColorHex),
+              title: _titleController.text.trim(),
+              metaText: '0 views • now',
+              verticalUsername: 'USER',
+              priceLabel: previewPriceLabel,
+              showCollectionCount: widget.kind == _ComposerKind.collection,
+              collectionCountLabel: '${_editableCollectionItems.length}',
               child: previewSurface,
             )
           : previewSurface,
@@ -17207,6 +17347,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                               ] else ...[
                                 TextField(
                                   controller: _titleController,
+                                  onChanged: (_) {
+                                    if (mounted) setState(() {});
+                                  },
                                   decoration: const InputDecoration(
                                     labelText: 'Title',
                                   ),
@@ -17287,6 +17430,120 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                                       }).toList(),
                                     ),
                                   ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  'Monetization',
+                                  style: TextStyle(
+                                    color: cs.onSurface,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                SegmentedButton<bool>(
+                                  segments: const <ButtonSegment<bool>>[
+                                    ButtonSegment<bool>(
+                                      value: false,
+                                      label: Text('Free'),
+                                    ),
+                                    ButtonSegment<bool>(
+                                      value: true,
+                                      label: Text('Paid'),
+                                    ),
+                                  ],
+                                  selected: <bool>{_isPaidContent},
+                                  onSelectionChanged: (values) {
+                                    setState(() {
+                                      _isPaidContent = values.first;
+                                      if (!_isPaidContent) {
+                                        _priceController.clear();
+                                      }
+                                    });
+                                  },
+                                ),
+                                if (_isPaidContent) ...[
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: _priceController,
+                                    keyboardType: const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                    onChanged: (_) {
+                                      if (mounted) setState(() {});
+                                    },
+                                    decoration: const InputDecoration(
+                                      labelText: 'Price (USD)',
+                                      prefixText: '\$',
+                                      hintText: '4.99',
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 14),
+                                Text(
+                                  'Accent Color',
+                                  style: TextStyle(
+                                    color: cs.onSurface,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                TextField(
+                                  controller: _accentHexController,
+                                  onChanged: _applyAccentText,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Accent Hex',
+                                    hintText: '#FD4687',
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        onPressed: _resolvingAccentColor
+                                            ? null
+                                            : _autoDetectAccentColor,
+                                        icon: _resolvingAccentColor
+                                            ? const SizedBox(
+                                                width: 14,
+                                                height: 14,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                ),
+                                              )
+                                            : const Icon(
+                                                Icons.auto_awesome_rounded,
+                                                size: 16,
+                                              ),
+                                        label: const Text(
+                                          'Auto From Thumbnail',
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    IconButton.filledTonal(
+                                      tooltip: 'Pick from screen',
+                                      onPressed: _pickAccentFromScreen,
+                                      icon: const Icon(Icons.edit_rounded),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      width: 28,
+                                      height: 28,
+                                      decoration: BoxDecoration(
+                                        color: _cardAccentColorFromHex(
+                                          _accentColorHex,
+                                        ),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: cs.outline.withValues(
+                                            alpha: 0.4,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                                 const SizedBox(height: 14),
                                 SegmentedButton<bool>(
                                   segments: const [
@@ -17659,27 +17916,34 @@ class _SettingsTabState extends State<_SettingsTab> {
     String? subtitle,
   }) {
     final bool selected = _selectedSection == section;
-    return ListTile(
-      selected: selected,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      selectedTileColor: Colors.white,
-      leading: Icon(
-        icon,
-        color: selected ? Colors.black : cs.onSurfaceVariant,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Material(
+        color: selected ? Colors.white : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: ListTile(
+          selected: selected,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          selectedTileColor: Colors.transparent,
+          leading: Icon(
+            icon,
+            color: selected ? Colors.black : cs.onSurfaceVariant,
+          ),
+          title: Text(
+            label,
+            style: TextStyle(color: selected ? Colors.black : cs.onSurface),
+          ),
+          subtitle: subtitle == null
+              ? null
+              : Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: selected ? Colors.black54 : cs.onSurfaceVariant,
+                  ),
+                ),
+          onTap: () => setState(() => _selectedSection = section),
+        ),
       ),
-      title: Text(
-        label,
-        style: TextStyle(color: selected ? Colors.black : cs.onSurface),
-      ),
-      subtitle: subtitle == null
-          ? null
-          : Text(
-              subtitle,
-              style: TextStyle(
-                color: selected ? Colors.black54 : cs.onSurfaceVariant,
-              ),
-            ),
-      onTap: () => setState(() => _selectedSection = section),
     );
   }
 
@@ -18883,3 +19147,4 @@ String _friendlyCount(int value) {
   final double b = value / 1000000000;
   return b >= 10 ? '${b.toStringAsFixed(0)}B' : '${b.toStringAsFixed(1)}B';
 }
+

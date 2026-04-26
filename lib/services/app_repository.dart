@@ -184,10 +184,11 @@ class AppRepository {
             .neq('visibility', 'private')
             .order('created_at', ascending: false)
             .limit(limit);
-        return (rows as List)
+        final List<RenderPreset> presets = (rows as List)
             .map((raw) =>
                 RenderPreset.fromMap(Map<String, dynamic>.from(raw as Map)))
             .toList();
+        return _applyViewerEntitlementsToPresets(presets);
       },
       encode: (value) => value.map(_encodePreset).toList(),
       decode: (data) => _decodePresetList(data),
@@ -297,6 +298,19 @@ class AppRepository {
     }
 
     await _client.from('profiles').update(values).eq('user_id', user.id);
+  }
+
+  Future<void> setProfileVerification({
+    required String userId,
+    required bool isVerified,
+  }) async {
+    final String trimmed = userId.trim();
+    if (trimmed.isEmpty) return;
+    await _client
+        .from('profiles')
+        .update(<String, dynamic>{'is_verified': isVerified})
+        .eq('user_id', trimmed);
+    await CacheService.instance.markDomainDirty(CacheDomain.profile);
   }
 
   Future<List<AppUserProfile>> searchProfiles(
@@ -565,10 +579,11 @@ class AppRepository {
     }
 
     final List<dynamic> rows = await query;
-    return rows
+    final List<RenderPreset> presets = rows
         .map((dynamic e) =>
             RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
         .toList();
+    return _applyViewerEntitlementsToPresets(presets);
   }
 
   Future<List<RenderPreset>> fetchUserPosts(String userId) async {
@@ -592,10 +607,11 @@ class AppRepository {
 
         final List<dynamic> rows = await query;
 
-        return rows
+        final List<RenderPreset> presets = rows
             .map((dynamic e) =>
                 RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
             .toList();
+        return _applyViewerEntitlementsToPresets(presets);
       },
       encode: (value) => value.map(_encodePreset).toList(),
       decode: (data) => _decodePresetList(data),
@@ -639,10 +655,9 @@ class AppRepository {
     }
 
     merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    if (merged.length > limit) {
-      return merged.sublist(0, limit);
-    }
-    return merged;
+    final List<RenderPreset> limited =
+        merged.length > limit ? merged.sublist(0, limit) : merged;
+    return _applyViewerEntitlementsToPresets(limited);
   }
 
   Future<List<FeedPost>> fetchFeedPosts({int limit = 200}) async {
@@ -677,7 +692,7 @@ class AppRepository {
             .map((dynamic e) =>
                 RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
             .toList();
-        return _hydrateFeedPosts(presets);
+        return _hydrateFeedPosts(await _applyViewerEntitlementsToPresets(presets));
       },
       encode: (value) => value.map(_encodeFeedPost).toList(),
       decode: (data) => _decodeFeedPostList(data),
@@ -741,6 +756,10 @@ class AppRepository {
     final Set<String> savedPresetIds = <String>{};
     final Set<String> watchLaterPresetIds = <String>{};
     final Set<String> followingUserIds = <String>{};
+    final Map<String, bool> viewerHasPaidByPreset = await _fetchViewerEntitlements(
+      targetType: 'post',
+      targetIds: presetIds,
+    );
 
     if (user != null) {
       final List<dynamic> myReactions = await _client
@@ -788,8 +807,13 @@ class AppRepository {
 
     return presets.map((RenderPreset preset) {
       final stats = statsByPresetId[preset.id] ?? const <String, dynamic>{};
+      final bool viewerHasPaid = (user != null && user.id == preset.userId) ||
+          (viewerHasPaidByPreset[preset.id] ?? false);
       return FeedPost(
-        preset: preset,
+        preset: _copyPresetWithViewerAccess(
+          preset,
+          viewerHasPaid: viewerHasPaid,
+        ),
         author: profileById[preset.userId],
         likesCount: _toInt(stats['likes_count']),
         dislikesCount: _toInt(stats['dislikes_count']),
@@ -802,6 +826,76 @@ class AppRepository {
         isWatchLater: watchLaterPresetIds.contains(preset.id),
       );
     }).toList();
+  }
+
+  Future<Map<String, bool>> _fetchViewerEntitlements({
+    required String targetType,
+    required Set<String> targetIds,
+  }) async {
+    final user = currentUser;
+    if (user == null || targetIds.isEmpty) return const <String, bool>{};
+    final List<dynamic> rows = await _client
+        .from('viewer_content_entitlements')
+        .select('target_id,has_paid')
+        .eq('user_id', user.id)
+        .eq('target_type', targetType.toLowerCase() == 'collection'
+            ? 'collection'
+            : 'post')
+        .inFilter('target_id', targetIds.toList());
+    final Map<String, bool> out = <String, bool>{};
+    for (final dynamic row in rows) {
+      final Map<String, dynamic> map = Map<String, dynamic>.from(row as Map);
+      final String id = map['target_id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      out[id] = map['has_paid'] == true;
+    }
+    return out;
+  }
+
+  Future<List<RenderPreset>> _applyViewerEntitlementsToPresets(
+    List<RenderPreset> presets,
+  ) async {
+    if (presets.isEmpty) return presets;
+    final Map<String, bool> paidByPreset = await _fetchViewerEntitlements(
+      targetType: 'post',
+      targetIds: presets.map((preset) => preset.id).toSet(),
+    );
+    final String? viewerId = currentUser?.id;
+    return presets.map((preset) {
+      final bool viewerHasPaid = (viewerId != null && viewerId == preset.userId) ||
+          (paidByPreset[preset.id] ?? false);
+      return _copyPresetWithViewerAccess(
+        preset,
+        viewerHasPaid: viewerHasPaid,
+      );
+    }).toList();
+  }
+
+  RenderPreset _copyPresetWithViewerAccess(
+    RenderPreset preset, {
+    required bool viewerHasPaid,
+  }) {
+    return RenderPreset(
+      id: preset.id,
+      shareId: preset.shareId,
+      userId: preset.userId,
+      mode: preset.mode,
+      name: preset.name,
+      title: preset.title,
+      description: preset.description,
+      tags: preset.tags,
+      mentionUserIds: preset.mentionUserIds,
+      visibility: preset.visibility,
+      thumbnailPayload: preset.thumbnailPayload,
+      thumbnailMode: preset.thumbnailMode,
+      payload: preset.payload,
+      createdAt: preset.createdAt,
+      updatedAt: preset.updatedAt,
+      isPaid: preset.isPaid,
+      priceCents: preset.priceCents,
+      accentColorHex: preset.accentColorHex,
+      viewerHasPaid: viewerHasPaid,
+    );
   }
 
   Future<Map<String, AppUserProfile>> _fetchProfilesByIds(
@@ -927,6 +1021,9 @@ class AppRepository {
       'payload': payload,
       'thumbnail_payload': payload,
       'thumbnail_mode': mode,
+      'is_paid': false,
+      'price_cents': null,
+      'accent_color_hex': null,
     };
 
     if (existing == null) {
@@ -948,6 +1045,9 @@ class AppRepository {
     String visibility = 'public',
     Map<String, dynamic>? thumbnailPayload,
     String? thumbnailMode,
+    bool isPaid = false,
+    int? priceCents,
+    String? accentColorHex,
   }) async {
     final user = currentUser;
     if (user == null) throw Exception('Not authenticated.');
@@ -967,6 +1067,9 @@ class AppRepository {
             'payload': payload,
             'thumbnail_payload': thumbnailPayload ?? payload,
             'thumbnail_mode': thumbnailMode ?? mode,
+            'is_paid': isPaid,
+            'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
+            'accent_color_hex': _normalizeHexOrNull(accentColorHex),
           },
         )
         .select('*')
@@ -986,6 +1089,9 @@ class AppRepository {
     Map<String, dynamic>? payload,
     String? mode,
     String? visibility,
+    bool? isPaid,
+    int? priceCents,
+    String? accentColorHex,
   }) {
     final Map<String, dynamic>? effectivePayload = payload == null
         ? null
@@ -1001,6 +1107,9 @@ class AppRepository {
       mentionUserIds: mentionUserIds,
       payload: effectivePayload,
       visibility: visibility,
+      isPaid: isPaid,
+      priceCents: priceCents,
+      accentColorHex: accentColorHex,
     );
   }
 
@@ -1013,6 +1122,9 @@ class AppRepository {
     List<String>? tags,
     List<String>? mentionUserIds,
     String? visibility,
+    bool? isPaid,
+    int? priceCents,
+    String? accentColorHex,
   }) {
     return updatePresetPost(
       presetId: presetId,
@@ -1023,6 +1135,9 @@ class AppRepository {
       thumbnailPayload: thumbnailPayload,
       thumbnailMode: thumbnailMode,
       visibility: visibility,
+      isPaid: isPaid,
+      priceCents: priceCents,
+      accentColorHex: accentColorHex,
     );
   }
 
@@ -1036,6 +1151,9 @@ class AppRepository {
     Map<String, dynamic>? thumbnailPayload,
     String? thumbnailMode,
     String? visibility,
+    bool? isPaid,
+    int? priceCents,
+    String? accentColorHex,
   }) async {
     final user = currentUser;
     if (user == null) throw Exception('Not authenticated.');
@@ -1064,6 +1182,15 @@ class AppRepository {
     }
     if (visibility != null) {
       values['visibility'] = visibility == 'private' ? 'private' : 'public';
+    }
+    if (isPaid != null) {
+      values['is_paid'] = isPaid;
+      values['price_cents'] = isPaid ? _sanitizePriceCents(priceCents) : null;
+    } else if (priceCents != null) {
+      values['price_cents'] = _sanitizePriceCents(priceCents);
+    }
+    if (accentColorHex != null) {
+      values['accent_color_hex'] = _normalizeHexOrNull(accentColorHex);
     }
     if (values.isEmpty) return;
 
@@ -1143,7 +1270,10 @@ class AppRepository {
         .eq('share_id', routeId)
         .maybeSingle();
     if (row != null) {
-      return RenderPreset.fromMap(row);
+      final RenderPreset preset = RenderPreset.fromMap(row);
+      final List<RenderPreset> resolved =
+          await _applyViewerEntitlementsToPresets(<RenderPreset>[preset]);
+      return resolved.isEmpty ? preset : resolved.first;
     }
     if (!_looksLikeUuid(routeId)) return null;
 
@@ -1153,7 +1283,10 @@ class AppRepository {
         .eq('id', routeId)
         .maybeSingle();
     if (uuidRow == null) return null;
-    return RenderPreset.fromMap(uuidRow);
+    final RenderPreset preset = RenderPreset.fromMap(uuidRow);
+    final List<RenderPreset> resolved =
+        await _applyViewerEntitlementsToPresets(<RenderPreset>[preset]);
+    return resolved.isEmpty ? preset : resolved.first;
   }
 
   Future<Map<String, RenderPreset>> fetchPresetsByIds(List<String> ids) async {
@@ -1166,7 +1299,13 @@ class AppRepository {
           RenderPreset.fromMap(Map<String, dynamic>.from(row as Map));
       map[preset.id] = preset;
     }
-    return map;
+    final List<RenderPreset> resolved =
+        await _applyViewerEntitlementsToPresets(map.values.toList());
+    final Map<String, RenderPreset> withEntitlements = <String, RenderPreset>{};
+    for (final RenderPreset preset in resolved) {
+      withEntitlements[preset.id] = preset;
+    }
+    return withEntitlements;
   }
 
   Future<void> setReaction({
@@ -1314,6 +1453,45 @@ class AppRepository {
           .eq('exclusion_type', normalizedType)
           .eq('target_id', targetId);
     }
+  }
+
+  Future<void> setViewerContentEntitlement({
+    required String userId,
+    required String targetType,
+    required String targetId,
+    required bool hasPaid,
+  }) async {
+    final String normalizedType =
+        targetType.toLowerCase() == 'collection' ? 'collection' : 'post';
+    if (hasPaid) {
+      await _client.from('viewer_content_entitlements').upsert(
+        <String, dynamic>{
+          'user_id': userId,
+          'target_type': normalizedType,
+          'target_id': targetId,
+          'has_paid': true,
+        },
+        onConflict: 'user_id,target_type,target_id',
+      );
+    } else {
+      await _client.from('viewer_content_entitlements').upsert(
+        <String, dynamic>{
+          'user_id': userId,
+          'target_type': normalizedType,
+          'target_id': targetId,
+          'has_paid': false,
+        },
+        onConflict: 'user_id,target_type,target_id',
+      );
+    }
+    await CacheService.instance.markDomainsDirty(
+      const {
+        CacheDomain.feed,
+        CacheDomain.collections,
+        CacheDomain.profile,
+        CacheDomain.saved,
+      },
+    );
   }
 
   Future<List<WatchLaterItem>> fetchWatchLaterForCurrentUser({
@@ -2034,6 +2212,7 @@ class AppRepository {
         bool isSavedByCurrentUser = false;
         bool isWatchLater = false;
         int myReaction = 0;
+        bool viewerHasPaid = false;
         final user = currentUser;
         if (user != null) {
           final savedRow = await _client
@@ -2060,6 +2239,17 @@ class AppRepository {
               .eq('collection_id', collectionId)
               .maybeSingle();
           myReaction = _toInt(reactionRow?['reaction']);
+
+          final entitlementRow = await _client
+              .from('viewer_content_entitlements')
+              .select('has_paid')
+              .eq('user_id', user.id)
+              .eq('target_type', 'collection')
+              .eq('target_id', collectionId)
+              .maybeSingle();
+          viewerHasPaid =
+              user.id == row['user_id']?.toString() ||
+                  entitlementRow?['has_paid'] == true;
         }
         final items = itemRows
             .map((dynamic e) => CollectionItemSnapshot.fromMap(
@@ -2093,6 +2283,11 @@ class AppRepository {
             myReaction: myReaction,
             isSavedByCurrentUser: isSavedByCurrentUser,
             isWatchLater: isWatchLater,
+            isPaid: row['is_paid'] == true,
+            priceCents: _toNullableInt(row['price_cents']),
+            accentColorHex:
+                _normalizeHexOrNull(row['accent_color_hex']?.toString()),
+            viewerHasPaid: viewerHasPaid,
           ),
           items: items,
         );
@@ -2113,6 +2308,9 @@ class AppRepository {
     String? thumbnailMode,
     required bool publish,
     required List<CollectionDraftItem> items,
+    bool isPaid = false,
+    int? priceCents,
+    String? accentColorHex,
   }) async {
     final user = currentUser;
     if (user == null) throw Exception('Not authenticated');
@@ -2133,6 +2331,9 @@ class AppRepository {
               'thumbnail_payload': thumbnailPayload ?? items.first.snapshot,
               'thumbnail_mode': thumbnailMode ?? items.first.mode,
               'published': publish,
+              'is_paid': isPaid,
+              'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
+              'accent_color_hex': _normalizeHexOrNull(accentColorHex),
             },
           )
           .select('*')
@@ -2145,12 +2346,17 @@ class AppRepository {
         'tags': _normalizeTags(tags),
         'mention_user_ids': _normalizeUuidList(mentionUserIds),
         'published': publish,
+        'is_paid': isPaid,
+        'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
       };
       if (thumbnailPayload != null) {
         values['thumbnail_payload'] = thumbnailPayload;
       }
       if (thumbnailMode != null && thumbnailMode.trim().isNotEmpty) {
         values['thumbnail_mode'] = thumbnailMode;
+      }
+      if (accentColorHex != null) {
+        values['accent_color_hex'] = _normalizeHexOrNull(accentColorHex);
       }
       await _client
           .from('collections')
@@ -2188,6 +2394,9 @@ class AppRepository {
     List<String> mentionUserIds = const <String>[],
     required bool publish,
     required List<CollectionDraftItem> items,
+    bool isPaid = false,
+    int? priceCents,
+    String? accentColorHex,
   }) async {
     await saveCollectionWithItems(
       collectionId: collectionId,
@@ -2197,6 +2406,9 @@ class AppRepository {
       mentionUserIds: mentionUserIds,
       publish: publish,
       items: items,
+      isPaid: isPaid,
+      priceCents: priceCents,
+      accentColorHex: accentColorHex,
     );
   }
 
@@ -2210,6 +2422,9 @@ class AppRepository {
     required List<CollectionDraftItem> items,
     required Map<String, dynamic> thumbnailPayload,
     required String thumbnailMode,
+    bool isPaid = false,
+    int? priceCents,
+    String? accentColorHex,
   }) async {
     await saveCollectionWithItems(
       collectionId: collectionId,
@@ -2221,6 +2436,9 @@ class AppRepository {
       items: items,
       thumbnailPayload: thumbnailPayload,
       thumbnailMode: thumbnailMode,
+      isPaid: isPaid,
+      priceCents: priceCents,
+      accentColorHex: accentColorHex,
     );
   }
 
@@ -2231,6 +2449,9 @@ class AppRepository {
     List<String>? tags,
     List<String>? mentionUserIds,
     bool? published,
+    bool? isPaid,
+    int? priceCents,
+    String? accentColorHex,
   }) async {
     final user = currentUser;
     if (user == null) throw Exception('Not authenticated.');
@@ -2250,6 +2471,15 @@ class AppRepository {
     }
     if (published != null) {
       values['published'] = published;
+    }
+    if (isPaid != null) {
+      values['is_paid'] = isPaid;
+      values['price_cents'] = isPaid ? _sanitizePriceCents(priceCents) : null;
+    } else if (priceCents != null) {
+      values['price_cents'] = _sanitizePriceCents(priceCents);
+    }
+    if (accentColorHex != null) {
+      values['accent_color_hex'] = _normalizeHexOrNull(accentColorHex);
     }
     if (values.isEmpty) return;
     await _client
@@ -2439,6 +2669,11 @@ class AppRepository {
     final Set<String> savedCollectionIds = <String>{};
     final Set<String> watchLaterCollectionIds = <String>{};
     final Map<String, int> myReactionsByCollection = <String, int>{};
+    final Map<String, bool> viewerHasPaidByCollection =
+        await _fetchViewerEntitlements(
+      targetType: 'collection',
+      targetIds: collectionIds.toSet(),
+    );
     if (user != null) {
       final List<dynamic> saveRows = await _client
           .from('saved_collections')
@@ -2494,6 +2729,9 @@ class AppRepository {
       final id = map['id']?.toString() ?? '';
       final items = itemsByCollection[id] ?? const <CollectionItemSnapshot>[];
       final stats = statsByCollectionId[id] ?? const <String, dynamic>{};
+      final bool viewerHasPaid =
+          (user != null && user.id == map['user_id']?.toString()) ||
+              (viewerHasPaidByCollection[id] ?? false);
       return CollectionSummary(
         id: id,
         shareId: map['share_id']?.toString() ?? '',
@@ -2520,6 +2758,12 @@ class AppRepository {
         myReaction: myReactionsByCollection[id] ?? 0,
         isSavedByCurrentUser: savedCollectionIds.contains(id),
         isWatchLater: watchLaterCollectionIds.contains(id),
+        isPaid: map['is_paid'] == true,
+        priceCents: _toNullableInt(map['price_cents']),
+        accentColorHex: _normalizeHexOrNull(
+          map['accent_color_hex']?.toString(),
+        ),
+        viewerHasPaid: viewerHasPaid,
       );
     }).toList();
   }
@@ -2716,6 +2960,10 @@ class AppRepository {
       'thumbnail_payload': preset.thumbnailPayload,
       'thumbnail_mode': preset.thumbnailMode,
       'payload': preset.payload,
+      'is_paid': preset.isPaid,
+      'price_cents': preset.priceCents,
+      'accent_color_hex': preset.accentColorHex,
+      'viewer_has_paid': preset.viewerHasPaid,
       'created_at': preset.createdAt.toIso8601String(),
       'updated_at': preset.updatedAt.toIso8601String(),
     };
@@ -2844,6 +3092,10 @@ class AppRepository {
       'my_reaction': summary.myReaction,
       'is_saved': summary.isSavedByCurrentUser,
       'is_watch_later': summary.isWatchLater,
+      'is_paid': summary.isPaid,
+      'price_cents': summary.priceCents,
+      'accent_color_hex': summary.accentColorHex,
+      'viewer_has_paid': summary.viewerHasPaid,
     };
   }
 
@@ -2878,6 +3130,10 @@ class AppRepository {
       myReaction: _toInt(map['my_reaction']),
       isSavedByCurrentUser: map['is_saved'] == true,
       isWatchLater: map['is_watch_later'] == true,
+      isPaid: map['is_paid'] == true,
+      priceCents: _toNullableInt(map['price_cents']),
+      accentColorHex: _normalizeHexOrNull(map['accent_color_hex']?.toString()),
+      viewerHasPaid: map['viewer_has_paid'] == true,
     );
   }
 
@@ -3027,6 +3283,27 @@ class AppRepository {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  int? _toNullableInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
+  }
+
+  int _sanitizePriceCents(int? value) {
+    final int parsed = value ?? 0;
+    return parsed < 0 ? 0 : parsed;
+  }
+
+  String? _normalizeHexOrNull(String? value) {
+    final String raw = (value ?? '').trim();
+    if (raw.isEmpty) return null;
+    final String normalized = raw.startsWith('#') ? raw : '#$raw';
+    final RegExp hexPattern = RegExp(r'^#[0-9A-Fa-f]{6}$');
+    if (!hexPattern.hasMatch(normalized)) return null;
+    return normalized.toUpperCase();
   }
 
   List<String> _normalizeTags(List<String> raw) {

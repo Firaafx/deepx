@@ -15,6 +15,10 @@ class RenderPreset {
     required this.payload,
     required this.createdAt,
     required this.updatedAt,
+    this.isPaid = false,
+    this.priceCents,
+    this.accentColorHex,
+    this.viewerHasPaid = false,
   });
 
   final String id;
@@ -32,6 +36,10 @@ class RenderPreset {
   final Map<String, dynamic> payload;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final bool isPaid;
+  final int? priceCents;
+  final String? accentColorHex;
+  final bool viewerHasPaid;
 
   bool get isPublic => visibility != 'private';
 
@@ -74,6 +82,10 @@ class RenderPreset {
           DateTime.fromMillisecondsSinceEpoch(0),
       updatedAt: DateTime.tryParse(map['updated_at']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      isPaid: map['is_paid'] == true,
+      priceCents: _toNullableInt(map['price_cents']),
+      accentColorHex: _normalizeHex(map['accent_color_hex']),
+      viewerHasPaid: map['viewer_has_paid'] == true,
     );
   }
 
@@ -85,5 +97,21 @@ class RenderPreset {
           .toList();
     }
     return const <String>[];
+  }
+
+  static int? _toNullableInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
+  }
+
+  static String? _normalizeHex(dynamic value) {
+    final String raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    final String normalized = raw.startsWith('#') ? raw : '#$raw';
+    final RegExp hexPattern = RegExp(r'^#[0-9A-Fa-f]{6}$');
+    if (!hexPattern.hasMatch(normalized)) return null;
+    return normalized.toUpperCase();
   }
 }
