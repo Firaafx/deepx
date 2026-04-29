@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 const double _svgCardBaseWidth = 1852;
 const double _svgCardBaseHeight = 1413;
+const double _kTwoLineTitleExpansion = 64;
 
 const Color _kShellColor = Color(0x992A2A2A);
 const Color _kInnerColor = Color(0xFF151515);
@@ -58,7 +59,7 @@ class SvgCardClipper extends CustomClipper<Path> {
     final double leftTailBottom = lerpDouble(844.164, 556, collapse)!;
     final double leftTailTop = leftTailBottom - lerpDouble(40, 18, collapse)!;
 
-    final double titleExpansion = twoLineTitle ? 64 : 0;
+    final double titleExpansion = twoLineTitle ? _kTwoLineTitleExpansion : 0;
     final double titleSpaceBottom = 1037.5 + titleExpansion;
 
     final Path p = Path()
@@ -317,6 +318,7 @@ class SvgCardShadowPainter extends CustomPainter {
   Path _buildOuterPath(Size size) {
     final double sx = size.width / _svgCardBaseWidth;
     final double sy = size.height / _svgCardBaseHeight;
+    final double titleExpansion = twoLineTitle ? _kTwoLineTitleExpansion : 0;
 
     return Path()
       ..moveTo(200.355 * sx, 110.645 * sy)
@@ -329,59 +331,59 @@ class SvgCardShadowPainter extends CustomPainter {
         100 * sx,
         231.711 * sy,
       )
-      ..lineTo(100 * sx, 1175.29 * sy)
+      ..lineTo(100 * sx, (1175.29 + titleExpansion) * sy)
       ..cubicTo(
         100 * sx,
-        1188.55 * sy,
+        (1188.55 + titleExpansion) * sy,
         105.268 * sx,
-        1201.27 * sy,
+        (1201.27 + titleExpansion) * sy,
         114.645 * sx,
-        1210.65 * sy,
+        (1210.65 + titleExpansion) * sy,
       )
-      ..lineTo(197.628 * sx, 1293.63 * sy)
+      ..lineTo(197.628 * sx, (1293.63 + titleExpansion) * sy)
       ..cubicTo(
         208.584 * sx,
-        1304.59 * sy,
+        (1304.59 + titleExpansion) * sy,
         224 * sx,
-        1309.84 * sy,
+        (1309.84 + titleExpansion) * sy,
         239.367 * sx,
-        1307.87 * sy,
+        (1307.87 + titleExpansion) * sy,
       )
-      ..lineTo(520.328 * sx, 1271.7 * sy)
+      ..lineTo(520.328 * sx, (1271.7 + titleExpansion) * sy)
       ..cubicTo(
         528.96 * sx,
-        1270.59 * sy,
+        (1270.59 + titleExpansion) * sy,
         537.152 * sx,
-        1267.24 * sy,
+        (1267.24 + titleExpansion) * sy,
         544.095 * sx,
-        1261.99 * sy,
+        (1261.99 + titleExpansion) * sy,
       )
-      ..lineTo(584.846 * sx, 1231.19 * sy)
+      ..lineTo(584.846 * sx, (1231.19 + titleExpansion) * sy)
       ..cubicTo(
         592.769 * sx,
-        1225.2 * sy,
+        (1225.2 + titleExpansion) * sy,
         602.296 * sx,
-        1221.71 * sy,
+        (1221.71 + titleExpansion) * sy,
         612.212 * sx,
-        1221.15 * sy,
+        (1221.15 + titleExpansion) * sy,
       )
-      ..lineTo(1617.93 * sx, 1165.07 * sy)
+      ..lineTo(1617.93 * sx, (1165.07 + titleExpansion) * sy)
       ..cubicTo(
         1630.21 * sx,
-        1164.38 * sy,
+        (1164.38 + titleExpansion) * sy,
         1641.81 * sx,
-        1159.19 * sy,
+        (1159.19 + titleExpansion) * sy,
         1650.5 * sx,
-        1150.5 * sy,
+        (1150.5 + titleExpansion) * sy,
       )
-      ..lineTo(1737.36 * sx, 1063.65 * sy)
+      ..lineTo(1737.36 * sx, (1063.65 + titleExpansion) * sy)
       ..cubicTo(
         1746.73 * sx,
-        1054.27 * sy,
+        (1054.27 + titleExpansion) * sy,
         1752 * sx,
-        1041.55 * sy,
+        (1041.55 + titleExpansion) * sy,
         1752 * sx,
-        1028.29 * sy,
+        (1028.29 + titleExpansion) * sy,
       )
       ..lineTo(1752 * sx, 231.711 * sy)
       ..cubicTo(

@@ -461,9 +461,6 @@ class _BlurMenuCard<T> extends StatelessWidget {
   }
 }
 
-const double _kSvgGridGapToCardRatio = 0.084;
-const double _kSvgGridSideMarginToCardRatio = 0.0605;
-
 class _SvgGridLayoutSpec {
   const _SvgGridLayoutSpec({
     required this.crossAxisSpacing,
@@ -480,18 +477,10 @@ _SvgGridLayoutSpec _svgGridLayoutSpec({
   required double viewportWidth,
   required int crossAxisCount,
 }) {
-  final double safeWidth = math.max(1, viewportWidth);
-  final int safeCount = math.max(1, crossAxisCount);
-  final double denominator = safeCount +
-      ((safeCount - 1) * _kSvgGridGapToCardRatio) +
-      (2 * _kSvgGridSideMarginToCardRatio);
-  final double cardWidth = safeWidth / denominator;
-  final double gap = cardWidth * _kSvgGridGapToCardRatio;
-  final double side = cardWidth * _kSvgGridSideMarginToCardRatio;
-  return _SvgGridLayoutSpec(
-    crossAxisSpacing: gap,
-    mainAxisSpacing: gap,
-    sidePadding: side,
+  return const _SvgGridLayoutSpec(
+    crossAxisSpacing: 0,
+    mainAxisSpacing: 0,
+    sidePadding: 0,
   );
 }
 
@@ -512,7 +501,7 @@ class _GridCardPreviewSurface extends StatefulWidget {
     required this.menuItems,
     required this.onMenuSelected,
     this.onAvatarTap,
-    this.outsideOverflowMax = 0,
+    this.outsideOverflowMax = _kCardOutsideOverflow,
     this.emptyChild,
   });
 
@@ -649,6 +638,7 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
               useGlobalTracking: _active,
               externalHeadPose: _active ? null : kNeutralPreviewHeadPose,
               outsideOverflowMax: widget.outsideOverflowMax,
+              allowOutsideOverflow: true,
               emptyChild: widget.emptyChild,
               previewPlaybackMode: usePreviewPlayback,
               videoPlayActive: _active,
@@ -843,7 +833,8 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
                                 payload: ambient2dPayload,
                                 borderRadius: BorderRadius.circular(20),
                                 pointerPassthrough: true,
-                                outsideOverflowMax: 0,
+                                outsideOverflowMax: _kCardOutsideOverflow,
+                                allowOutsideOverflow: true,
                               )
                             : _buildFallbackAmbientImage(normalizedUrl),
                   ),
@@ -1812,9 +1803,7 @@ class _StandalonePublicProfileRoutePageState
                 builder: (context, constraints) {
                   final double width = constraints.crossAxisExtent;
                   int crossAxisCount = 1;
-                  if (width >= 1500) {
-                    crossAxisCount = 4;
-                  } else if (width >= 1150) {
+                  if (width >= 1150) {
                     crossAxisCount = 3;
                   } else if (width >= 760) {
                     crossAxisCount = 2;
@@ -1824,12 +1813,7 @@ class _StandalonePublicProfileRoutePageState
                     crossAxisCount: crossAxisCount,
                   );
                   return SliverPadding(
-                    padding: EdgeInsets.fromLTRB(
-                      gridSpec.sidePadding,
-                      4,
-                      gridSpec.sidePadding,
-                      gridSpec.mainAxisSpacing,
-                    ),
+                    padding: EdgeInsets.zero,
                     sliver: SliverGrid(
                       delegate: SliverChildBuilderDelegate(
                         (context, index) {
@@ -1875,7 +1859,7 @@ class _StandalonePublicProfileRoutePageState
                                 onAvatarTap: () =>
                                     _openPublicProfileRoute(context, profile),
                                 onMenuSelected: (_) {},
-                                outsideOverflowMax: 0,
+                                outsideOverflowMax: _kCardOutsideOverflow,
                                 emptyChild: showCollectionCount
                                     ? Container(
                                         color: cs.surfaceContainerLow,
@@ -2848,7 +2832,8 @@ class _HomeFeedTab extends StatefulWidget {
   State<_HomeFeedTab> createState() => _HomeFeedTabState();
 }
 
-const double _kGridPreviewAspectRatio = 1661 / 960;
+const double _kGridPreviewAspectRatio = 1852 / 1413;
+const double _kCardOutsideOverflow = 100;
 
 class _HomeFeedTabState extends State<_HomeFeedTab> {
   final AppRepository _repository = AppRepository.instance;
@@ -3336,9 +3321,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
               builder: (context, constraints) {
                 final double width = constraints.maxWidth;
                 int crossAxisCount = 1;
-                if (width >= 1500) {
-                  crossAxisCount = 4;
-                } else if (width >= 1150) {
+                if (width >= 1150) {
                   crossAxisCount = 3;
                 } else if (width >= 760) {
                   crossAxisCount = 2;
@@ -3349,13 +3332,8 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
                 );
 
                 return GridView.builder(
-                  padding: EdgeInsets.fromLTRB(
-                    gridSpec.sidePadding,
-                    0,
-                    gridSpec.sidePadding,
-                    gridSpec.mainAxisSpacing,
-                  ).copyWith(
-                    top: _chipRailTop + _chipRailHeight + 12,
+                  padding: EdgeInsets.only(
+                    top: _chipRailTop + _chipRailHeight,
                   ),
                   itemCount: visiblePosts.length,
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -3965,9 +3943,7 @@ class _CollectionTabState extends State<_CollectionTab> {
               builder: (context, constraints) {
                 final width = constraints.maxWidth;
                 int crossAxisCount = 1;
-                if (width >= 1500) {
-                  crossAxisCount = 4;
-                } else if (width >= 1150) {
+                if (width >= 1150) {
                   crossAxisCount = 3;
                 } else if (width >= 760) {
                   crossAxisCount = 2;
@@ -3978,13 +3954,8 @@ class _CollectionTabState extends State<_CollectionTab> {
                 );
 
                 return GridView.builder(
-                  padding: EdgeInsets.fromLTRB(
-                    gridSpec.sidePadding,
-                    0,
-                    gridSpec.sidePadding,
-                    gridSpec.mainAxisSpacing,
-                  ).copyWith(
-                    top: _chipRailTop + _chipRailHeight + 12,
+                  padding: EdgeInsets.only(
+                    top: _chipRailTop + _chipRailHeight,
                   ),
                   itemCount: visibleCollections.length,
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -4145,7 +4116,7 @@ class _CollectionFeedTile extends StatelessWidget {
               if (value == 'visibility') onToggleVisibility?.call();
               if (value == 'delete') onDelete?.call();
             },
-            outsideOverflowMax: 0,
+            outsideOverflowMax: _kCardOutsideOverflow,
             emptyChild: Container(
               color: cs.surfaceContainerLow,
               child: Center(
@@ -4179,7 +4150,7 @@ class _SuggestionGridCard extends StatelessWidget {
     required this.onTap,
     this.onAvatarTap,
     this.avatarImage,
-    this.outsideOverflowMax = 0,
+    this.outsideOverflowMax = _kCardOutsideOverflow,
   });
 
   final String heroTag;
@@ -4335,7 +4306,7 @@ class _FeedTile extends StatelessWidget {
               if (value == 'visibility') onToggleVisibility?.call();
               if (value == 'delete') onDelete?.call();
             },
-            outsideOverflowMax: 0,
+            outsideOverflowMax: _kCardOutsideOverflow,
           ),
         ),
       ),
@@ -5075,6 +5046,8 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                       payload: payload,
                       borderRadius: BorderRadius.zero,
                       pointerPassthrough: true,
+                      outsideOverflowMax: _kCardOutsideOverflow,
+                      allowOutsideOverflow: true,
                     ),
                   ),
                 ),
@@ -5890,7 +5863,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   payload: previewPayload,
                   borderRadius: BorderRadius.circular(16),
                   pointerPassthrough: !isPanorama,
-                  outsideOverflowMax: 0,
+                  outsideOverflowMax: _kCardOutsideOverflow,
+                  allowOutsideOverflow: true,
                   panoramaController:
                       isPanorama ? _detail360Controller : null,
                   show360PlayerControls: isPanorama,
@@ -6131,7 +6105,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                         onAvatarTap: () =>
                             _openPublicProfileRoute(context, item.author),
                         onTap: () => _openSuggestedPost(item),
-                        outsideOverflowMax: 0,
+                        outsideOverflowMax: _kCardOutsideOverflow,
                       );
                     },
                   ),
@@ -10307,7 +10281,8 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             payload: item.snapshot,
             borderRadius: BorderRadius.circular(16),
             pointerPassthrough: !isPanorama,
-            outsideOverflowMax: 0,
+            outsideOverflowMax: _kCardOutsideOverflow,
+            allowOutsideOverflow: true,
             panoramaController: isPanorama ? _detail360Controller : null,
             show360PlayerControls: isPanorama,
             muted: true,
@@ -10968,7 +10943,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                           name: buildCollectionRoutePathForSummary(item),
                           replace: true,
                         ),
-                        outsideOverflowMax: 0,
+                        outsideOverflowMax: _kCardOutsideOverflow,
                       );
                     },
                   ),
@@ -11639,8 +11614,6 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   int _profileGridColumns(double width) {
-    if (width >= 1700) return 5;
-    if (width >= 1360) return 4;
     if (width >= 1020) return 3;
     if (width >= 700) return 2;
     return 1;
@@ -11675,12 +11648,7 @@ class _ProfileTabState extends State<_ProfileTab> {
           crossAxisCount: crossAxisCount,
         );
         return GridView.builder(
-          padding: EdgeInsets.fromLTRB(
-            gridSpec.sidePadding,
-            10,
-            gridSpec.sidePadding,
-            gridSpec.mainAxisSpacing,
-          ),
+          padding: EdgeInsets.zero,
           itemCount: presets.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
@@ -11764,7 +11732,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                     }
                     if (value == 'delete') _deletePreset(preset);
                   },
-                  outsideOverflowMax: 0,
+                  outsideOverflowMax: _kCardOutsideOverflow,
                 ),
               ),
             );
@@ -11873,12 +11841,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                       ),
                     )
                   : GridView.builder(
-                      padding: EdgeInsets.fromLTRB(
-                        gridSpec.sidePadding,
-                        4,
-                        gridSpec.sidePadding,
-                        gridSpec.mainAxisSpacing,
-                      ),
+                      padding: EdgeInsets.zero,
                       itemCount: entries.length,
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: crossAxisCount,
@@ -12029,7 +11992,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                                   }
                                 }
                               },
-                              outsideOverflowMax: 0,
+                              outsideOverflowMax: _kCardOutsideOverflow,
                               emptyChild: isCollection
                                   ? Container(
                                       color: cs.surfaceContainerLow,
