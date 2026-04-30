@@ -1661,7 +1661,7 @@ class _StandalonePublicProfileRoutePageState
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox.shrink(),
                       Row(
                         children: [
                           CircleAvatar(
@@ -5799,7 +5799,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                         Expanded(child: usernameCluster),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox.shrink(),
                     buildEngagementRail(),
                   ] else ...[
                     Row(
@@ -6031,7 +6031,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                         },
                       ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           Row(
             children: [
               Expanded(
@@ -6060,7 +6060,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         children: [
           const SizedBox.shrink(),
           buildFilterRail(),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           Expanded(
             child: _loadingSuggestions
                 ? const _TopEdgeLoadingPane(
@@ -6071,7 +6071,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                 : ListView.separated(
                     controller: _rightPaneScrollController,
                     itemCount: suggestions.length.clamp(0, 24),
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    separatorBuilder: (_, __) => const SizedBox.shrink(),
                     itemBuilder: (context, index) {
                       final item = suggestions[index];
                       final String mode =
@@ -6122,7 +6122,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
       final Widget body =
           _commentsOpen ? buildCommentsPanel() : buildSuggestionsPanel();
       final EdgeInsets panelPadding =
-          desktop ? const EdgeInsets.fromLTRB(10, 0, 2, 0) : EdgeInsets.zero;
+          EdgeInsets.zero;
       return SizedBox(
         width: desktop ? panelWidth : double.infinity,
         height: desktop ? viewportHeight : 640,
@@ -6148,8 +6148,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
           key: const ValueKey<String>('compact-post-detail'),
           builder: (context, viewport) {
             final bool desktop = viewport.maxWidth >= 1140;
-            final double contentWidth =
-                viewport.maxWidth - (_kDetailContentPadding * 2);
+            final double contentWidth = viewport.maxWidth;
             final double previewWidth = _detailPreviewWidth(
               contentWidth: contentWidth,
               desktop: desktop,
@@ -7690,7 +7689,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           children: [
             const Text('2D Layers',
                 style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -7731,7 +7730,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             if (keys.isEmpty)
               const SizedBox(
                 height: 120,
@@ -7803,7 +7802,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   },
                 ),
               ),
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -7868,7 +7867,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 8),
+                const SizedBox.shrink(),
                 const Text(
                   '2D Controls',
                   style: TextStyle(fontWeight: FontWeight.w700),
@@ -8075,7 +8074,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               '360 Controls',
               style: TextStyle(fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -8102,7 +8101,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             TextFormField(
               key: ValueKey<String>('studio-360-url-$assetUrl'),
               initialValue: assetUrl,
@@ -8130,7 +8129,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 _studioSet360SceneField('assetKind', value);
               },
             ),
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             _studioSlider(
               label: 'Base FOV',
               min: 45,
@@ -8212,7 +8211,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               ),
             ],
             if (assetKind == 'video') ...[
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               ValueListenableBuilder<PanoramaViewer360Status>(
                 valueListenable: _studio360PreviewController.status,
                 builder: (context, status, _) {
@@ -8337,7 +8336,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         children: [
           const Text('3D Controls',
               style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -8359,7 +8358,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           if (tokens.isEmpty)
             const SizedBox(
               height: 84,
@@ -8765,7 +8764,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   ),
                 ],
               ],
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               const Text('World & FX',
                   style: TextStyle(fontWeight: FontWeight.w700)),
               _studioSlider(
@@ -8838,7 +8837,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                 value: _toDouble(scene['envRot'], 0),
                 onChanged: (value) => _studioSet3DSceneField('envRot', value),
               ),
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               const Text('Initial Camera',
                   style: TextStyle(fontWeight: FontWeight.w700)),
               _studioSlider(
@@ -8913,7 +8912,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   fallback: initRot,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               const Text('Tracking',
                   style: TextStyle(fontWeight: FontWeight.w700)),
               DropdownButtonFormField<String>(
@@ -9115,7 +9114,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               _schedulePersistStudioDraft();
             },
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           SegmentedButton<int>(
             segments: const [
               ButtonSegment<int>(value: 0, label: Text('Single')),
@@ -9127,7 +9126,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               _schedulePersistStudioDraft();
             },
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           SwitchListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
@@ -9141,7 +9140,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   }
                 : null,
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -9208,7 +9207,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
             ),
             if (_selectedItemIndex >= 0 &&
                 _selectedItemIndex < _draftItems.length) ...[
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -9228,7 +9227,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               ),
             ],
             if (_draftItems.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
@@ -9923,7 +9922,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                               },
                             ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox.shrink(),
                     Row(
                       children: [
                         Expanded(
@@ -10587,7 +10586,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox.shrink(),
                     buildEngagementRail(),
                   ] else ...[
                     Row(
@@ -10847,7 +10846,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                     },
                   ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           Row(
             children: [
               Expanded(
@@ -10889,7 +10888,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           const SizedBox(height: 6),
           buildSwipeControlRail(),
           buildFilterRail(),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           Expanded(
             child: _loadingSuggestions
                 ? const _TopEdgeLoadingPane(
@@ -10900,7 +10899,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                 : ListView.separated(
                     controller: _rightPaneScrollController,
                     itemCount: suggestions.length.clamp(0, 24),
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    separatorBuilder: (_, __) => const SizedBox.shrink(),
                     itemBuilder: (context, index) {
                       final item = suggestions[index];
                       final String mode =
@@ -10960,7 +10959,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       final Widget body =
           _commentsOpen ? buildCommentsPanel() : buildSuggestionsPanel();
       final EdgeInsets panelPadding =
-          desktop ? const EdgeInsets.fromLTRB(10, 0, 2, 0) : EdgeInsets.zero;
+          EdgeInsets.zero;
       return SizedBox(
         width: desktop ? panelWidth : double.infinity,
         height: desktop ? viewportHeight : 640,
@@ -11004,8 +11003,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           key: const ValueKey<String>('compact-collection-detail'),
           builder: (context, viewport) {
             final bool desktop = viewport.maxWidth >= 1140;
-            final double contentWidth =
-                viewport.maxWidth - (_kDetailContentPadding * 2);
+            final double contentWidth = viewport.maxWidth;
             final double previewWidth = _detailPreviewWidth(
               contentWidth: contentWidth,
               desktop: desktop,
@@ -15343,7 +15341,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             if (selectedType == 'model')
               TextFormField(
                 key: ValueKey<String>(
@@ -15358,7 +15356,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                 decoration: const InputDecoration(labelText: 'Model Name'),
               ),
             if (selectedType == 'model' || selectedType == 'audio') ...[
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               TextFormField(
                 key: ValueKey<String>(
                   'entity-url-$selectedToken-${selectedEntity['url'] ?? ''}',
@@ -15703,7 +15701,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             onChanged: (value) => _set3DSceneField('skyUrl', value.trim()),
             decoration: const InputDecoration(labelText: 'Sky URL'),
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           TextFormField(
             key: ValueKey<String>('env-url-${scene['envUrl'] ?? ''}'),
             initialValue: (scene['envUrl'] ?? '').toString(),
@@ -15981,7 +15979,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           TextFormField(
             key: ValueKey<String>('composer-360-url-$assetUrl'),
             initialValue: assetUrl,
@@ -16008,7 +16006,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               _set360SceneField('assetKind', value);
             },
           ),
-          const SizedBox(height: 8),
+          const SizedBox.shrink(),
           _composerSlider(
             label: 'Base FOV',
             min: 45,
@@ -16086,7 +16084,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             ),
           ],
           if (assetKind == 'video') ...[
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             ValueListenableBuilder<PanoramaViewer360Status>(
               valueListenable: _composer360PreviewController.status,
               builder: (context, status, _) {
@@ -16353,7 +16351,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                     labelText: 'Image URL',
                   ),
                 ),
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               Row(
                 children: [
                   Expanded(
@@ -16395,7 +16393,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               _composerSlider(
                 label: 'X Position',
                 min: -1500,
@@ -16477,7 +16475,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                       decoration:
                           const InputDecoration(labelText: 'Font Family'),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox.shrink(),
                     TextFormField(
                       initialValue:
                           (selected['textColorHex'] ?? '#FFFFFF').toString(),
@@ -16489,7 +16487,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                       decoration:
                           const InputDecoration(labelText: 'Text Color (Hex)'),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox.shrink(),
                     _composerSlider(
                       label: 'Stroke Width',
                       min: 0,
@@ -16509,7 +16507,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                       decoration: const InputDecoration(
                           labelText: 'Stroke Color (Hex)'),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox.shrink(),
                     _composerSlider(
                       label: 'Shadow Blur',
                       min: 0,
@@ -16611,7 +16609,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                 onChanged: (v) => _set2DLayerField(selectedKey!, 'maxY', v),
               ),
             ],
-            const SizedBox(height: 8),
+            const SizedBox.shrink(),
             Text(
               'Scene Controls',
               style: TextStyle(
@@ -17216,7 +17214,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox.shrink(),
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Row(
@@ -17424,7 +17422,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                                   },
                                 ),
                                 if (_isPaidContent) ...[
-                                  const SizedBox(height: 8),
+                                  const SizedBox.shrink(),
                                   TextField(
                                     controller: _priceController,
                                     keyboardType: const TextInputType.numberWithOptions(
@@ -17457,7 +17455,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                                     hintText: '#FD4687',
                                   ),
                                 ),
-                                const SizedBox(height: 8),
+                                const SizedBox.shrink(),
                                 Row(
                                   children: [
                                     Expanded(
@@ -18015,7 +18013,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               Text(
                 'Control app-wide tracking, UI visibility, and Dart-side cursor interactions.',
                 style: TextStyle(color: cs.onSurfaceVariant),
@@ -18235,7 +18233,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                           )
                       : null,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox.shrink(),
                 FilledButton.icon(
                   onPressed: _trackerEnabled ? _resetTrackerDefaults : null,
                   icon: const Icon(Icons.refresh),
@@ -18628,7 +18626,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               Text(
                 'Choose how DeepX looks.',
                 style: TextStyle(color: cs.onSurfaceVariant),
@@ -18677,7 +18675,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox.shrink(),
                   Text(
                     'Adjust blur strength for post and collection detail backgrounds.',
                     style: TextStyle(color: cs.onSurfaceVariant),
@@ -18725,7 +18723,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox.shrink(),
               if (_profileLoading)
                 const SizedBox(
                   height: 60,

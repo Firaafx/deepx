@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 const double _svgCardBaseWidth = 1852;
-const double _svgCardBaseHeight = 1413;
-const double _kTwoLineTitleExpansion = 64;
+const double _svgCardBaseHeight = 1313;
+const double _kTwoLineTitleExpansion = 81;
 
 const Color _kShellColor = Color(0x992A2A2A);
 const Color _kInnerColor = Color(0xFF151515);
@@ -48,7 +48,8 @@ class SvgCardClipper extends CustomClipper<Path> {
     final double sx = size.width / _svgCardBaseWidth;
     final double sy = size.height / _svgCardBaseHeight;
 
-    final int usernameCount = usernameCharCount.clamp(1, 6);
+    final int usernameCount = usernameCharCount.clamp(1, 7);
+    final double blueHeight = usernameCount * 65.0;
     final double collapse = (6 - usernameCount) / 5;
     final double metaFactor = metaWidthFactor.clamp(0, 1);
 
@@ -56,8 +57,8 @@ class SvgCardClipper extends CustomClipper<Path> {
     final double topShelfStart = 1113.25 + topShelfShift;
     final double topTabStart = 1227.5 + topShelfShift;
 
-    final double leftTailBottom = lerpDouble(844.164, 556, collapse)!;
-    final double leftTailTop = leftTailBottom - lerpDouble(40, 18, collapse)!;
+    final double leftTailBottom = lerpDouble(844.164, 2053, collapse)!;
+    final double leftTailTop = leftTailBottom - blueHeight;
 
     final double titleExpansion = twoLineTitle ? _kTwoLineTitleExpansion : 0;
     final double titleSpaceBottom = 1037.5 + titleExpansion;
@@ -809,7 +810,7 @@ class _CardTextOverlay extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: 1222 * sx,
+              left: 1097 * sx,
               top: 148 * sy,
               width: 535 * sx,
               height: 55 * sy,
@@ -830,7 +831,7 @@ class _CardTextOverlay extends StatelessWidget {
             ),
             Positioned(
               left: 121 * sx,
-              top: 514 * sy,
+              top: (904 - blueHeight) * sy,
               width: 55 * sx,
               height: blueHeight * sy,
               child: Align(
@@ -849,7 +850,7 @@ class _CardTextOverlay extends StatelessWidget {
             ),
             Positioned(
               left: 202 * sx,
-              top: 1179 * sy,
+              top: (twoLineTitle ? 1281 : 1179) * sy,
               width: 246 * sx,
               height: 96 * sy,
               child: Align(
@@ -981,8 +982,8 @@ class _AvatarAndMenuOverlay extends StatelessWidget {
                 ),
               ),
             Positioned(
-              right: 90 * sx,
-              bottom: 120 * sy,
+              left: 1653 * sx,
+              top: (twoLineTitle ? 1068 : 1064) * sy,
               child: _DiagonalMenuButton(
                 onTap: () {
                   onMenuTap?.call();
@@ -1045,8 +1046,8 @@ class _DiagonalMenuButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(28),
         child: SizedBox(
-          width: 80,
-          height: 80,
+          width: 60,
+          height: 60,
           child: CustomPaint(
             painter: _DiagonalDotsPainter(),
           ),
@@ -1068,9 +1069,9 @@ class _DiagonalDotsPainter extends CustomPainter {
       Offset(size.width * 0.52, size.height * 0.48),
     ];
 
-    canvas.drawCircle(points[0], size.width * 0.09, bright);
-    canvas.drawCircle(points[1], size.width * 0.09, bright);
-    canvas.drawCircle(points[2], size.width * 0.09, dim);
+    canvas.drawCircle(points[0], size.width * 0.075, bright);
+    canvas.drawCircle(points[1], size.width * 0.075, bright);
+    canvas.drawCircle(points[2], size.width * 0.075, dim);
   }
 
   @override
@@ -1087,21 +1088,22 @@ class _AvatarClipper extends CustomClipper<Path> {
     final Path path = Path();
     if (isVerified) {
       path
-        ..moveTo(size.width * 0.22, size.height * 0.08)
-        ..lineTo(size.width * 0.64, size.height * 0.08)
-        ..lineTo(size.width * 0.90, size.height * 0.34)
-        ..lineTo(size.width * 0.78, size.height * 0.83)
-        ..lineTo(size.width * 0.34, size.height * 0.94)
-        ..lineTo(size.width * 0.08, size.height * 0.58)
+        ..moveTo(size.width * 0.24, size.height * 0.07)
+        ..lineTo(size.width * 0.62, size.height * 0.07)
+        ..lineTo(size.width * 0.84, size.height * 0.32)
+        ..lineTo(size.width * 0.76, size.height * 0.70)
+        ..lineTo(size.width * 0.44, size.height * 0.88)
+        ..lineTo(size.width * 0.18, size.height * 0.72)
+        ..lineTo(size.width * 0.10, size.height * 0.42)
         ..close();
     } else {
       path
-        ..moveTo(size.width * 0.2, size.height * 0.1)
-        ..lineTo(size.width * 0.8, size.height * 0.1)
-        ..lineTo(size.width * 0.92, size.height * 0.5)
-        ..lineTo(size.width * 0.64, size.height * 0.92)
-        ..lineTo(size.width * 0.22, size.height * 0.9)
-        ..lineTo(size.width * 0.06, size.height * 0.5)
+        ..moveTo(size.width * 0.20, size.height * 0.10)
+        ..lineTo(size.width * 0.80, size.height * 0.10)
+        ..lineTo(size.width * 0.90, size.height * 0.46)
+        ..lineTo(size.width * 0.68, size.height * 0.86)
+        ..lineTo(size.width * 0.24, size.height * 0.84)
+        ..lineTo(size.width * 0.10, size.height * 0.50)
         ..close();
     }
     return path;
