@@ -1,199 +1,177 @@
-import 'dart:ui';
-
 import 'models/preset_payload_v2.dart';
-import 'models/tracking_frame.dart';
 
-const List<String> kSupportedRenderModes = <String>['2d', '3d', '360'];
+const String kImageRenderMode = '2d';
+const List<String> kSupportedRenderModes = <String>[kImageRenderMode];
 
-const Map<String, double> kNeutralPreviewHeadPose = <String, double>{
-  'x': 0,
-  'y': 0,
-  'z': 0.2,
-  'yaw': 0,
-  'pitch': 0,
-};
+String renderModeForIndex(int _) => kImageRenderMode;
 
-String renderModeForIndex(int index) {
-  if (index < 0 || index >= kSupportedRenderModes.length) {
-    return kSupportedRenderModes.first;
-  }
-  return kSupportedRenderModes[index];
-}
+int renderModeIndex(String? _) => 0;
 
-int renderModeIndex(String? rawMode) {
-  final String normalized = (rawMode ?? '').trim().toLowerCase();
-  final int index = kSupportedRenderModes.indexOf(normalized);
-  return index >= 0 ? index : 0;
-}
-
-String infer360AssetKind({
-  required String fileName,
-  required String contentType,
+Map<String, dynamic> simpleImagePayload({
+  required String imageUrl,
+  String editor = 'image_studio',
+  Map<String, dynamic> meta = const <String, dynamic>{},
 }) {
-  final String normalizedContentType = contentType.trim().toLowerCase();
-  if (normalizedContentType.startsWith('video/')) return 'video';
-  if (normalizedContentType.startsWith('image/')) return 'image';
-  final String normalizedName = fileName.trim().toLowerCase();
-  if (normalizedName.endsWith('.mp4') ||
-      normalizedName.endsWith('.webm') ||
-      normalizedName.endsWith('.mov') ||
-      normalizedName.endsWith('.m4v') ||
-      normalizedName.endsWith('.ogv')) {
-    return 'video';
-  }
-  return 'image';
-}
-
-Map<String, dynamic> default360Scene() {
-  return const <String, dynamic>{
-    'assetUrl': '',
-    'assetKind': 'image',
-  };
-}
-
-Map<String, dynamic> default360Controls() {
-  return const <String, dynamic>{
-    'baseFov': 75,
-    'minFov': 45,
-    'maxFov': 95,
-    'manualMode': false,
-    'manualYaw': 0,
-    'manualPitch': 0,
-    'manualFov': 75,
-    'yawSensitivity': 1.0,
-    'pitchSensitivity': 1.0,
-    'zoomSensitivity': 1.0,
-    'posterTimeMs': 0,
-  };
-}
-
-Map<String, dynamic> blank360Payload({String editor = 'composer'}) {
+  final String normalizedUrl = imageUrl.trim();
   return PresetPayloadV2(
-    mode: '360',
-    scene: default360Scene(),
-    controls: default360Controls(),
-    meta: <String, dynamic>{'editor': editor},
+    mode: kImageRenderMode,
+    scene: <String, dynamic>{
+      'imageUrl': normalizedUrl,
+    },
+    controls: const <String, dynamic>{},
+    meta: <String, dynamic>{
+      'editor': editor,
+      ...meta,
+    },
   ).toMap();
 }
 
-TrackingFrame trackingFrameFromHeadPose(Map<String, double>? headPose) {
-  final Map<String, double> pose = headPose ?? kNeutralPreviewHeadPose;
-  return TrackingFrame(
-    headX: pose['x'] ?? 0,
-    headY: pose['y'] ?? 0,
-    headZ: pose['z'] ?? 0.2,
-    yaw: pose['yaw'] ?? 0,
-    pitch: pose['pitch'] ?? 0,
-    cursorX: 0,
-    cursorY: 0,
-    wink: false,
-    pinch: false,
-    hasHand: false,
+Map<String, dynamic> normalizeImagePayload(
+  Map<String, dynamic> payload, {
+  required String fallbackMode,
+  String editor = 'image_normalizer',
+}) {
+  final String url =
+      imageUrlFromPayload(payload, fallbackMode: fallbackMode) ?? '';
+  return simpleImagePayload(
+    imageUrl: url,
+    editor: editor,
+    meta: <String, dynamic>{
+      'sourceMode': fallbackMode,
+    },
   );
 }
 
-bool isTrackerCursorWithinBounds({
-  required Rect bounds,
-  required TrackingFrame frame,
-  required bool trackerEnabled,
-  required bool dartCursorEnabled,
-  required bool hasFreshFrame,
+String? imageUrlFromPayload(
+  Map<String, dynamic> payload, {
+  required String fallbackMode,
 }) {
-  if (!trackerEnabled || !dartCursorEnabled || !hasFreshFrame) {
-    return false;
+  try {
+    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
+      payload,
+      fallbackMode: fallbackMode,
+    );
+    final String canonical =
+        _stringValue(adapted.scene['imageUrl'] ?? adapted.scene['image_url']);
+    if (canonical.isNotEmpty) return canonical;
+
+    final String assetUrl = _stringValue(adapted.scene['assetUrl']);
+    if (assetUrl.isNotEmpty) return assetUrl;
+
+    final String sceneUrl = _firstImageUrlFromScene(adapted.scene);
+    if (sceneUrl.isNotEmpty) return sceneUrl;
+
+    final String recursive = _firstLikelyImageUrl(payload);
+    return recursive.isEmpty ? null : recursive;
+  } catch (_) {
+    final String recursive = _firstLikelyImageUrl(payload);
+    return recursive.isEmpty ? null : recursive;
   }
-  if (frame.cursorX <= 0 && frame.cursorY <= 0) {
-    return false;
-  }
-  return bounds.contains(Offset(frame.cursorX, frame.cursorY));
 }
 
 String? ambientImageUrlFromPayload(
   Map<String, dynamic> payload, {
   required String fallbackMode,
 }) {
-  try {
-    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-      payload,
-      fallbackMode: fallbackMode,
-    );
-    if (adapted.mode != '2d') return null;
-    final List<MapEntry<String, Map<String, dynamic>>> layers =
-        adapted.scene.entries
-            .where((entry) => entry.value is Map)
-            .map(
-              (entry) => MapEntry(
-                entry.key,
-                Map<String, dynamic>.from(entry.value as Map),
-              ),
-            )
-            .where(
-              (entry) =>
-                  entry.key != 'turning_point' &&
-                  entry.value['isVisible'] != false &&
-                  (entry.value['url'] ?? '').toString().trim().isNotEmpty,
-            )
-            .toList();
-    layers.sort((a, b) {
-      final double aOrder = _safeDouble(a.value['order'], 0);
-      final double bOrder = _safeDouble(b.value['order'], 0);
-      return aOrder.compareTo(bOrder);
-    });
-    if (layers.isEmpty) return null;
-    final String url = (layers.first.value['url'] ?? '').toString().trim();
-    return url.isEmpty ? null : url;
-  } catch (_) {
-    return null;
-  }
+  return imageUrlFromPayload(payload, fallbackMode: fallbackMode);
 }
 
 Map<String, dynamic>? ambientBackgroundPayloadFromPayload(
   Map<String, dynamic> payload, {
   required String fallbackMode,
 }) {
-  try {
-    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-      payload,
-      fallbackMode: fallbackMode,
-    );
-    if (adapted.mode != '2d') return null;
-    final List<MapEntry<String, Map<String, dynamic>>> layers =
-        adapted.scene.entries
-            .where((entry) => entry.value is Map)
-            .map(
-              (entry) => MapEntry(
-                entry.key,
-                Map<String, dynamic>.from(entry.value as Map),
-              ),
-            )
-            .where(
-              (entry) =>
-                  entry.key != 'turning_point' &&
-                  entry.value['isVisible'] != false &&
-                  entry.value['isRect'] != true,
-            )
-            .toList();
-    layers.sort((a, b) {
-      final double aOrder = _safeDouble(a.value['order'], 0);
-      final double bOrder = _safeDouble(b.value['order'], 0);
-      return aOrder.compareTo(bOrder);
+  final String? url = imageUrlFromPayload(payload, fallbackMode: fallbackMode);
+  if (url == null || url.trim().isEmpty) return null;
+  return simpleImagePayload(
+    imageUrl: url,
+    editor: 'ambient_background',
+    meta: <String, dynamic>{'sourceMode': fallbackMode},
+  );
+}
+
+String _firstImageUrlFromScene(Map<String, dynamic> scene) {
+  final List<Map<String, dynamic>> layers = <Map<String, dynamic>>[];
+  for (final MapEntry<String, dynamic> entry in scene.entries) {
+    if (entry.key == 'turning_point') continue;
+    final dynamic raw = entry.value;
+    if (raw is! Map) continue;
+    final Map<String, dynamic> layer = Map<String, dynamic>.from(raw);
+    if (layer['isVisible'] == false) continue;
+    final String url = _stringValue(layer['url'] ?? layer['imageUrl']);
+    if (url.isEmpty) continue;
+    layers.add(<String, dynamic>{
+      'url': url,
+      'order': _safeDouble(layer['order'], 0),
+      'isRect': layer['isRect'] == true,
     });
-    if (layers.isEmpty) return null;
-    final Map<String, dynamic> nextScene = <String, dynamic>{};
-    final dynamic turningPoint = adapted.scene['turning_point'];
-    if (turningPoint is Map) {
-      nextScene['turning_point'] = Map<String, dynamic>.from(turningPoint);
-    }
-    nextScene[layers.first.key] = Map<String, dynamic>.from(layers.first.value);
-    return PresetPayloadV2(
-      mode: adapted.mode,
-      scene: nextScene,
-      controls: Map<String, dynamic>.from(adapted.controls),
-      meta: Map<String, dynamic>.from(adapted.meta),
-    ).toMap();
-  } catch (_) {
-    return null;
   }
+  layers.sort((a, b) {
+    final bool aRect = a['isRect'] == true;
+    final bool bRect = b['isRect'] == true;
+    if (aRect != bRect) return aRect ? 1 : -1;
+    return (a['order'] as double).compareTo(b['order'] as double);
+  });
+  return layers.isEmpty ? '' : layers.first['url'] as String;
+}
+
+String _firstLikelyImageUrl(dynamic value) {
+  if (value is String) {
+    final String trimmed = value.trim();
+    return _looksLikeImageUrl(trimmed) ? trimmed : '';
+  }
+  if (value is List) {
+    for (final dynamic item in value) {
+      final String found = _firstLikelyImageUrl(item);
+      if (found.isNotEmpty) return found;
+    }
+    return '';
+  }
+  if (value is Map) {
+    const List<String> preferredKeys = <String>[
+      'imageUrl',
+      'image_url',
+      'url',
+      'assetUrl',
+      'thumbnailUrl',
+      'thumbnail_url',
+    ];
+    for (final String key in preferredKeys) {
+      if (!value.containsKey(key)) continue;
+      final String found = _firstLikelyImageUrl(value[key]);
+      if (found.isNotEmpty) return found;
+    }
+    for (final dynamic item in value.values) {
+      final String found = _firstLikelyImageUrl(item);
+      if (found.isNotEmpty) return found;
+    }
+  }
+  return '';
+}
+
+bool _looksLikeImageUrl(String value) {
+  if (value.isEmpty) return false;
+  final String lower = value.toLowerCase();
+  if (lower.startsWith('data:image/')) return true;
+  if (!(lower.startsWith('http://') || lower.startsWith('https://'))) {
+    return false;
+  }
+  return lower.contains('/storage/v1/object/') ||
+      lower.endsWith('.png') ||
+      lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.webp') ||
+      lower.endsWith('.gif') ||
+      lower.endsWith('.avif') ||
+      lower.contains('.png?') ||
+      lower.contains('.jpg?') ||
+      lower.contains('.jpeg?') ||
+      lower.contains('.webp?') ||
+      lower.contains('.gif?') ||
+      lower.contains('.avif?');
+}
+
+String _stringValue(dynamic value) {
+  return value?.toString().trim() ?? '';
 }
 
 double _safeDouble(dynamic value, double fallback) {

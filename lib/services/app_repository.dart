@@ -11,8 +11,8 @@ import '../models/notification_item.dart';
 import '../models/preset_comment.dart';
 import '../models/profile_stats.dart';
 import '../models/render_preset.dart';
-import '../models/tracker_runtime_config.dart';
 import '../models/watch_later_item.dart';
+import '../rendering_support.dart';
 import 'cache_service.dart';
 
 class AppRepository {
@@ -105,9 +105,6 @@ class AppRepository {
       <String, dynamic>{
         'user_id': user.id,
         'theme_mode': 'dark',
-        'tracker_enabled': true,
-        'tracker_ui_visible': false,
-        'tracker_config': TrackerRuntimeConfig.defaults.toMap(),
       },
       onConflict: 'user_id',
       ignoreDuplicates: true,
@@ -306,10 +303,8 @@ class AppRepository {
   }) async {
     final String trimmed = userId.trim();
     if (trimmed.isEmpty) return;
-    await _client
-        .from('profiles')
-        .update(<String, dynamic>{'is_verified': isVerified})
-        .eq('user_id', trimmed);
+    await _client.from('profiles').update(
+        <String, dynamic>{'is_verified': isVerified}).eq('user_id', trimmed);
     await CacheService.instance.markDomainDirty(CacheDomain.profile);
   }
 
@@ -507,63 +502,6 @@ class AppRepository {
     );
   }
 
-  Future<Map<String, dynamic>?> fetchModeState(String mode) async {
-    final user = currentUser;
-    if (user == null) return null;
-
-    final row = await _client
-        .from('mode_states')
-        .select('state')
-        .eq('user_id', user.id)
-        .eq('mode', mode)
-        .maybeSingle();
-
-    if (row == null) return null;
-    final dynamic state = row['state'];
-    if (state is Map<String, dynamic>) {
-      return state;
-    }
-    if (state is Map) {
-      return Map<String, dynamic>.from(state);
-    }
-    return null;
-  }
-
-  Future<void> upsertModeState({
-    required String mode,
-    required Map<String, dynamic> state,
-  }) async {
-    final user = currentUser;
-    if (user == null) return;
-
-    await _client.from('mode_states').upsert(
-      <String, dynamic>{
-        'user_id': user.id,
-        'mode': mode,
-        'state': state,
-      },
-      onConflict: 'user_id,mode',
-    );
-  }
-
-  Future<Map<String, dynamic>?> fetchPostStudioDraftState() {
-    return fetchModeState('post_studio_draft');
-  }
-
-  Future<void> upsertPostStudioDraftState(Map<String, dynamic> state) {
-    return upsertModeState(mode: 'post_studio_draft', state: state);
-  }
-
-  Future<void> clearPostStudioDraftState() async {
-    final user = currentUser;
-    if (user == null) return;
-    await _client
-        .from('mode_states')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('mode', 'post_studio_draft');
-  }
-
   Future<List<RenderPreset>> fetchUserPresets({String? mode}) async {
     final user = currentUser;
     if (user == null) return const <RenderPreset>[];
@@ -667,8 +605,7 @@ class AppRepository {
       key: cacheKey,
       domains: const {CacheDomain.feed},
       fetch: () async {
-        final List<RenderPreset> presets =
-            await fetchFeedPresets(limit: limit);
+        final List<RenderPreset> presets = await fetchFeedPresets(limit: limit);
         return _hydrateFeedPosts(presets);
       },
       encode: (value) => value.map(_encodeFeedPost).toList(),
@@ -692,7 +629,8 @@ class AppRepository {
             .map((dynamic e) =>
                 RenderPreset.fromMap(Map<String, dynamic>.from(e as Map)))
             .toList();
-        return _hydrateFeedPosts(await _applyViewerEntitlementsToPresets(presets));
+        return _hydrateFeedPosts(
+            await _applyViewerEntitlementsToPresets(presets));
       },
       encode: (value) => value.map(_encodeFeedPost).toList(),
       decode: (data) => _decodeFeedPostList(data),
@@ -727,7 +665,8 @@ class AppRepository {
         if (row == null) return null;
 
         final RenderPreset preset = RenderPreset.fromMap(row);
-        final bool canView = preset.isPublic || preset.userId == currentUser?.id;
+        final bool canView =
+            preset.isPublic || preset.userId == currentUser?.id;
         if (!canView) return null;
         final List<FeedPost> posts =
             await _hydrateFeedPosts(<RenderPreset>[preset]);
@@ -756,7 +695,8 @@ class AppRepository {
     final Set<String> savedPresetIds = <String>{};
     final Set<String> watchLaterPresetIds = <String>{};
     final Set<String> followingUserIds = <String>{};
-    final Map<String, bool> viewerHasPaidByPreset = await _fetchViewerEntitlements(
+    final Map<String, bool> viewerHasPaidByPreset =
+        await _fetchViewerEntitlements(
       targetType: 'post',
       targetIds: presetIds,
     );
@@ -838,9 +778,8 @@ class AppRepository {
         .from('viewer_content_entitlements')
         .select('target_id,has_paid')
         .eq('user_id', user.id)
-        .eq('target_type', targetType.toLowerCase() == 'collection'
-            ? 'collection'
-            : 'post')
+        .eq('target_type',
+            targetType.toLowerCase() == 'collection' ? 'collection' : 'post')
         .inFilter('target_id', targetIds.toList());
     final Map<String, bool> out = <String, bool>{};
     for (final dynamic row in rows) {
@@ -862,8 +801,9 @@ class AppRepository {
     );
     final String? viewerId = currentUser?.id;
     return presets.map((preset) {
-      final bool viewerHasPaid = (viewerId != null && viewerId == preset.userId) ||
-          (paidByPreset[preset.id] ?? false);
+      final bool viewerHasPaid =
+          (viewerId != null && viewerId == preset.userId) ||
+              (paidByPreset[preset.id] ?? false);
       return _copyPresetWithViewerAccess(
         preset,
         viewerHasPaid: viewerHasPaid,
@@ -998,12 +938,17 @@ class AppRepository {
     if (user == null) return;
     final String cleanName = name.trim();
     if (cleanName.isEmpty) return;
+    final Map<String, dynamic> imagePayload = normalizeImagePayload(
+      payload,
+      fallbackMode: mode,
+      editor: 'repository_save',
+    );
 
     final existing = await _client
         .from('presets')
         .select('id')
         .eq('user_id', user.id)
-        .eq('mode', mode)
+        .eq('mode', kImageRenderMode)
         .eq('name', cleanName)
         .order('updated_at', ascending: false)
         .limit(1)
@@ -1011,16 +956,16 @@ class AppRepository {
 
     final values = <String, dynamic>{
       'user_id': user.id,
-      'mode': mode,
+      'mode': kImageRenderMode,
       'name': cleanName,
       'title': cleanName,
       'description': '',
       'tags': const <String>[],
       'mention_user_ids': const <String>[],
       'visibility': 'private',
-      'payload': payload,
-      'thumbnail_payload': payload,
-      'thumbnail_mode': mode,
+      'payload': imagePayload,
+      'thumbnail_payload': imagePayload,
+      'thumbnail_mode': kImageRenderMode,
       'is_paid': false,
       'price_cents': null,
       'accent_color_hex': null,
@@ -1051,22 +996,32 @@ class AppRepository {
   }) async {
     final user = currentUser;
     if (user == null) throw Exception('Not authenticated.');
+    final Map<String, dynamic> imagePayload = normalizeImagePayload(
+      payload,
+      fallbackMode: mode,
+      editor: 'repository_publish',
+    );
+    final Map<String, dynamic> imageThumbnailPayload = normalizeImagePayload(
+      thumbnailPayload ?? payload,
+      fallbackMode: thumbnailMode ?? mode,
+      editor: 'repository_thumbnail',
+    );
 
     final Map<String, dynamic> row = await _client
         .from('presets')
         .insert(
           <String, dynamic>{
             'user_id': user.id,
-            'mode': mode,
+            'mode': kImageRenderMode,
             'name': name.trim().isEmpty ? 'Untitled' : name.trim(),
             'title': title.trim().isEmpty ? 'Untitled' : title.trim(),
             'description': description.trim(),
             'tags': _normalizeTags(tags),
             'mention_user_ids': _normalizeUuidList(mentionUserIds),
             'visibility': visibility == 'private' ? 'private' : 'public',
-            'payload': payload,
-            'thumbnail_payload': thumbnailPayload ?? payload,
-            'thumbnail_mode': thumbnailMode ?? mode,
+            'payload': imagePayload,
+            'thumbnail_payload': imageThumbnailPayload,
+            'thumbnail_mode': kImageRenderMode,
             'is_paid': isPaid,
             'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
             'accent_color_hex': _normalizeHexOrNull(accentColorHex),
@@ -1095,10 +1050,11 @@ class AppRepository {
   }) {
     final Map<String, dynamic>? effectivePayload = payload == null
         ? null
-        : <String, dynamic>{
-            ...payload,
-            if (mode != null && mode.trim().isNotEmpty) 'mode': mode.trim(),
-          };
+        : normalizeImagePayload(
+            payload,
+            fallbackMode: mode ?? kImageRenderMode,
+            editor: 'repository_update',
+          );
     return updatePresetPost(
       presetId: presetId,
       title: title,
@@ -1126,14 +1082,19 @@ class AppRepository {
     int? priceCents,
     String? accentColorHex,
   }) {
+    final Map<String, dynamic> imageThumbnailPayload = normalizeImagePayload(
+      thumbnailPayload,
+      fallbackMode: thumbnailMode,
+      editor: 'repository_thumbnail_update',
+    );
     return updatePresetPost(
       presetId: presetId,
       title: title,
       description: description,
       tags: tags,
       mentionUserIds: mentionUserIds,
-      thumbnailPayload: thumbnailPayload,
-      thumbnailMode: thumbnailMode,
+      thumbnailPayload: imageThumbnailPayload,
+      thumbnailMode: kImageRenderMode,
       visibility: visibility,
       isPaid: isPaid,
       priceCents: priceCents,
@@ -1172,13 +1133,23 @@ class AppRepository {
       values['mention_user_ids'] = _normalizeUuidList(mentionUserIds);
     }
     if (payload != null) {
-      values['payload'] = payload;
+      values['payload'] = normalizeImagePayload(
+        payload,
+        fallbackMode: kImageRenderMode,
+        editor: 'repository_update',
+      );
+      values['mode'] = kImageRenderMode;
     }
     if (thumbnailPayload != null) {
-      values['thumbnail_payload'] = thumbnailPayload;
+      values['thumbnail_payload'] = normalizeImagePayload(
+        thumbnailPayload,
+        fallbackMode: thumbnailMode ?? kImageRenderMode,
+        editor: 'repository_thumbnail_update',
+      );
+      values['thumbnail_mode'] = kImageRenderMode;
     }
     if (thumbnailMode != null) {
-      values['thumbnail_mode'] = thumbnailMode;
+      values['thumbnail_mode'] = kImageRenderMode;
     }
     if (visibility != null) {
       values['visibility'] = visibility == 'private' ? 'private' : 'public';
@@ -1333,8 +1304,7 @@ class AppRepository {
       },
       onConflict: 'preset_id,user_id',
     );
-    await CacheService.instance
-        .markDomainDirty(CacheDomain.feed);
+    await CacheService.instance.markDomainDirty(CacheDomain.feed);
   }
 
   Future<void> toggleSavePreset(String presetId, {required bool save}) async {
@@ -2247,9 +2217,8 @@ class AppRepository {
               .eq('target_type', 'collection')
               .eq('target_id', collectionId)
               .maybeSingle();
-          viewerHasPaid =
-              user.id == row['user_id']?.toString() ||
-                  entitlementRow?['has_paid'] == true;
+          viewerHasPaid = user.id == row['user_id']?.toString() ||
+              entitlementRow?['has_paid'] == true;
         }
         final items = itemRows
             .map((dynamic e) => CollectionItemSnapshot.fromMap(
@@ -2292,8 +2261,7 @@ class AppRepository {
           items: items,
         );
       },
-      encode: (value) =>
-          value == null ? null : _encodeCollectionDetail(value),
+      encode: (value) => value == null ? null : _encodeCollectionDetail(value),
       decode: (data) => _decodeCollectionDetailNullable(data),
     );
   }
@@ -2315,6 +2283,23 @@ class AppRepository {
     final user = currentUser;
     if (user == null) throw Exception('Not authenticated');
     if (items.isEmpty) throw Exception('Collection needs at least one preset.');
+    final List<CollectionDraftItem> imageItems = items
+        .map(
+          (item) => item.copyWith(
+            mode: kImageRenderMode,
+            snapshot: normalizeImagePayload(
+              item.snapshot,
+              fallbackMode: item.mode,
+              editor: 'repository_collection_item',
+            ),
+          ),
+        )
+        .toList();
+    final Map<String, dynamic> imageThumbnailPayload = normalizeImagePayload(
+      thumbnailPayload ?? imageItems.first.snapshot,
+      fallbackMode: thumbnailMode ?? imageItems.first.mode,
+      editor: 'repository_collection_thumbnail',
+    );
 
     String id = collectionId ?? '';
 
@@ -2328,8 +2313,8 @@ class AppRepository {
               'description': description,
               'tags': _normalizeTags(tags),
               'mention_user_ids': _normalizeUuidList(mentionUserIds),
-              'thumbnail_payload': thumbnailPayload ?? items.first.snapshot,
-              'thumbnail_mode': thumbnailMode ?? items.first.mode,
+              'thumbnail_payload': imageThumbnailPayload,
+              'thumbnail_mode': kImageRenderMode,
               'published': publish,
               'is_paid': isPaid,
               'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
@@ -2349,12 +2334,8 @@ class AppRepository {
         'is_paid': isPaid,
         'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
       };
-      if (thumbnailPayload != null) {
-        values['thumbnail_payload'] = thumbnailPayload;
-      }
-      if (thumbnailMode != null && thumbnailMode.trim().isNotEmpty) {
-        values['thumbnail_mode'] = thumbnailMode;
-      }
+      values['thumbnail_payload'] = imageThumbnailPayload;
+      values['thumbnail_mode'] = kImageRenderMode;
       if (accentColorHex != null) {
         values['accent_color_hex'] = _normalizeHexOrNull(accentColorHex);
       }
@@ -2368,14 +2349,14 @@ class AppRepository {
     }
 
     final rows = <Map<String, dynamic>>[];
-    for (int i = 0; i < items.length; i++) {
+    for (int i = 0; i < imageItems.length; i++) {
       rows.add(
         <String, dynamic>{
           'collection_id': id,
           'position': i,
-          'mode': items[i].mode,
-          'preset_name': items[i].name,
-          'preset_snapshot': items[i].snapshot,
+          'mode': kImageRenderMode,
+          'preset_name': imageItems[i].name,
+          'preset_snapshot': imageItems[i].snapshot,
         },
       );
     }
@@ -2805,79 +2786,6 @@ class AppRepository {
     );
   }
 
-  Future<Map<String, bool>> fetchTrackerPreferencesForCurrentUser() async {
-    final user = currentUser;
-    if (user == null) {
-      return <String, bool>{
-        'trackerEnabled': true,
-        'trackerUiVisible': false,
-      };
-    }
-
-    final row = await _client
-        .from('user_settings')
-        .select('tracker_enabled,tracker_ui_visible')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-    return <String, bool>{
-      'trackerEnabled': row?['tracker_enabled'] != false,
-      'trackerUiVisible': row?['tracker_ui_visible'] == true,
-    };
-  }
-
-  Future<TrackerRuntimeConfig> fetchTrackerRuntimeConfigForCurrentUser() async {
-    final user = currentUser;
-    if (user == null) return TrackerRuntimeConfig.defaults;
-    final row = await _client
-        .from('user_settings')
-        .select('tracker_config')
-        .eq('user_id', user.id)
-        .maybeSingle();
-    final dynamic raw = row?['tracker_config'];
-    final Map<String, dynamic> map = raw is Map<String, dynamic>
-        ? raw
-        : (raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{});
-    return TrackerRuntimeConfig.fromMap(map);
-  }
-
-  Future<void> updateTrackerRuntimeConfigForCurrentUser(
-    TrackerRuntimeConfig config,
-  ) async {
-    final user = currentUser;
-    if (user == null) return;
-    await _client.from('user_settings').upsert(
-      <String, dynamic>{
-        'user_id': user.id,
-        'tracker_config': config.toMap(),
-      },
-      onConflict: 'user_id',
-      defaultToNull: false,
-    );
-  }
-
-  Future<void> updateTrackerPreferencesForCurrentUser({
-    bool? trackerEnabled,
-    bool? trackerUiVisible,
-  }) async {
-    final user = currentUser;
-    if (user == null) return;
-
-    final values = <String, dynamic>{'user_id': user.id};
-    if (trackerEnabled != null) {
-      values['tracker_enabled'] = trackerEnabled;
-    }
-    if (trackerUiVisible != null) {
-      values['tracker_ui_visible'] = trackerUiVisible;
-    }
-
-    await _client.from('user_settings').upsert(
-          values,
-          onConflict: 'user_id',
-          defaultToNull: false,
-        );
-  }
-
   Future<String> uploadAssetBytes({
     required Uint8List bytes,
     required String fileName,
@@ -2990,8 +2898,7 @@ class AppRepository {
 
   Map<String, AppUserProfile> _decodeProfileMap(Object? raw) {
     if (raw is! Map) return <String, AppUserProfile>{};
-    final Map<String, AppUserProfile> output =
-        <String, AppUserProfile>{};
+    final Map<String, AppUserProfile> output = <String, AppUserProfile>{};
     raw.forEach((key, value) {
       final profile = _decodeProfileNullable(value);
       if (profile != null) {
@@ -3081,8 +2988,9 @@ class AppRepository {
       'items_count': summary.itemsCount,
       'created_at': summary.createdAt.toIso8601String(),
       'updated_at': summary.updatedAt.toIso8601String(),
-      'first_item':
-          summary.firstItem == null ? null : _encodeCollectionItem(summary.firstItem!),
+      'first_item': summary.firstItem == null
+          ? null
+          : _encodeCollectionItem(summary.firstItem!),
       'author': summary.author?.toMap(),
       'likes_count': summary.likesCount,
       'dislikes_count': summary.dislikesCount,
@@ -3204,19 +3112,22 @@ class AppRepository {
 
   List<PresetComment> _decodePresetCommentList(Object? raw) {
     if (raw is! List) return const <PresetComment>[];
-    return raw.map((entry) {
-      final map = _mapFrom(entry);
-      final userId = map['user_id']?.toString() ?? '';
-      return PresetComment(
-        id: map['id']?.toString() ?? '',
-        presetId: map['preset_id']?.toString() ?? '',
-        userId: userId,
-        content: map['content']?.toString() ?? '',
-        createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
-            DateTime.fromMillisecondsSinceEpoch(0),
-        author: _decodeProfileNullable(map['author']),
-      );
-    }).where((comment) => comment.id.isNotEmpty).toList();
+    return raw
+        .map((entry) {
+          final map = _mapFrom(entry);
+          final userId = map['user_id']?.toString() ?? '';
+          return PresetComment(
+            id: map['id']?.toString() ?? '',
+            presetId: map['preset_id']?.toString() ?? '',
+            userId: userId,
+            content: map['content']?.toString() ?? '',
+            createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+            author: _decodeProfileNullable(map['author']),
+          );
+        })
+        .where((comment) => comment.id.isNotEmpty)
+        .toList();
   }
 
   Map<String, dynamic> _encodeWatchLaterItem(WatchLaterItem item) {
@@ -3225,8 +3136,9 @@ class AppRepository {
       'type': item.type.name,
       'created_at': item.createdAt.toIso8601String(),
       'post': item.post == null ? null : _encodePreset(item.post!),
-      'collection':
-          item.collection == null ? null : _encodeCollectionSummary(item.collection!),
+      'collection': item.collection == null
+          ? null
+          : _encodeCollectionSummary(item.collection!),
     };
   }
 

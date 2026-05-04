@@ -1,13 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
-// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
-import 'dart:html' as html;
-import 'dart:js_interop';
-import 'dart:js_interop_unsafe';
 import 'dart:math' as math;
 import 'dart:ui';
 
-import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -17,31 +11,25 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:swipable_stack/swipable_stack.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'engine3d.dart';
-import 'layer_mode.dart';
 import 'models/app_user_profile.dart';
 import 'models/chat_models.dart';
 import 'models/collection_models.dart';
 import 'models/feed_post.dart';
 import 'models/notification_item.dart';
-import 'models/preset_payload_v2.dart';
 import 'models/preset_comment.dart';
 import 'models/profile_stats.dart';
 import 'models/render_preset.dart';
-import 'models/tracker_runtime_config.dart';
 import 'models/watch_later_item.dart';
 import 'rendering_support.dart';
 import 'services/app_repository.dart';
 import 'services/appearance_settings_service.dart';
+import 'services/browser_fullscreen.dart';
 import 'services/cache_service.dart';
 import 'services/query_guard.dart';
-import 'services/tracking_service.dart';
 import 'services/web_file_upload.dart';
 import 'widgets/preset_viewer.dart';
-import 'widgets/panorama_viewer_360.dart';
 import 'widgets/query_feedback.dart';
 import 'widgets/svg_card_shell.dart';
-import 'widgets/window_effect_2d_preview.dart';
 
 enum _ShellTab {
   home,
@@ -58,7 +46,6 @@ enum _ComposerKind {
 }
 
 enum _ComposerEditTarget {
-  detail,
   card,
 }
 
@@ -484,6 +471,36 @@ _SvgGridLayoutSpec _svgGridLayoutSpec({
   );
 }
 
+class _GridWallpaperBackdrop extends StatelessWidget {
+  const _GridWallpaperBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppearanceSettings>(
+      valueListenable: AppearanceSettingsService.instance.settings,
+      builder: (context, settings, _) {
+        final String imageUrl = settings.wallpaperImageUrl.trim();
+        if (imageUrl.isEmpty) return const SizedBox.shrink();
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            ),
+            ColoredBox(
+              color: Color(settings.wallpaperOverlayColor).withValues(
+                alpha: settings.wallpaperOverlayOpacity,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _GridCardPreviewSurface extends StatefulWidget {
   const _GridCardPreviewSurface({
     required this.heroTag,
@@ -501,7 +518,6 @@ class _GridCardPreviewSurface extends StatefulWidget {
     required this.menuItems,
     required this.onMenuSelected,
     this.onAvatarTap,
-    this.outsideOverflowMax = _kCardOutsideOverflow,
     this.emptyChild,
   });
 
@@ -520,7 +536,6 @@ class _GridCardPreviewSurface extends StatefulWidget {
   final List<_BlurMenuEntry<String>> menuItems;
   final ValueChanged<String> onMenuSelected;
   final VoidCallback? onAvatarTap;
-  final double outsideOverflowMax;
   final Widget? emptyChild;
 
   @override
@@ -529,58 +544,16 @@ class _GridCardPreviewSurface extends StatefulWidget {
 }
 
 class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
-  final GlobalKey _hoverKey = GlobalKey();
-  bool _realHover = false;
-  bool _trackerHover = false;
-
-  bool get _active => _realHover || _trackerHover;
-
-  @override
-  void initState() {
-    super.initState();
-    TrackingService.instance.frameNotifier.addListener(_syncTrackerHover);
-  }
-
-  @override
-  void dispose() {
-    TrackingService.instance.frameNotifier.removeListener(_syncTrackerHover);
-    super.dispose();
-  }
-
-  void _syncTrackerHover() {
-    if (!mounted) return;
-    final RenderBox? box =
-        _hoverKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.attached) {
-      if (_trackerHover) {
-        setState(() => _trackerHover = false);
-      }
-      return;
-    }
-    final Offset topLeft = box.localToGlobal(Offset.zero);
-    final Rect bounds = topLeft & box.size;
-    final TrackingService tracking = TrackingService.instance;
-    final bool nextHover = isTrackerCursorWithinBounds(
-      bounds: bounds,
-      frame: tracking.frameNotifier.value,
-      trackerEnabled: tracking.trackerEnabled,
-      dartCursorEnabled: tracking.dartCursorEnabled,
-      hasFreshFrame: tracking.hasFreshFrame,
-    );
-    if (nextHover == _trackerHover) return;
-    setState(() => _trackerHover = nextHover);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final bool usePreviewPlayback = _is360VideoPayload(
-      widget.payload,
-      fallbackMode: widget.mode,
-    );
-    final int usernameChars =
-        widget.verticalUsername.trim().isEmpty
-            ? 1
-            : widget.verticalUsername.trim().replaceAll('@', '').length.clamp(1, 6);
+    final int usernameChars = widget.verticalUsername.trim().isEmpty
+        ? 1
+        : widget.verticalUsername
+            .trim()
+            .replaceAll('@', '')
+            .length
+            .clamp(1, 6)
+            .toInt();
     final bool twoLineTitle = _cardTitleNeedsTwoLines(
       context,
       widget.title,
@@ -594,63 +567,41 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
       metaWidthFactor: metaWidthFactor,
       twoLineTitle: twoLineTitle,
     );
-    final List<SvgCardMenuAction> menuActions = widget.menuItems
-        .map((item) {
-          if (item.isDivider) return const SvgCardMenuAction.divider();
-          final String value = item.value ?? '';
-          if (value.isEmpty) return const SvgCardMenuAction.divider();
-          return SvgCardMenuAction(
-            value: value,
-            label: item.label ?? value,
-            enabled: item.enabled,
-          );
-        })
-        .toList();
+    final List<SvgCardMenuAction> menuActions = widget.menuItems.map((item) {
+      if (item.isDivider) return const SvgCardMenuAction.divider();
+      final String value = item.value ?? '';
+      if (value.isEmpty) return const SvgCardMenuAction.divider();
+      return SvgCardMenuAction(
+        value: value,
+        label: item.label ?? value,
+        enabled: item.enabled,
+      );
+    }).toList();
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _realHover = true),
-      onExit: (_) => setState(() => _realHover = false),
-      child: SizedBox.expand(
-        key: _hoverKey,
-        child: Hero(
-          tag: widget.heroTag,
-          createRectTween: (begin, end) =>
-              _EaseInOutRectTween(begin: begin, end: end),
-          child: SvgCardShell(
-            baseColor: const Color(0x00000000),
-            title: widget.title,
-            metaText: widget.metaText,
-            verticalUsername: widget.verticalUsername,
-            priceLabel: widget.priceText,
-            showCollectionCount: widget.showCollectionCount,
-            collectionCountLabel: widget.collectionCountText,
-            isVerified: widget.isVerified,
-            accentColor: widget.accentColor,
-            avatarImage: widget.avatarImage,
-            onAvatarTap: widget.onAvatarTap,
-            menuItems: menuActions,
-            onMenuSelected: widget.onMenuSelected,
-            child: _SharedPresetPreview(
-              mode: widget.mode,
-              payload: widget.payload,
-              clipper: clipper,
-              pointerPassthrough: true,
-              useGlobalTracking: _active,
-              externalHeadPose: _active ? null : kNeutralPreviewHeadPose,
-              outsideOverflowMax: widget.outsideOverflowMax,
-              allowOutsideOverflow: true,
-              emptyChild: widget.emptyChild,
-              previewPlaybackMode: usePreviewPlayback,
-              videoPlayActive: _active,
-              posterTimeMs: _posterTimeMsFromPayload(
-                widget.payload,
-                fallbackMode: widget.mode,
-              ),
-              resetVideoOnActivate: usePreviewPlayback,
-              restorePosterOnDeactivate: usePreviewPlayback,
-              muted: true,
-              loop: true,
-            ),
+    return SizedBox.expand(
+      child: Hero(
+        tag: widget.heroTag,
+        createRectTween: (begin, end) =>
+            _EaseInOutRectTween(begin: begin, end: end),
+        child: SvgCardShell(
+          baseColor: const Color(0x00000000),
+          title: widget.title,
+          metaText: widget.metaText,
+          verticalUsername: widget.verticalUsername,
+          priceLabel: widget.priceText,
+          showCollectionCount: widget.showCollectionCount,
+          collectionCountLabel: widget.collectionCountText,
+          isVerified: widget.isVerified,
+          accentColor: widget.accentColor,
+          avatarImage: widget.avatarImage,
+          onAvatarTap: widget.onAvatarTap,
+          menuItems: menuActions,
+          onMenuSelected: widget.onMenuSelected,
+          child: _SharedPresetPreview(
+            mode: widget.mode,
+            payload: widget.payload,
+            clipper: clipper,
+            emptyChild: widget.emptyChild,
           ),
         ),
       ),
@@ -670,55 +621,14 @@ class _HoverActivatedPreviewRegion extends StatefulWidget {
 
 class _HoverActivatedPreviewRegionState
     extends State<_HoverActivatedPreviewRegion> {
-  final GlobalKey _hoverKey = GlobalKey();
   bool _realHover = false;
-  bool _trackerHover = false;
-
-  bool get _active => _realHover || _trackerHover;
-
-  @override
-  void initState() {
-    super.initState();
-    TrackingService.instance.frameNotifier.addListener(_syncTrackerHover);
-  }
-
-  @override
-  void dispose() {
-    TrackingService.instance.frameNotifier.removeListener(_syncTrackerHover);
-    super.dispose();
-  }
-
-  void _syncTrackerHover() {
-    if (!mounted) return;
-    final RenderBox? box =
-        _hoverKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.attached) {
-      if (_trackerHover) {
-        setState(() => _trackerHover = false);
-      }
-      return;
-    }
-    final Offset topLeft = box.localToGlobal(Offset.zero);
-    final Rect bounds = topLeft & box.size;
-    final TrackingService tracking = TrackingService.instance;
-    final bool nextHover = isTrackerCursorWithinBounds(
-      bounds: bounds,
-      frame: tracking.frameNotifier.value,
-      trackerEnabled: tracking.trackerEnabled,
-      dartCursorEnabled: tracking.dartCursorEnabled,
-      hasFreshFrame: tracking.hasFreshFrame,
-    );
-    if (nextHover == _trackerHover) return;
-    setState(() => _trackerHover = nextHover);
-  }
 
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      key: _hoverKey,
       onEnter: (_) => setState(() => _realHover = true),
       onExit: (_) => setState(() => _realHover = false),
-      child: widget.builder(_active),
+      child: widget.builder(_realHover),
     );
   }
 }
@@ -733,8 +643,8 @@ class _EaseInOutRectTween extends RectTween {
   }
 }
 
-const double _kDetailContentPadding = 14;
-const double _kDetailPanelGap = 12;
+const double _kDetailContentPadding = 0;
+const double _kDetailPanelGap = 0;
 const double _kDetailPrimaryRatio = 0.8;
 const double _kDetailSecondaryRatio = 0.2;
 const double _kDetailPreviewAspectRatio = 16 / 9;
@@ -765,7 +675,6 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
     required this.leftPadding,
     required this.topPadding,
     required this.desktop,
-    this.panoramaController,
   });
 
   final String mode;
@@ -774,14 +683,12 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
   final double leftPadding;
   final double topPadding;
   final bool desktop;
-  final PanoramaViewer360Controller? panoramaController;
 
   Widget _buildFallbackAmbientImage(String normalizedUrl) {
     return Image.network(
       normalizedUrl,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) =>
-          const ColoredBox(color: Color(0xFF101213)),
+      errorBuilder: (_, __, ___) => const ColoredBox(color: Color(0xFF101213)),
     );
   }
 
@@ -793,15 +700,7 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
             ) ??
             '')
         .trim();
-    final Map<String, dynamic>? ambient2dPayload =
-        ambientBackgroundPayloadFromPayload(
-      payload,
-      fallbackMode: mode,
-    );
-    final bool isPanorama = mode == '360';
-    final bool hasAmbient =
-        previewWidth > 0 &&
-        (isPanorama || ambient2dPayload != null || normalizedUrl.isNotEmpty);
+    final bool hasAmbient = previewWidth > 0 && normalizedUrl.isNotEmpty;
     final double previewHeight = previewWidth / _kDetailPreviewAspectRatio;
     return ValueListenableBuilder<AppearanceSettings>(
       valueListenable: AppearanceSettingsService.instance.settings,
@@ -822,21 +721,7 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
                 child: IgnorePointer(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
-                    child: isPanorama
-                        ? _SyncedAmbientPanoramaSurface(
-                            payload: payload,
-                            primaryController: panoramaController,
-                          )
-                        : ambient2dPayload != null
-                            ? _SharedPresetPreview(
-                                mode: '2d',
-                                payload: ambient2dPayload,
-                                borderRadius: BorderRadius.circular(20),
-                                pointerPassthrough: true,
-                                outsideOverflowMax: _kCardOutsideOverflow,
-                                allowOutsideOverflow: true,
-                              )
-                            : _buildFallbackAmbientImage(normalizedUrl),
+                    child: _buildFallbackAmbientImage(normalizedUrl),
                   ),
                 ),
               ),
@@ -879,126 +764,6 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _SyncedAmbientPanoramaSurface extends StatefulWidget {
-  const _SyncedAmbientPanoramaSurface({
-    required this.payload,
-    this.primaryController,
-  });
-
-  final Map<String, dynamic> payload;
-  final PanoramaViewer360Controller? primaryController;
-
-  @override
-  State<_SyncedAmbientPanoramaSurface> createState() =>
-      _SyncedAmbientPanoramaSurfaceState();
-}
-
-class _SyncedAmbientPanoramaSurfaceState
-    extends State<_SyncedAmbientPanoramaSurface> {
-  final PanoramaViewer360Controller _ambientController =
-      PanoramaViewer360Controller();
-  VoidCallback? _primaryListener;
-  int _lastSyncedTimeMs = -1;
-  bool? _lastPlaying;
-  bool? _lastLoop;
-  double? _lastPlaybackRate;
-
-  @override
-  void initState() {
-    super.initState();
-    _bindPrimaryController();
-  }
-
-  @override
-  void didUpdateWidget(covariant _SyncedAmbientPanoramaSurface oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.primaryController != widget.primaryController) {
-      _unbindPrimaryController(oldWidget.primaryController);
-      _bindPrimaryController();
-    }
-  }
-
-  @override
-  void dispose() {
-    _unbindPrimaryController(widget.primaryController);
-    _ambientController.dispose();
-    super.dispose();
-  }
-
-  void _bindPrimaryController() {
-    final PanoramaViewer360Controller? primary = widget.primaryController;
-    if (primary == null) return;
-    _primaryListener = _syncFromPrimary;
-    primary.status.addListener(_primaryListener!);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncFromPrimary());
-  }
-
-  void _unbindPrimaryController(PanoramaViewer360Controller? controller) {
-    final VoidCallback? listener = _primaryListener;
-    if (controller != null && listener != null) {
-      controller.status.removeListener(listener);
-    }
-    _primaryListener = null;
-  }
-
-  void _syncFromPrimary() {
-    final PanoramaViewer360Controller? primary = widget.primaryController;
-    if (primary == null) return;
-    final PanoramaViewer360Status status = primary.value;
-    if (_lastLoop != status.loop) {
-      _lastLoop = status.loop;
-      _ambientController.setLoop(status.loop);
-    }
-    if (_lastPlaybackRate != status.playbackRate) {
-      _lastPlaybackRate = status.playbackRate;
-      _ambientController.setPlaybackRate(status.playbackRate);
-    }
-    _ambientController.setMuted(true);
-    _ambientController.setVolume(0);
-    if (!status.isVideo) return;
-    final bool playingChanged = _lastPlaying != status.playing;
-    final bool shouldSeek = _lastSyncedTimeMs < 0 ||
-        !status.playing ||
-        playingChanged ||
-        (status.currentTimeMs - _lastSyncedTimeMs).abs() > 700;
-    if (shouldSeek) {
-      _lastSyncedTimeMs = status.currentTimeMs;
-      _ambientController.seekToMs(status.currentTimeMs);
-    }
-    if (playingChanged) {
-      _lastPlaying = status.playing;
-      if (status.playing) {
-        _ambientController.play();
-      } else {
-        _ambientController.pause();
-      }
-      return;
-    }
-    if (!status.playing) {
-      _ambientController.pause();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final PanoramaViewer360Status status =
-        widget.primaryController?.value ?? const PanoramaViewer360Status.initial();
-    return PanoramaViewer360(
-      initialPresetPayload: widget.payload,
-      cleanView: true,
-      embedded: true,
-      pointerPassthrough: true,
-      controller: _ambientController,
-      qualityTier: 'low',
-      volume: 0,
-      muted: true,
-      loop: status.loop,
-      playbackRate: status.playbackRate,
-      videoPlayActive: status.playing,
     );
   }
 }
@@ -1145,17 +910,6 @@ double _cardMetaWidthFactor(BuildContext context, String raw) {
   return ((measured - 70) / 130).clamp(0.0, 1.0).toDouble();
 }
 
-double _mapDouble(dynamic value, double fallback) {
-  if (value is num) return value.toDouble();
-  return double.tryParse(value?.toString() ?? '') ?? fallback;
-}
-
-int _mapInt(dynamic value, int fallback) {
-  if (value is int) return value;
-  if (value is num) return value.toInt();
-  return int.tryParse(value?.toString() ?? '') ?? fallback;
-}
-
 Color _cardAccentColorFromHex(
   String? raw, {
   Color fallback = const Color(0xFFFD4687),
@@ -1177,7 +931,8 @@ String _cardPriceLabel({
   if (!isPaid || viewerHasPaid) return 'Free';
   final int cents = (priceCents ?? 0).clamp(0, 999999999);
   if (cents == 0) return 'Free';
-  final String dollars = (cents / 100).toStringAsFixed(cents % 100 == 0 ? 0 : 2);
+  final String dollars =
+      (cents / 100).toStringAsFixed(cents % 100 == 0 ? 0 : 2);
   return '\$$dollars';
 }
 
@@ -1187,104 +942,6 @@ String _verticalUsernameForCard(AppUserProfile? profile) {
   final String full = (profile?.fullName ?? '').trim();
   if (full.isNotEmpty) return full.replaceAll(' ', '');
   return 'U';
-}
-
-String _formatDurationClock(int milliseconds) {
-  final int totalSeconds = math.max(0, milliseconds ~/ 1000);
-  final int hours = totalSeconds ~/ 3600;
-  final int minutes = (totalSeconds % 3600) ~/ 60;
-  final int seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-  }
-  return '$minutes:${seconds.toString().padLeft(2, '0')}';
-}
-
-bool _has2DOutsideOverflow(PresetPayloadV2 adapted) {
-  if (adapted.mode != '2d') return false;
-  final Map<String, dynamic> scene = adapted.scene;
-  final double turningOrder = (() {
-    final dynamic raw = scene['turning_point'];
-    if (raw is Map) {
-      return _mapDouble(raw['order'], 0);
-    }
-    return 0.0;
-  })();
-  for (final MapEntry<String, dynamic> entry in scene.entries) {
-    if (entry.key == 'turning_point' || entry.value is! Map) {
-      continue;
-    }
-    final Map<String, dynamic> layer = Map<String, dynamic>.from(
-      entry.value as Map,
-    );
-    if (layer['isVisible'] == false) continue;
-    if (layer['isRect'] == true) continue;
-    if (_mapDouble(layer['order'], 0) > turningOrder) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool _has3DOutsideOverflow(PresetPayloadV2 adapted) {
-  if (adapted.mode != '3d') return false;
-  final Map<String, dynamic> scene = adapted.scene;
-  for (final String key in <String>['models', 'lights', 'audios']) {
-    final dynamic raw = scene[key];
-    if (raw is! List) continue;
-    for (final dynamic item in raw) {
-      if (item is! Map) continue;
-      final String windowLayer =
-          (item['windowLayer']?.toString().toLowerCase() ?? 'inside');
-      if (windowLayer == 'outside') return true;
-    }
-  }
-  return false;
-}
-
-bool _previewNeedsOutsideOverlay({
-  required String mode,
-  required Map<String, dynamic> payload,
-}) {
-  final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-    payload,
-    fallbackMode: mode,
-  );
-  return _has2DOutsideOverflow(adapted) || _has3DOutsideOverflow(adapted);
-}
-
-bool _is360VideoPayload(
-  Map<String, dynamic> payload, {
-  required String fallbackMode,
-}) {
-  try {
-    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-      payload,
-      fallbackMode: fallbackMode,
-    );
-    if (adapted.mode != '360') return false;
-    return (adapted.scene['assetKind'] ?? 'image').toString() == 'video';
-  } catch (_) {
-    return false;
-  }
-}
-
-int _posterTimeMsFromPayload(
-  Map<String, dynamic> payload, {
-  required String fallbackMode,
-}) {
-  try {
-    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-      payload,
-      fallbackMode: fallbackMode,
-    );
-    final dynamic raw = adapted.controls['posterTimeMs'];
-    if (raw is int) return raw.clamp(0, 86400000);
-    if (raw is num) return raw.toInt().clamp(0, 86400000);
-    return int.tryParse(raw?.toString() ?? '')?.clamp(0, 86400000) ?? 0;
-  } catch (_) {
-    return 0;
-  }
 }
 
 class StandalonePostRoutePage extends StatefulWidget {
@@ -1820,15 +1477,15 @@ class _StandalonePublicProfileRoutePageState
                           final entry = entries[index];
                           final String title = entry['title']?.toString() ?? '';
                           final String meta = entry['meta']?.toString() ?? '';
-                          final String path = entry['tapPath']?.toString() ?? '/';
+                          final String path =
+                              entry['tapPath']?.toString() ?? '/';
                           final String mode = entry['mode']?.toString() ?? '2d';
                           final Map<String, dynamic> payload =
                               (entry['payload'] as Map?)
                                       ?.cast<String, dynamic>() ??
                                   const <String, dynamic>{};
-                          final String heroTag =
-                              entry['heroTag']?.toString() ??
-                                  'public-profile-card-$index';
+                          final String heroTag = entry['heroTag']?.toString() ??
+                              'public-profile-card-$index';
                           final bool showCollectionCount =
                               entry['showCollectionCount'] == true;
                           final String collectionCountText =
@@ -1859,7 +1516,6 @@ class _StandalonePublicProfileRoutePageState
                                 onAvatarTap: () =>
                                     _openPublicProfileRoute(context, profile),
                                 onMenuSelected: (_) {},
-                                outsideOverflowMax: _kCardOutsideOverflow,
                                 emptyChild: showCollectionCount
                                     ? Container(
                                         color: cs.surfaceContainerLow,
@@ -1977,9 +1633,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   _ShellTab _activeTab = _ShellTab.home;
   bool _navExpanded = false;
   bool _realNavHover = false;
-  bool _trackerNavHover = false;
-  Timer? _trackerNavDebounce;
-  VoidCallback? _trackerNavListener;
   AppUserProfile? _currentProfile;
   List<NotificationItem> _headerNotifications = const <NotificationItem>[];
   Map<String, AppUserProfile> _notificationActors =
@@ -2029,23 +1682,13 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   void initState() {
     super.initState();
     _activeTab = _tabFromSegment(widget.initialTab);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      TrackingService.instance.remapHeadBaselineToCurrentFrame();
-    });
     _loadProfile();
     _loadHeaderNotifications();
-    _trackerNavListener = _syncTrackerCursorHover;
-    TrackingService.instance.frameNotifier.addListener(_trackerNavListener!);
   }
 
   @override
   void dispose() {
     debugPrint('Disposing ShowFeedPage(tab=${_activeTab.name})');
-    _trackerNavDebounce?.cancel();
-    final listener = _trackerNavListener;
-    if (listener != null) {
-      TrackingService.instance.frameNotifier.removeListener(listener);
-    }
     super.dispose();
   }
 
@@ -2270,50 +1913,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     await _loadHeaderNotifications();
   }
 
-  void _syncTrackerCursorHover() {
-    if (!mounted) return;
-    final tracking = TrackingService.instance;
-    if (!tracking.trackerEnabled || !tracking.dartCursorEnabled) {
-      _setTrackerNavHover(false);
-      return;
-    }
-    if (!tracking.hasFreshFrame) {
-      _trackerNavDebounce?.cancel();
-      _setTrackerNavHover(false);
-      return;
-    }
-    final RenderBox? box =
-        _navRegionKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null) {
-      _setTrackerNavHover(false);
-      return;
-    }
-    final frame = tracking.frameNotifier.value;
-    if (frame.cursorX <= 0 && frame.cursorY <= 0) {
-      _setTrackerNavHover(false);
-      return;
-    }
-    final Offset local =
-        box.globalToLocal(Offset(frame.cursorX, frame.cursorY));
-    final bool insideStrict = local.dx >= 0 &&
-        local.dy >= 0 &&
-        local.dx <= box.size.width &&
-        local.dy <= box.size.height;
-    if (insideStrict) {
-      _trackerNavDebounce?.cancel();
-      _setTrackerNavHover(true);
-      return;
-    }
-    _trackerNavDebounce?.cancel();
-    _setTrackerNavHover(false);
-  }
-
-  void _setTrackerNavHover(bool value) {
-    if (_trackerNavHover == value) return;
-    _trackerNavHover = value;
-    _syncNavExpanded();
-  }
-
   void _setRealNavHover(bool value) {
     if (_realNavHover == value) return;
     _realNavHover = value;
@@ -2321,11 +1920,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   }
 
   void _syncNavExpanded() {
-    final tracking = TrackingService.instance;
-    final bool trackerHoverActive = tracking.trackerEnabled &&
-        tracking.dartCursorEnabled &&
-        _trackerNavHover;
-    final bool next = _realNavHover || trackerHoverActive;
+    final bool next = _realNavHover;
     if (_navExpanded == next) return;
     if (!mounted) return;
     setState(() => _navExpanded = next);
@@ -2347,23 +1942,18 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   }
 
   Future<void> _toggleBrowserFullscreen() async {
-    if (!kIsWeb) return;
     try {
-      if (html.document.fullscreenElement != null) {
-        html.document.exitFullscreen();
-        return;
-      }
-      final html.Element? root = html.document.documentElement;
-      if (root == null) return;
-      root.requestFullscreen();
+      final bool didToggle = await toggleBrowserFullscreen();
+      if (didToggle) return;
     } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Fullscreen is not available in this browser/device.'),
-        ),
-      );
+      // Fall through to the same unavailable message below.
     }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Fullscreen is not available in this browser/device.'),
+      ),
+    );
   }
 
   Future<void> _switchTab(_ShellTab tab) async {
@@ -2711,15 +2301,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                     ),
                                   ),
                                   IconButton(
-                                    tooltip: 'Recenter Parallax',
-                                    onPressed: () {
-                                      TrackingService.instance
-                                          .remapHeadBaselineToCurrentFrame();
-                                    },
-                                    icon: Icon(Icons.gps_fixed,
-                                        color: headerTitleColor),
-                                  ),
-                                  IconButton(
                                     tooltip: 'Reload',
                                     onPressed: _reloadActiveTab,
                                     icon: Icon(Icons.refresh,
@@ -2833,7 +2414,6 @@ class _HomeFeedTab extends StatefulWidget {
 }
 
 const double _kGridPreviewAspectRatio = 1852 / 1413;
-const double _kCardOutsideOverflow = 100;
 
 class _HomeFeedTabState extends State<_HomeFeedTab> {
   final AppRepository _repository = AppRepository.instance;
@@ -3306,6 +2886,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
 
     return Stack(
       children: [
+        const Positioned.fill(child: _GridWallpaperBackdrop()),
         Positioned.fill(
           child: NotificationListener<UserScrollNotification>(
             onNotification: (notification) {
@@ -3332,7 +2913,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
                 );
 
                 return GridView.builder(
-                  padding: EdgeInsets.only(
+                  padding: const EdgeInsets.only(
                     top: _chipRailTop + _chipRailHeight,
                   ),
                   itemCount: visiblePosts.length,
@@ -3928,6 +3509,7 @@ class _CollectionTabState extends State<_CollectionTab> {
 
     return Stack(
       children: [
+        const Positioned.fill(child: _GridWallpaperBackdrop()),
         Positioned.fill(
           child: NotificationListener<UserScrollNotification>(
             onNotification: (notification) {
@@ -3954,7 +3536,7 @@ class _CollectionTabState extends State<_CollectionTab> {
                 );
 
                 return GridView.builder(
-                  padding: EdgeInsets.only(
+                  padding: const EdgeInsets.only(
                     top: _chipRailTop + _chipRailHeight,
                   ),
                   itemCount: visibleCollections.length,
@@ -4116,7 +3698,6 @@ class _CollectionFeedTile extends StatelessWidget {
               if (value == 'visibility') onToggleVisibility?.call();
               if (value == 'delete') onDelete?.call();
             },
-            outsideOverflowMax: _kCardOutsideOverflow,
             emptyChild: Container(
               color: cs.surfaceContainerLow,
               child: Center(
@@ -4150,7 +3731,6 @@ class _SuggestionGridCard extends StatelessWidget {
     required this.onTap,
     this.onAvatarTap,
     this.avatarImage,
-    this.outsideOverflowMax = _kCardOutsideOverflow,
   });
 
   final String heroTag;
@@ -4167,7 +3747,6 @@ class _SuggestionGridCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onAvatarTap;
   final ImageProvider? avatarImage;
-  final double outsideOverflowMax;
 
   @override
   Widget build(BuildContext context) {
@@ -4191,7 +3770,6 @@ class _SuggestionGridCard extends StatelessWidget {
           menuItems: const <_BlurMenuEntry<String>>[],
           onMenuSelected: (_) {},
           onAvatarTap: onAvatarTap,
-          outsideOverflowMax: outsideOverflowMax,
         ),
       ),
     );
@@ -4268,7 +3846,8 @@ class _FeedTile extends StatelessWidget {
     }
     final String metaText =
         '${_friendlyCount(post.viewsCount)} views • ${_friendlyTime(post.preset.createdAt)}';
-    final Color accentColor = _cardAccentColorFromHex(post.preset.accentColorHex);
+    final Color accentColor =
+        _cardAccentColorFromHex(post.preset.accentColorHex);
 
     return Material(
       color: Colors.transparent,
@@ -4280,8 +3859,9 @@ class _FeedTile extends StatelessWidget {
             heroTag: heroTag,
             mode: previewMode,
             payload: previewPayload,
-            title:
-                post.preset.title.isNotEmpty ? post.preset.title : post.preset.name,
+            title: post.preset.title.isNotEmpty
+                ? post.preset.title
+                : post.preset.name,
             verticalUsername: _verticalUsernameForCard(post.author),
             priceText: _cardPriceLabel(
               isPaid: post.preset.isPaid,
@@ -4306,231 +3886,9 @@ class _FeedTile extends StatelessWidget {
               if (value == 'visibility') onToggleVisibility?.call();
               if (value == 'delete') onDelete?.call();
             },
-            outsideOverflowMax: _kCardOutsideOverflow,
           ),
         ),
       ),
-    );
-  }
-}
-
-enum _GridPresetPreviewLayerMode {
-  combined,
-  insideOnly,
-  outsideOnly,
-}
-
-class _OverlayParallaxPreview extends StatefulWidget {
-  const _OverlayParallaxPreview({
-    required this.mode,
-    required this.payload,
-    required this.borderRadius,
-    required this.clipper,
-    required this.pointerPassthrough,
-    required this.enableOutsideOverlay,
-    required this.outsideOverflowMax,
-    this.useGlobalTracking = true,
-    this.externalHeadPose,
-    this.emptyChild,
-    this.panoramaController,
-    this.show360PlayerControls = false,
-    this.previewPlaybackMode = false,
-    this.videoPlayActive = true,
-    this.posterTimeMs,
-    this.resetVideoOnActivate = false,
-    this.restorePosterOnDeactivate = false,
-    this.muted = true,
-    this.loop = true,
-  });
-
-  final String mode;
-  final Map<String, dynamic> payload;
-  final BorderRadius borderRadius;
-  final CustomClipper<Path>? clipper;
-  final bool pointerPassthrough;
-  final bool enableOutsideOverlay;
-  final double outsideOverflowMax;
-  final bool useGlobalTracking;
-  final Map<String, double>? externalHeadPose;
-  final Widget? emptyChild;
-  final PanoramaViewer360Controller? panoramaController;
-  final bool show360PlayerControls;
-  final bool previewPlaybackMode;
-  final bool videoPlayActive;
-  final int? posterTimeMs;
-  final bool resetVideoOnActivate;
-  final bool restorePosterOnDeactivate;
-  final bool muted;
-  final bool loop;
-
-  @override
-  State<_OverlayParallaxPreview> createState() =>
-      _OverlayParallaxPreviewState();
-}
-
-class _OverlayParallaxPreviewState extends State<_OverlayParallaxPreview> {
-  final LayerLink _link = LayerLink();
-  OverlayEntry? _outsideOverlayEntry;
-  Size _targetSize = Size.zero;
-  ModalRoute<dynamic>? _ownerRoute;
-
-  @override
-  void initState() {
-    super.initState();
-    _ensureOutsideOverlay();
-  }
-
-  @override
-  void didUpdateWidget(covariant _OverlayParallaxPreview oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.enableOutsideOverlay && _outsideOverlayEntry != null) {
-      _removeOutsideOverlay();
-      return;
-    }
-    if (widget.enableOutsideOverlay && _outsideOverlayEntry == null) {
-      _ensureOutsideOverlay();
-      return;
-    }
-    _outsideOverlayEntry?.markNeedsBuild();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final ModalRoute<dynamic>? nextRoute = ModalRoute.of(context);
-    if (nextRoute != _ownerRoute) {
-      _ownerRoute = nextRoute;
-      _outsideOverlayEntry?.markNeedsBuild();
-    }
-  }
-
-  @override
-  void dispose() {
-    _removeOutsideOverlay();
-    super.dispose();
-  }
-
-  void _ensureOutsideOverlay() {
-    if (!widget.enableOutsideOverlay) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !widget.enableOutsideOverlay) return;
-      if (_outsideOverlayEntry != null) return;
-      final overlay = Overlay.maybeOf(context, rootOverlay: true);
-      if (overlay == null) return;
-      _outsideOverlayEntry = OverlayEntry(
-        builder: (context) {
-          if (!widget.enableOutsideOverlay) return const SizedBox.shrink();
-          if (_ownerRoute != null && _ownerRoute!.isCurrent == false) {
-            return const SizedBox.shrink();
-          }
-          if (_targetSize.width <= 0 || _targetSize.height <= 0) {
-            return const SizedBox.shrink();
-          }
-          return IgnorePointer(
-            child: CompositedTransformFollower(
-              link: _link,
-              showWhenUnlinked: false,
-              offset: Offset.zero,
-              child: SizedBox(
-                width: _targetSize.width,
-                height: _targetSize.height,
-                child: _GridPresetPreview(
-                  mode: widget.mode,
-                  payload: widget.payload,
-                  borderRadius: BorderRadius.zero,
-                  clipper: widget.clipper,
-                  pointerPassthrough: true,
-                  layerMode: _GridPresetPreviewLayerMode.outsideOnly,
-                  outsideOverflowMax: widget.outsideOverflowMax,
-                  useGlobalTracking: widget.useGlobalTracking,
-                  externalHeadPose: widget.externalHeadPose,
-                  panoramaController: widget.panoramaController,
-                  show360PlayerControls: widget.show360PlayerControls,
-                  previewPlaybackMode: widget.previewPlaybackMode,
-                  videoPlayActive: widget.videoPlayActive,
-                  posterTimeMs: widget.posterTimeMs,
-                  resetVideoOnActivate: widget.resetVideoOnActivate,
-                  restorePosterOnDeactivate: widget.restorePosterOnDeactivate,
-                  muted: widget.muted,
-                  loop: widget.loop,
-                ),
-              ),
-            ),
-          );
-        },
-      );
-      overlay.insert(_outsideOverlayEntry!);
-    });
-  }
-
-  void _removeOutsideOverlay() {
-    _outsideOverlayEntry?.remove();
-    _outsideOverlayEntry = null;
-  }
-
-  void _updateTargetSize(Size next) {
-    if ((_targetSize.width - next.width).abs() < 0.01 &&
-        (_targetSize.height - next.height).abs() < 0.01) {
-      return;
-    }
-    _targetSize = next;
-    _outsideOverlayEntry?.markNeedsBuild();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!widget.enableOutsideOverlay) {
-      return _GridPresetPreview(
-        mode: widget.mode,
-        payload: widget.payload,
-        borderRadius: widget.borderRadius,
-        clipper: widget.clipper,
-        pointerPassthrough: widget.pointerPassthrough,
-        layerMode: _GridPresetPreviewLayerMode.insideOnly,
-        outsideOverflowMax: 0,
-        useGlobalTracking: widget.useGlobalTracking,
-        externalHeadPose: widget.externalHeadPose,
-        emptyChild: widget.emptyChild,
-        panoramaController: widget.panoramaController,
-        show360PlayerControls: widget.show360PlayerControls,
-        previewPlaybackMode: widget.previewPlaybackMode,
-        videoPlayActive: widget.videoPlayActive,
-        posterTimeMs: widget.posterTimeMs,
-        resetVideoOnActivate: widget.resetVideoOnActivate,
-        restorePosterOnDeactivate: widget.restorePosterOnDeactivate,
-        muted: widget.muted,
-        loop: widget.loop,
-      );
-    }
-    _ensureOutsideOverlay();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        _updateTargetSize(constraints.biggest);
-        return CompositedTransformTarget(
-          link: _link,
-          child: _GridPresetPreview(
-            mode: widget.mode,
-            payload: widget.payload,
-            borderRadius: widget.borderRadius,
-            clipper: widget.clipper,
-            pointerPassthrough: widget.pointerPassthrough,
-            layerMode: _GridPresetPreviewLayerMode.insideOnly,
-            outsideOverflowMax: widget.outsideOverflowMax,
-            useGlobalTracking: widget.useGlobalTracking,
-            externalHeadPose: widget.externalHeadPose,
-            emptyChild: widget.emptyChild,
-            panoramaController: widget.panoramaController,
-            show360PlayerControls: widget.show360PlayerControls,
-            previewPlaybackMode: widget.previewPlaybackMode,
-            videoPlayActive: widget.videoPlayActive,
-            posterTimeMs: widget.posterTimeMs,
-            resetVideoOnActivate: widget.resetVideoOnActivate,
-            restorePosterOnDeactivate: widget.restorePosterOnDeactivate,
-            muted: widget.muted,
-            loop: widget.loop,
-          ),
-        );
-      },
     );
   }
 }
@@ -4541,441 +3899,49 @@ class _SharedPresetPreview extends StatelessWidget {
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.clipper,
-    this.pointerPassthrough = true,
-    this.outsideOverflowMax = 100,
-    this.useGlobalTracking = true,
-    this.externalHeadPose,
     this.emptyChild,
-    this.panoramaController,
-    this.show360PlayerControls = false,
-    this.previewPlaybackMode = false,
-    this.videoPlayActive = true,
-    this.posterTimeMs,
-    this.resetVideoOnActivate = false,
-    this.restorePosterOnDeactivate = false,
-    this.muted = true,
-    this.loop = true,
-    this.allowOutsideOverflow = false,
+    this.fit = BoxFit.cover,
   });
 
   final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
   final CustomClipper<Path>? clipper;
-  final bool pointerPassthrough;
-  final double outsideOverflowMax;
-  final bool useGlobalTracking;
-  final Map<String, double>? externalHeadPose;
   final Widget? emptyChild;
-  final PanoramaViewer360Controller? panoramaController;
-  final bool show360PlayerControls;
-  final bool previewPlaybackMode;
-  final bool videoPlayActive;
-  final int? posterTimeMs;
-  final bool resetVideoOnActivate;
-  final bool restorePosterOnDeactivate;
-  final bool muted;
-  final bool loop;
-  final bool allowOutsideOverflow;
+  final BoxFit fit;
 
   @override
   Widget build(BuildContext context) {
-    return _OverlayParallaxPreview(
-      mode: mode,
-      payload: payload,
-      borderRadius: borderRadius,
-      clipper: clipper,
-      pointerPassthrough: pointerPassthrough,
-      enableOutsideOverlay: allowOutsideOverflow &&
-          _previewNeedsOutsideOverlay(
+    final String imageUrl =
+        imageUrlFromPayload(payload, fallbackMode: mode)?.trim() ?? '';
+    final Widget base = imageUrl.isEmpty
+        ? (emptyChild != null
+            ? SizedBox.expand(child: emptyChild!)
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerLow,
+                ),
+                child: Center(
+                  child: Icon(
+                    Icons.image_outlined,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    size: 28,
+                  ),
+                ),
+              ))
+        : PresetViewer(
             mode: mode,
             payload: payload,
-          ),
-      outsideOverflowMax: outsideOverflowMax,
-      useGlobalTracking: useGlobalTracking,
-      externalHeadPose: externalHeadPose,
-      emptyChild: emptyChild,
-      panoramaController: panoramaController,
-      show360PlayerControls: show360PlayerControls,
-      previewPlaybackMode: previewPlaybackMode,
-      videoPlayActive: videoPlayActive,
-      posterTimeMs: posterTimeMs,
-      resetVideoOnActivate: resetVideoOnActivate,
-      restorePosterOnDeactivate: restorePosterOnDeactivate,
-      muted: muted,
-      loop: loop,
-    );
-  }
-}
-
-class _GridPresetPreview extends StatelessWidget {
-  const _GridPresetPreview({
-    required this.mode,
-    required this.payload,
-    this.borderRadius = const BorderRadius.all(Radius.circular(16)),
-    this.clipper,
-    this.pointerPassthrough = true,
-    this.layerMode = _GridPresetPreviewLayerMode.combined,
-    this.outsideOverflowMax = 100,
-    this.useGlobalTracking = true,
-    this.externalHeadPose,
-    this.emptyChild,
-    this.panoramaController,
-    this.show360PlayerControls = false,
-    this.previewPlaybackMode = false,
-    this.videoPlayActive = true,
-    this.posterTimeMs,
-    this.resetVideoOnActivate = false,
-    this.restorePosterOnDeactivate = false,
-    this.muted = true,
-    this.loop = true,
-  });
-
-  final String mode;
-  final Map<String, dynamic> payload;
-  final BorderRadius borderRadius;
-  final CustomClipper<Path>? clipper;
-  final bool pointerPassthrough;
-  final _GridPresetPreviewLayerMode layerMode;
-  final double outsideOverflowMax;
-  final bool useGlobalTracking;
-  final Map<String, double>? externalHeadPose;
-  final Widget? emptyChild;
-  final PanoramaViewer360Controller? panoramaController;
-  final bool show360PlayerControls;
-  final bool previewPlaybackMode;
-  final bool videoPlayActive;
-  final int? posterTimeMs;
-  final bool resetVideoOnActivate;
-  final bool restorePosterOnDeactivate;
-  final bool muted;
-  final bool loop;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-      payload,
-      fallbackMode: mode,
-    );
-
-    if (adapted.scene.isEmpty) {
-      if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
-        return const SizedBox.shrink();
-      }
-      final Widget base = emptyChild != null
-          ? SizedBox.expand(child: emptyChild!)
-          : DecoratedBox(
-              decoration: BoxDecoration(color: cs.surfaceContainerLow),
-              child: Center(
-                child: Icon(
-                  adapted.mode == '3d'
-                      ? Icons.view_in_ar_outlined
-                      : adapted.mode == '360'
-                          ? Icons.panorama_outlined
-                          : Icons.layers_outlined,
-                  color: cs.onSurfaceVariant,
-                  size: 28,
-                ),
-              ),
-            );
-      if (clipper != null) {
-        return ClipPath(
-            clipper: clipper!, clipBehavior: Clip.antiAlias, child: base);
-      }
-      return ClipRRect(borderRadius: borderRadius, child: base);
-    }
-
-    if (adapted.mode == '2d') {
-      final WindowEffectLayerMode resolvedLayerMode = switch (layerMode) {
-        _GridPresetPreviewLayerMode.combined => WindowEffectLayerMode.combined,
-        _GridPresetPreviewLayerMode.insideOnly =>
-          WindowEffectLayerMode.insideOnly,
-        _GridPresetPreviewLayerMode.outsideOnly =>
-          WindowEffectLayerMode.outsideOnly,
-      };
-      return WindowEffect2DPreview(
-        mode: adapted.mode,
-        payload: adapted.toMap(),
-        borderRadius: borderRadius,
-        clipper: clipper,
-        layerMode: resolvedLayerMode,
-        outsideOverflowMax: outsideOverflowMax,
-        useGlobalTracking: useGlobalTracking,
-        externalHeadPose: externalHeadPose,
-      );
-    }
-
-    if (adapted.mode == '360') {
-      if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
-        return const SizedBox.shrink();
-      }
-      final Widget viewer = PanoramaViewer360(
-        initialPresetPayload: adapted.toMap(),
-        cleanView: true,
-        embedded: true,
-        controller: panoramaController,
-        showPlayerControls: show360PlayerControls,
-        previewPlaybackMode: previewPlaybackMode,
-        videoPlayActive: videoPlayActive,
-        posterTimeMs: posterTimeMs ??
-            _posterTimeMsFromPayload(
-              adapted.toMap(),
-              fallbackMode: adapted.mode,
-            ),
-        resetVideoOnActivate: resetVideoOnActivate,
-        restorePosterOnDeactivate: restorePosterOnDeactivate,
-        muted: muted,
-        loop: loop,
-        useGlobalTracking: useGlobalTracking,
-        externalHeadPose: externalHeadPose,
-        pointerPassthrough: pointerPassthrough,
-      );
-      if (clipper != null) {
-        return ClipPath(
-          clipper: clipper!,
-          clipBehavior: Clip.antiAlias,
-          child: viewer,
-        );
-      }
-      return ClipRRect(borderRadius: borderRadius, child: viewer);
-    }
-
-    if (adapted.mode != '3d') {
-      if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
-        return const SizedBox.shrink();
-      }
-      final Widget viewer = PresetViewer(
-        mode: adapted.mode,
-        payload: adapted.toMap(),
-        cleanView: true,
-        embedded: true,
-        disableAudio: true,
-        useGlobalTracking: useGlobalTracking,
-        headPose: externalHeadPose,
-        pointerPassthrough: pointerPassthrough,
-      );
-      if (clipper != null) {
-        return ClipPath(
-          clipper: clipper!,
-          clipBehavior: Clip.antiAlias,
-          child: viewer,
-        );
-      }
-      return ClipRRect(borderRadius: borderRadius, child: viewer);
-    }
-
-    return _build3DPreview(adapted);
-  }
-
-  Widget _build3DPreview(PresetPayloadV2 adapted) {
-    final bool hasWindowAssignments = _has3DWindowAssignments(adapted.scene);
-    if (!hasWindowAssignments) {
-      if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
-        return const SizedBox.shrink();
-      }
-      final Widget viewer = PresetViewer(
-        mode: adapted.mode,
-        payload: adapted.toMap(),
-        cleanView: true,
-        embedded: true,
-        disableAudio: true,
-        useGlobalTracking: useGlobalTracking,
-        headPose: externalHeadPose,
-        pointerPassthrough: pointerPassthrough,
-      );
-      if (layerMode == _GridPresetPreviewLayerMode.insideOnly) {
-        if (clipper != null) {
-          return ClipPath(
-            clipper: clipper!,
-            clipBehavior: Clip.antiAlias,
-            child: viewer,
+            fit: fit,
           );
-        }
-        return ClipRRect(borderRadius: borderRadius, child: viewer);
-      }
-      return viewer;
-    }
-
-    final Map<String, dynamic> insidePayload = adapted.toMap()
-      ..['scene'] = _filtered3dScene(adapted.scene, 'inside');
-    final Map<String, dynamic> outsidePayload = adapted.toMap()
-      ..['scene'] = _filtered3dScene(adapted.scene, 'outside');
-    final bool hasOutside = _sceneHasModelsOrLights(outsidePayload['scene']);
-
-    final Widget inside = (clipper != null)
-        ? ClipPath(
-            clipper: clipper!,
-            clipBehavior: Clip.antiAlias,
-            child: PresetViewer(
-              mode: adapted.mode,
-              payload: insidePayload,
-              cleanView: true,
-              embedded: true,
-              disableAudio: true,
-              useGlobalTracking: useGlobalTracking,
-              headPose: externalHeadPose,
-              pointerPassthrough: pointerPassthrough,
-            ),
-          )
-        : ClipRRect(
-            borderRadius: borderRadius,
-            child: PresetViewer(
-              mode: adapted.mode,
-              payload: insidePayload,
-              cleanView: true,
-              embedded: true,
-              disableAudio: true,
-              useGlobalTracking: useGlobalTracking,
-              headPose: externalHeadPose,
-              pointerPassthrough: pointerPassthrough,
-            ),
-          );
-
-    final Widget outside = Positioned(
-      left: -outsideOverflowMax,
-      right: -outsideOverflowMax,
-      top: -outsideOverflowMax,
-      bottom: -outsideOverflowMax,
-      child: IgnorePointer(
-        child: PresetViewer(
-          mode: adapted.mode,
-          payload: outsidePayload,
-          cleanView: true,
-          embedded: true,
-          disableAudio: true,
-          useGlobalTracking: useGlobalTracking,
-          headPose: externalHeadPose,
-          pointerPassthrough: true,
-        ),
-      ),
-    );
-
-    if (layerMode == _GridPresetPreviewLayerMode.insideOnly) {
-      return inside;
-    }
-    if (layerMode == _GridPresetPreviewLayerMode.outsideOnly) {
-      if (!hasOutside) return const SizedBox.shrink();
-      return Stack(
-        clipBehavior: Clip.none,
-        fit: StackFit.expand,
-        children: <Widget>[outside],
+    if (clipper != null) {
+      return ClipPath(
+        clipper: clipper!,
+        clipBehavior: Clip.antiAlias,
+        child: base,
       );
     }
-
-    return Stack(
-      clipBehavior: Clip.none,
-      fit: StackFit.expand,
-      children: <Widget>[
-        inside,
-        if (hasOutside) outside,
-      ],
-    );
-  }
-
-  bool _has3DWindowAssignments(Map<String, dynamic> scene) {
-    final models = scene['models'];
-    if (models is List) {
-      for (final model in models) {
-        if (model is Map && model['windowLayer'] != null) {
-          return true;
-        }
-      }
-    }
-    final lights = scene['lights'];
-    if (lights is List) {
-      for (final light in lights) {
-        if (light is Map && light['windowLayer'] != null) {
-          return true;
-        }
-      }
-    }
-    final audios = scene['audios'];
-    if (audios is List) {
-      for (final audio in audios) {
-        if (audio is Map && audio['windowLayer'] != null) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  Map<String, dynamic> _filtered3dScene(
-    Map<String, dynamic> scene,
-    String layer,
-  ) {
-    final Map<String, dynamic> next = Map<String, dynamic>.from(scene);
-    final List<Map<String, dynamic>> models = <Map<String, dynamic>>[];
-    final dynamic modelsRaw = scene['models'];
-    if (modelsRaw is List) {
-      for (final item in modelsRaw) {
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        final String windowLayer =
-            (map['windowLayer']?.toString().toLowerCase() ?? 'inside');
-        if (windowLayer == layer) {
-          models.add(map);
-        }
-      }
-    }
-
-    final List<Map<String, dynamic>> lights = <Map<String, dynamic>>[];
-    final dynamic lightsRaw = scene['lights'];
-    if (lightsRaw is List) {
-      for (final item in lightsRaw) {
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        final String windowLayer =
-            (map['windowLayer']?.toString().toLowerCase() ?? 'inside');
-        if (windowLayer == layer) {
-          lights.add(map);
-        }
-      }
-    }
-
-    final List<Map<String, dynamic>> audios = <Map<String, dynamic>>[];
-    final dynamic audiosRaw = scene['audios'];
-    if (audiosRaw is List) {
-      for (final item in audiosRaw) {
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        final String windowLayer =
-            (map['windowLayer']?.toString().toLowerCase() ?? 'inside');
-        if (windowLayer == layer) {
-          audios.add(map);
-        }
-      }
-    }
-
-    next['models'] = models;
-    next['lights'] = lights;
-    next['audios'] = audios;
-    final dynamic orderRaw = scene['renderOrder'];
-    if (orderRaw is List) {
-      final available = <String>{
-        ...models.map((e) => 'model:${e['id']}'),
-        ...lights.map((e) => 'light:${e['id']}'),
-        ...audios.map((e) => 'audio:${e['id']}'),
-      };
-      next['renderOrder'] = orderRaw
-          .map((e) => e.toString())
-          .where((token) => available.contains(token))
-          .toList();
-    }
-    return next;
-  }
-
-  bool _sceneHasModelsOrLights(dynamic rawScene) {
-    if (rawScene is! Map) return false;
-    final scene = Map<String, dynamic>.from(rawScene);
-    final models = scene['models'];
-    if (models is List && models.isNotEmpty) return true;
-    final lights = scene['lights'];
-    if (lights is List && lights.isNotEmpty) return true;
-    final audios = scene['audios'];
-    if (audios is List && audios.isNotEmpty) return true;
-    return false;
+    return ClipRRect(borderRadius: borderRadius, child: base);
   }
 }
 
@@ -4989,7 +3955,7 @@ Future<void> _openDetailFullscreenViewer(
     PageRouteBuilder<void>(
       settings: const RouteSettings(name: '/post/detail/fullscreen'),
       opaque: true,
-      transitionDuration: const Duration(milliseconds: 360),
+      transitionDuration: const Duration(milliseconds: 320 + 40),
       reverseTransitionDuration: const Duration(milliseconds: 320),
       pageBuilder: (context, animation, secondaryAnimation) {
         return _DetailFullscreenViewerPage(
@@ -5045,9 +4011,7 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                       mode: mode,
                       payload: payload,
                       borderRadius: BorderRadius.zero,
-                      pointerPassthrough: true,
-                      outsideOverflowMax: _kCardOutsideOverflow,
-                      allowOutsideOverflow: true,
+                      fit: BoxFit.contain,
                     ),
                   ),
                 ),
@@ -5082,8 +4046,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   final TextEditingController _commentController = TextEditingController();
   final FocusNode _immersiveFocusNode =
       FocusNode(debugLabel: 'detail-immersive-focus');
-  final PanoramaViewer360Controller _detail360Controller =
-      PanoramaViewer360Controller();
   final ScrollController _leftPaneScrollController = ScrollController();
   final ScrollController _rightPaneScrollController = ScrollController();
   final ScrollController _chipRailScrollController = ScrollController();
@@ -5128,7 +4090,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   @override
   void initState() {
     super.initState();
-    TrackingService.instance.remapHeadBaselineToCurrentFrame();
     _post = widget.initialPost;
     _loadComments();
     _loadSuggestions();
@@ -5141,17 +4102,12 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     _leftPaneScrollController.dispose();
     _rightPaneScrollController.dispose();
     _chipRailScrollController.dispose();
-    _detail360Controller.dispose();
     super.dispose();
   }
 
   String get _detailHeroTag => 'post-detail-hero-${_post.preset.id}';
 
   Future<void> _openFullscreenViewer() async {
-    if (_post.preset.mode == '360') {
-      _detail360Controller.toggleFullscreen();
-      return;
-    }
     await _openDetailFullscreenViewer(
       context,
       heroTag: _detailHeroTag,
@@ -5843,7 +4799,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     }
 
     Widget buildPreviewCard() {
-      final bool isPanorama = previewMode == '360';
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap:
@@ -5862,14 +4817,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   mode: previewMode,
                   payload: previewPayload,
                   borderRadius: BorderRadius.circular(16),
-                  pointerPassthrough: !isPanorama,
-                  outsideOverflowMax: _kCardOutsideOverflow,
-                  allowOutsideOverflow: true,
-                  panoramaController:
-                      isPanorama ? _detail360Controller : null,
-                  show360PlayerControls: isPanorama,
-                  muted: true,
-                  loop: true,
+                  fit: BoxFit.contain,
                 ),
               ),
               Positioned(
@@ -5880,15 +4828,14 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
                 ),
               ),
-              if (!isPanorama)
-                Positioned(
-                  right: 8,
-                  bottom: 8,
-                  child: IconButton.filledTonal(
-                    onPressed: _openFullscreenViewer,
-                    icon: const Icon(Icons.fullscreen, size: 20),
-                  ),
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: IconButton.filledTonal(
+                  onPressed: _openFullscreenViewer,
+                  icon: const Icon(Icons.fullscreen, size: 20),
                 ),
+              ),
             ],
           ),
         ),
@@ -6059,56 +5006,82 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox.shrink(),
-          buildFilterRail(),
-          const SizedBox(height: 8),
           Expanded(
-            child: _loadingSuggestions
-                ? const _TopEdgeLoadingPane(
-                    label: 'Loading suggestions...',
-                    backgroundColor: Colors.transparent,
-                    minHeight: 2,
-                  )
-                : ListView.separated(
-                    controller: _rightPaneScrollController,
-                    itemCount: suggestions.length.clamp(0, 24),
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final item = suggestions[index];
-                      final String mode =
-                          item.preset.thumbnailMode ?? item.preset.mode;
-                      final Map<String, dynamic> payload =
-                          item.preset.thumbnailPayload.isNotEmpty
-                              ? item.preset.thumbnailPayload
-                              : item.preset.payload;
-                      return _SuggestionGridCard(
-                        heroTag: 'post-detail-hero-${item.preset.id}',
-                        mode: mode,
-                        payload: payload,
-                        title: item.preset.title.isNotEmpty
-                            ? item.preset.title
-                            : item.preset.name,
-                        author: item.author?.displayName ?? 'Unknown creator',
-                        metaText:
-                            '${_friendlyCount(item.viewsCount)} views • ${_friendlyTime(item.preset.createdAt)}',
-                        priceText: _cardPriceLabel(
-                          isPaid: item.preset.isPaid,
-                          priceCents: item.preset.priceCents,
-                          viewerHasPaid: item.preset.viewerHasPaid,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: _loadingSuggestions
+                      ? const _TopEdgeLoadingPane(
+                          label: 'Loading suggestions...',
+                          backgroundColor: Colors.transparent,
+                          minHeight: 2,
+                        )
+                      : ListView.builder(
+                          controller: _rightPaneScrollController,
+                          padding: EdgeInsets.zero,
+                          itemCount: suggestions.length.clamp(0, 24),
+                          itemBuilder: (context, index) {
+                            final item = suggestions[index];
+                            final String mode =
+                                item.preset.thumbnailMode ?? item.preset.mode;
+                            final Map<String, dynamic> payload =
+                                item.preset.thumbnailPayload.isNotEmpty
+                                    ? item.preset.thumbnailPayload
+                                    : item.preset.payload;
+                            return _SuggestionGridCard(
+                              heroTag: 'post-detail-hero-${item.preset.id}',
+                              mode: mode,
+                              payload: payload,
+                              title: item.preset.title.isNotEmpty
+                                  ? item.preset.title
+                                  : item.preset.name,
+                              author:
+                                  item.author?.displayName ?? 'Unknown creator',
+                              metaText:
+                                  '${_friendlyCount(item.viewsCount)} views • ${_friendlyTime(item.preset.createdAt)}',
+                              priceText: _cardPriceLabel(
+                                isPaid: item.preset.isPaid,
+                                priceCents: item.preset.priceCents,
+                                viewerHasPaid: item.preset.viewerHasPaid,
+                              ),
+                              isVerified: item.author?.isVerified == true,
+                              accentColor: _cardAccentColorFromHex(
+                                item.preset.accentColorHex,
+                              ),
+                              avatarImage: (item.author?.avatarUrl ?? '')
+                                      .trim()
+                                      .isNotEmpty
+                                  ? NetworkImage(
+                                      item.author!.avatarUrl!.trim(),
+                                    )
+                                  : null,
+                              onAvatarTap: () =>
+                                  _openPublicProfileRoute(context, item.author),
+                              onTap: () => _openSuggestedPost(item),
+                            );
+                          },
                         ),
-                        isVerified: item.author?.isVerified == true,
-                        accentColor:
-                            _cardAccentColorFromHex(item.preset.accentColorHex),
-                        avatarImage:
-                            (item.author?.avatarUrl ?? '').trim().isNotEmpty
-                                ? NetworkImage(item.author!.avatarUrl!.trim())
-                                : null,
-                        onAvatarTap: () =>
-                            _openPublicProfileRoute(context, item.author),
-                        onTap: () => _openSuggestedPost(item),
-                        outsideOverflowMax: _kCardOutsideOverflow,
-                      );
-                    },
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.72),
+                          Colors.black.withValues(alpha: 0.0),
+                        ],
+                      ),
+                    ),
+                    child: buildFilterRail(),
                   ),
+                ),
+              ],
+            ),
           ),
         ],
       );
@@ -6121,15 +5094,10 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     }) {
       final Widget body =
           _commentsOpen ? buildCommentsPanel() : buildSuggestionsPanel();
-      final EdgeInsets panelPadding =
-          desktop ? const EdgeInsets.fromLTRB(10, 0, 2, 0) : EdgeInsets.zero;
       return SizedBox(
         width: desktop ? panelWidth : double.infinity,
         height: desktop ? viewportHeight : 640,
-        child: Padding(
-          padding: panelPadding,
-          child: body,
-        ),
+        child: body,
       );
     }
 
@@ -6176,7 +5144,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                     leftPadding: _kDetailContentPadding,
                     topPadding: _kDetailContentPadding,
                     desktop: desktop,
-                    panoramaController: _detail360Controller,
                   ),
                 ),
                 Positioned.fill(
@@ -6201,10 +5168,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 12),
                               buildRightPanel(
                                 desktop: true,
-                                viewportHeight: viewport.maxHeight - 28,
+                                viewportHeight: viewport.maxHeight,
                                 panelWidth: sideWidth,
                               ),
                             ],
@@ -6214,7 +5180,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 leftColumn,
-                                const SizedBox(height: 12),
                                 buildRightPanel(
                                   desktop: false,
                                   viewportHeight: viewport.maxHeight,
@@ -6281,340 +5246,111 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   final TextEditingController _collectionNameController =
       TextEditingController(text: 'My Collection');
 
-  int _modeIndex = 0;
-  int _postTypeIndex = 0; // 0 single, 1 collection
-  String? _collectionId;
-  int _editorSeed = 0;
+  int _postTypeIndex = 0;
   int _selectedItemIndex = -1;
-  bool _publishing = false;
+  bool _uploading = false;
   bool _openingComposer = false;
-  bool _studioUploadingImage = false;
-  bool _studioChromeVisible = true;
-  bool _editorFullscreen = false;
-  int _studioReanchorToken = 0;
-  Timer? _studioDraftDebounce;
-  bool _restoringStudioDraft = false;
-  String _lastStudioDraftDigest = '';
-  Map<String, dynamic>? _studioLivePayload;
-  String? _studioSelected2dLayerKey;
-  String? _studioSelected3dToken;
+  Map<String, dynamic>? _singlePayload;
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
-  final PanoramaViewer360Controller _studio360PreviewController =
-      PanoramaViewer360Controller();
-
-  @override
-  void initState() {
-    super.initState();
-    _collectionNameController.addListener(_schedulePersistStudioDraft);
-    unawaited(_restoreStudioDraft());
-  }
 
   @override
   void dispose() {
-    debugPrint('Disposing PostStudioTab');
-    _collectionNameController.removeListener(_schedulePersistStudioDraft);
-    _studioDraftDebounce?.cancel();
-    unawaited(_persistStudioDraftNow());
     _collectionNameController.dispose();
-    _studio360PreviewController.dispose();
     super.dispose();
   }
 
-  Future<void> _restoreStudioDraft() async {
-    if (_repository.currentUser == null) return;
+  Future<void> _uploadImage() async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _uploading = true);
     try {
-      final state = await _repository.fetchPostStudioDraftState();
-      if (!mounted || state == null || state.isEmpty) return;
-      final String digest = jsonEncode(state);
-      final List<CollectionDraftItem> restoredItems = <CollectionDraftItem>[];
-      final dynamic itemsRaw = state['draftItems'];
-      if (itemsRaw is List) {
-        for (final item in itemsRaw) {
-          if (item is! Map) continue;
-          final String mode = (item['mode'] ?? '2d').toString();
-          final String name = (item['name'] ?? '').toString().trim();
-          final dynamic snapshotRaw = item['snapshot'];
-          final Map<String, dynamic> snapshot = snapshotRaw is Map
-              ? Map<String, dynamic>.from(snapshotRaw)
-              : <String, dynamic>{};
-          restoredItems.add(
-            CollectionDraftItem(
-              mode: mode,
-              name: name.isEmpty
-                  ? '${mode.toUpperCase()} Item ${restoredItems.length + 1}'
-                  : name,
-              snapshot: snapshot,
-            ),
-          );
-        }
-      }
-
-      final dynamic payloadRaw = state['studioLivePayload'];
-      final Map<String, dynamic>? restoredPayload =
-          payloadRaw is Map ? Map<String, dynamic>.from(payloadRaw) : null;
-      final int restoredMode = ((state['modeIndex'] as num?)?.toInt() ?? 0)
-          .clamp(0, kSupportedRenderModes.length - 1)
-          .toInt();
-      final int restoredPostType =
-          ((state['postTypeIndex'] as num?)?.toInt() ?? 0).clamp(0, 1).toInt();
-      int restoredSelectedIndex =
-          (state['selectedItemIndex'] as num?)?.toInt() ?? -1;
-      if (restoredSelectedIndex >= restoredItems.length) {
-        restoredSelectedIndex = restoredItems.isEmpty ? -1 : 0;
-      }
-
-      _restoringStudioDraft = true;
+      final file = await pickDeviceFile(accept: 'image/*');
+      if (file == null) return;
+      final publicUrl = await _repository.uploadAssetBytes(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: 'post-images',
+      );
+      final payload = simpleImagePayload(
+        imageUrl: publicUrl,
+        editor: 'post_studio',
+        meta: <String, dynamic>{'sourceName': file.name},
+      );
+      if (!mounted) return;
       setState(() {
-        _modeIndex = restoredMode;
-        _postTypeIndex = restoredPostType;
-        _collectionId = state['collectionId']?.toString();
-        _selectedItemIndex = restoredSelectedIndex;
-        _studioLivePayload = restoredPayload;
-        _studioSelected2dLayerKey =
-            state['studioSelected2dLayerKey']?.toString();
-        _studioSelected3dToken = state['studioSelected3dToken']?.toString();
-        _draftItems
-          ..clear()
-          ..addAll(restoredItems);
-        _studioChromeVisible = state['studioChromeVisible'] != false;
-        _editorFullscreen = state['editorFullscreen'] == true;
-        _editorSeed++;
+        if (_postTypeIndex == 0) {
+          _singlePayload = payload;
+        } else {
+          final item = CollectionDraftItem(
+            mode: kImageRenderMode,
+            name: file.name.trim().isEmpty
+                ? 'Image ${_draftItems.length + 1}'
+                : file.name.trim(),
+            snapshot: payload,
+          );
+          _draftItems.add(item);
+          _selectedItemIndex = _draftItems.length - 1;
+        }
       });
-      final String collectionName =
-          (state['collectionName'] ?? '').toString().trim();
-      if (collectionName.isNotEmpty) {
-        _collectionNameController.text = collectionName;
-      }
-      _lastStudioDraftDigest = digest;
-    } catch (_) {
-      // Keep studio usable even if persisted draft read fails.
+    } catch (e) {
+      if (!mounted) return;
+      messenger
+          .showSnackBar(SnackBar(content: Text('Image upload failed: $e')));
     } finally {
-      _restoringStudioDraft = false;
+      if (mounted) setState(() => _uploading = false);
     }
   }
 
-  void _schedulePersistStudioDraft() {
-    if (_restoringStudioDraft) return;
-    _studioDraftDebounce?.cancel();
-    _studioDraftDebounce = Timer(const Duration(milliseconds: 900), () {
-      unawaited(_persistStudioDraftNow());
-    });
-  }
-
-  Map<String, dynamic> _serializeStudioDraftState() {
-    return <String, dynamic>{
-      'modeIndex': _modeIndex,
-      'postTypeIndex': _postTypeIndex,
-      'collectionId': _collectionId,
-      'collectionName': _collectionNameController.text.trim(),
-      'selectedItemIndex': _selectedItemIndex,
-      'studioLivePayload': _studioLivePayload,
-      'studioSelected2dLayerKey': _studioSelected2dLayerKey,
-      'studioSelected3dToken': _studioSelected3dToken,
-      'studioChromeVisible': _studioChromeVisible,
-      'editorFullscreen': _editorFullscreen,
-      'draftItems': _draftItems
-          .map(
-            (item) => <String, dynamic>{
-              'mode': item.mode,
-              'name': item.name,
-              'snapshot': item.snapshot,
-            },
-          )
-          .toList(),
-    };
-  }
-
-  Future<void> _persistStudioDraftNow() async {
-    if (_restoringStudioDraft || _repository.currentUser == null) return;
-    final Map<String, dynamic> state = _serializeStudioDraftState();
-    final String digest = jsonEncode(state);
-    if (digest == _lastStudioDraftDigest) return;
-    _lastStudioDraftDigest = digest;
-    try {
-      await _repository.upsertPostStudioDraftState(state);
-    } catch (_) {
-      // Non-blocking: editing should continue when persistence fails.
-    }
-  }
-
-  Future<void> _clearPersistedStudioDraft() async {
-    _lastStudioDraftDigest = '';
-    try {
-      await _repository.clearPostStudioDraftState();
-    } catch (_) {
-      // Ignore cleanup failures.
-    }
-  }
-
-  void _onStudioLivePayloadChanged(Map<String, dynamic> payload) {
-    if (!mounted) return;
-    final Map<String, dynamic> next = _cloneMap(payload);
-    setState(() {
-      _studioLivePayload = next;
-      if (_postTypeIndex == 1 &&
-          _selectedItemIndex >= 0 &&
-          _selectedItemIndex < _draftItems.length) {
-        final item = _draftItems[_selectedItemIndex];
-        _draftItems[_selectedItemIndex] = CollectionDraftItem(
-          mode: renderModeForIndex(_modeIndex),
-          name: item.name,
-          snapshot: _cloneMap(next),
-        );
-      }
-    });
-    _schedulePersistStudioDraft();
-  }
-
-  void _saveCurrentStudioItemToCollection() {
-    final messenger = ScaffoldMessenger.of(context);
-    final payload = _studioLivePayload;
-    if (payload == null || payload.isEmpty) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('No editor state to save yet.')),
-      );
-      return;
-    }
-    final mode = renderModeForIndex(_modeIndex);
-    setState(() {
-      if (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length) {
-        final current = _draftItems[_selectedItemIndex];
-        _draftItems[_selectedItemIndex] = CollectionDraftItem(
-          mode: mode,
-          name: current.name,
-          snapshot: payload,
-        );
-      } else {
-        final itemName = '${mode.toUpperCase()} Item ${_draftItems.length + 1}';
-        _draftItems.add(CollectionDraftItem(
-          mode: mode,
-          name: itemName,
-          snapshot: payload,
-        ));
-        _selectedItemIndex = _draftItems.length - 1;
-      }
-    });
-    _schedulePersistStudioDraft();
-    messenger.showSnackBar(
-      const SnackBar(
-          content: Text('Editor snapshot saved to collection item.')),
-    );
-  }
-
-  Future<void> _openStudioSingleComposer() async {
-    final payload = _studioLivePayload;
-    if (payload == null || payload.isEmpty) {
+  Future<void> _openSingleComposer() async {
+    final payload = _singlePayload;
+    if (payload == null ||
+        imageUrlFromPayload(payload, fallbackMode: kImageRenderMode) == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No editor state to compose yet.')),
-      );
-      return;
-    }
-    final now = DateTime.now();
-    final generatedName =
-        'Preset ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    await _openSingleComposer(
-      name: generatedName,
-      payload: payload,
-    );
-  }
-
-  void _onPresetSaved(String name, Map<String, dynamic> payload) {
-    if (_postTypeIndex == 0) {
-      unawaited(_openSingleComposer(name: name, payload: payload));
-      return;
-    }
-    final item = CollectionDraftItem(
-      mode: renderModeForIndex(_modeIndex),
-      name: name,
-      snapshot: payload,
-    );
-
-    setState(() {
-      if (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length) {
-        _draftItems[_selectedItemIndex] = item;
-      } else {
-        _draftItems.add(item);
-        _selectedItemIndex = _draftItems.length - 1;
-      }
-    });
-    _schedulePersistStudioDraft();
-  }
-
-  void _selectCollectionItem(int index) {
-    if (index < 0 || index >= _draftItems.length) return;
-    final item = _draftItems[index];
-    setState(() {
-      _selectedItemIndex = index;
-      _modeIndex = renderModeIndex(item.mode);
-      _studioLivePayload = item.snapshot;
-      _editorSeed++;
-    });
-    _schedulePersistStudioDraft();
-  }
-
-  void _removeCollectionItem(int index) {
-    setState(() {
-      _draftItems.removeAt(index);
-      if (_selectedItemIndex >= _draftItems.length) {
-        _selectedItemIndex = _draftItems.length - 1;
-      }
-      if (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length) {
-        _studioLivePayload = _draftItems[_selectedItemIndex].snapshot;
-      } else {
-        _studioLivePayload = null;
-      }
-      _editorSeed++;
-    });
-    _schedulePersistStudioDraft();
-  }
-
-  void _duplicateCollectionItem(int index) {
-    if (index < 0 || index >= _draftItems.length) return;
-    final source = _draftItems[index];
-    setState(() {
-      _draftItems.insert(
-        index + 1,
-        CollectionDraftItem(
-          mode: source.mode,
-          name: '${source.name} Copy',
-          snapshot: Map<String, dynamic>.from(source.snapshot),
-        ),
-      );
-      _selectedItemIndex = index + 1;
-      _studioLivePayload = _draftItems[_selectedItemIndex].snapshot;
-      _editorSeed++;
-    });
-    _schedulePersistStudioDraft();
-  }
-
-  void _createNewCollectionItem() {
-    setState(() {
-      _selectedItemIndex = -1;
-      _studioLivePayload = null;
-      _editorSeed++;
-    });
-    _schedulePersistStudioDraft();
-  }
-
-  Future<void> _publishCollection() async {
-    final messenger = ScaffoldMessenger.of(context);
-    if (_draftItems.isEmpty) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Add at least one preset to publish.')),
+        const SnackBar(content: Text('Upload one image first.')),
       );
       return;
     }
     if (_openingComposer) return;
-    setState(() {
-      _openingComposer = true;
-      _publishing = true;
-    });
+    setState(() => _openingComposer = true);
+    final now = DateTime.now();
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/studio/publish-single'),
+        builder: (_) => _PostCardComposerPage.single(
+          name:
+              'Image ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}',
+          mode: kImageRenderMode,
+          payload: payload,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _openingComposer = false);
+    if (result == true) {
+      setState(() => _singlePayload = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post published successfully.')),
+      );
+    }
+  }
+
+  Future<void> _publishCollection() async {
+    if (_draftItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Upload at least one collection image.')),
+      );
+      return;
+    }
+    if (_openingComposer) return;
+    setState(() => _openingComposer = true);
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         settings: const RouteSettings(name: '/post/studio/publish-collection'),
         builder: (_) => _PostCardComposerPage.collection(
-          collectionId: _collectionId,
+          collectionId: null,
           collectionName: _collectionNameController.text.trim(),
           collectionDescription: '',
           tags: const <String>[],
@@ -6624,2427 +5360,57 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         ),
       ),
     );
-    if (mounted) {
+    if (!mounted) return;
+    setState(() => _openingComposer = false);
+    if (result == true) {
       setState(() {
-        _openingComposer = false;
-        _publishing = false;
-      });
-    }
-    if (result == true && mounted) {
-      await _resetEditorDraftState();
-      await _clearPersistedStudioDraft();
-      if (!mounted) return;
-      setState(() {
-        _collectionId = null;
-        _selectedItemIndex = -1;
         _draftItems.clear();
-        _studioLivePayload = null;
-        _editorSeed++;
+        _selectedItemIndex = -1;
       });
-      _schedulePersistStudioDraft();
-      messenger.showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Collection published successfully.')),
       );
     }
   }
 
-  Future<void> _openSingleComposer({
-    required String name,
-    required Map<String, dynamic> payload,
-  }) async {
-    final messenger = ScaffoldMessenger.of(context);
-    if (_openingComposer) return;
+  void _removeCollectionItem(int index) {
+    if (index < 0 || index >= _draftItems.length) return;
     setState(() {
-      _openingComposer = true;
-      _publishing = true;
-    });
-    final result = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        settings: const RouteSettings(name: '/post/studio/publish-single'),
-        builder: (_) => _PostCardComposerPage.single(
-          name: name,
-          mode: renderModeForIndex(_modeIndex),
-          payload: payload,
-        ),
-      ),
-    );
-    if (mounted) {
-      setState(() {
-        _openingComposer = false;
-        _publishing = false;
-      });
-    }
-    if (result == true && mounted) {
-      await _resetEditorDraftState();
-      await _clearPersistedStudioDraft();
-      if (!mounted) return;
-      setState(() {
+      _draftItems.removeAt(index);
+      if (_draftItems.isEmpty) {
         _selectedItemIndex = -1;
-        _studioLivePayload = null;
-        _editorSeed++;
-      });
-      _schedulePersistStudioDraft();
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Post published successfully.')),
-      );
-    }
-  }
-
-  Future<void> _previewCollection() async {
-    if (_draftItems.isEmpty) return;
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        settings: const RouteSettings(name: '/post/studio/collection-preview'),
-        builder: (_) => _CollectionPreviewPage(items: List.from(_draftItems)),
-      ),
-    );
-  }
-
-  Future<void> _resetEditorDraftState() async {
-    try {
-      await _repository.upsertModeState(
-        mode: '2d',
-        state: <String, dynamic>{
-          'layers': <String, dynamic>{},
-          'controls': <String, dynamic>{},
-          'selectedAspect': null,
-        },
-      );
-      await _repository.upsertModeState(
-        mode: '3d',
-        state: <String, dynamic>{
-          'scene': <String, dynamic>{},
-          'controls': <String, dynamic>{},
-        },
-      );
-      await _repository.upsertModeState(
-        mode: '360',
-        state: <String, dynamic>{
-          'scene': default360Scene(),
-          'controls': default360Controls(),
-        },
-      );
-    } catch (_) {}
-  }
-
-  Widget _buildEditor() {
-    const bool persistPresets = false;
-    final activeItem =
-        (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length)
-            ? _draftItems[_selectedItemIndex]
-            : null;
-    final livePayload = _studioLivePayload;
-
-    if (_modeIndex == 0) {
-      return LayerMode(
-        key: ValueKey('studio-2d-$_editorSeed-${activeItem?.name ?? 'none'}'),
-        embedded: true,
-        embeddedStudio: true,
-        useGlobalTracking: true,
-        persistPresets: persistPresets,
-        initialPresetPayload: _payloadMatchesMode(livePayload, '2d')
-            ? livePayload
-            : (activeItem?.mode == '2d' ? activeItem!.snapshot : null),
-        onPresetSaved: _onPresetSaved,
-        onLivePayloadChanged: _onStudioLivePayloadChanged,
-        reanchorToken: _studioReanchorToken,
-        studioSurface: true,
-      );
-    }
-    if (_modeIndex == 1) {
-      return Engine3DPage(
-        key: ValueKey('studio-3d-$_editorSeed-${activeItem?.name ?? 'none'}'),
-        embedded: true,
-        embeddedStudio: true,
-        useGlobalTracking: true,
-        persistPresets: persistPresets,
-        initialPresetPayload: _payloadMatchesMode(livePayload, '3d')
-            ? livePayload
-            : (activeItem?.mode == '3d' ? activeItem!.snapshot : null),
-        onPresetSaved: _onPresetSaved,
-        onLivePayloadChanged: _onStudioLivePayloadChanged,
-        reanchorToken: _studioReanchorToken,
-        studioSurface: true,
-      );
-    }
-    return PanoramaViewer360(
-      key: ValueKey('studio-360-$_editorSeed-${activeItem?.name ?? 'none'}'),
-      embedded: true,
-      embeddedStudio: true,
-      useGlobalTracking: true,
-      initialPresetPayload: _payloadMatchesMode(livePayload, '360')
-          ? livePayload
-          : (activeItem?.mode == '360' ? activeItem!.snapshot : null),
-      controller: _studio360PreviewController,
-      showPlayerControls: true,
-      muted: true,
-      loop: true,
-      posterTimeMs: _mapInt(
-        _studio360Controls()['posterTimeMs'],
-        0,
-      ),
-      pointerPassthrough: false,
-      reanchorToken: _studioReanchorToken,
-      studioSurface: true,
-    );
-  }
-
-  Map<String, dynamic> _cloneMap(Map<String, dynamic> source) {
-    return jsonDecode(jsonEncode(source)) as Map<String, dynamic>;
-  }
-
-  double _toDouble(dynamic value, double fallback) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? fallback;
-  }
-
-  Widget _studioSlider({
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required ValueChanged<double> onChanged,
-  }) {
-    final double clamped = value.clamp(min, max).toDouble();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('$label: ${clamped.toStringAsFixed(3)}'),
-        Slider(
-          value: clamped,
-          min: min,
-          max: max,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-
-  bool _payloadMatchesMode(Map<String, dynamic>? payload, String mode) {
-    if (payload == null) return false;
-    final raw = payload['mode']?.toString().toLowerCase();
-    if (raw == null || raw.isEmpty) return true;
-    return raw == mode;
-  }
-
-  void _applyStudioPayload(Map<String, dynamic> payload,
-      {bool remount = false}) {
-    final mode = renderModeForIndex(_modeIndex);
-    setState(() {
-      _studioLivePayload = _cloneMap(payload);
-      if (_postTypeIndex == 1 &&
-          _selectedItemIndex >= 0 &&
-          _selectedItemIndex < _draftItems.length) {
-        final item = _draftItems[_selectedItemIndex];
-        _draftItems[_selectedItemIndex] = CollectionDraftItem(
-          mode: mode,
-          name: item.name,
-          snapshot: _cloneMap(payload),
-        );
+      } else if (_selectedItemIndex >= _draftItems.length) {
+        _selectedItemIndex = _draftItems.length - 1;
       }
-      if (remount) _editorSeed++;
     });
-    _schedulePersistStudioDraft();
   }
 
-  Map<String, dynamic> _studio2DScene() {
-    final dynamic payload = _studioLivePayload;
-    if (payload is! Map) return <String, dynamic>{};
-    final dynamic raw = payload['scene'];
-    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return <String, dynamic>{};
-  }
-
-  List<String> _studio2DLayerKeys() {
-    final scene = _studio2DScene();
-    final keys =
-        scene.entries.where((e) => e.value is Map).map((e) => e.key).toList();
-    keys.sort((a, b) {
-      final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
-      final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
-      final int cmp = aOrder.compareTo(bOrder);
-      if (cmp != 0) return cmp;
-      if (a == 'turning_point' && b != 'turning_point') return 1;
-      if (b == 'turning_point' && a != 'turning_point') return -1;
-      return a.compareTo(b);
-    });
-    return keys;
-  }
-
-  void _ensureStudio2DSelection() {
-    final keys = _studio2DLayerKeys();
-    if (keys.isEmpty) {
-      _studioSelected2dLayerKey = null;
-      return;
-    }
-    if (_studioSelected2dLayerKey != null &&
-        keys.contains(_studioSelected2dLayerKey)) {
-      return;
-    }
-    _studioSelected2dLayerKey = keys.first;
-  }
-
-  String _studioLayerPrefixFromImageSource(String imageUrl) {
-    final String trimmed = imageUrl.trim();
-    if (trimmed.isEmpty) return 'layer_';
-    try {
-      final Uri uri = Uri.parse(trimmed);
-      String candidate = uri.pathSegments.isNotEmpty
-          ? uri.pathSegments.last
-          : trimmed.split('/').last;
-      if (candidate.isEmpty) return 'layer_';
-      candidate = Uri.decodeComponent(candidate);
-      candidate = candidate.split('?').first.split('#').first;
-      final int dot = candidate.lastIndexOf('.');
-      if (dot > 0) {
-        candidate = candidate.substring(0, dot);
-      }
-      candidate = candidate.trim();
-      if (candidate.isEmpty) return 'layer_';
-      return '${candidate}_';
-    } catch (_) {
-      final String fallback = trimmed.split('/').last.split('?').first;
-      if (fallback.isEmpty) return 'layer_';
-      final int dot = fallback.lastIndexOf('.');
-      final String raw =
-          dot > 0 ? fallback.substring(0, dot).trim() : fallback.trim();
-      return raw.isEmpty ? 'layer_' : '${raw}_';
-    }
-  }
-
-  String _nextStudio2DLayerKey(String prefix, Map<String, dynamic> scene) {
-    String sanitized = prefix.trim();
-    if (sanitized.isEmpty) sanitized = 'layer_';
-    sanitized = sanitized
-        .replaceAll(RegExp(r'[^A-Za-z0-9_]+'), '_')
-        .replaceAll(RegExp(r'_+'), '_')
-        .toLowerCase();
-    if (!sanitized.endsWith('_')) {
-      sanitized = '${sanitized}_';
-    }
-    int index = 1;
-    while (scene.containsKey('$sanitized$index')) {
-      index++;
-    }
-    return '$sanitized$index';
-  }
-
-  void _normalizeStudio2DOrder(Map<String, dynamic> scene) {
-    final keys = scene.entries
-        .where((e) => e.key != 'turning_point' && e.value is Map)
-        .map((e) => e.key)
-        .toList();
-    keys.sort((a, b) {
-      final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
-      final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
-      return aOrder.compareTo(bOrder);
-    });
-    for (int i = 0; i < keys.length; i++) {
-      final raw = scene[keys[i]];
-      if (raw is! Map) continue;
-      scene[keys[i]] = Map<String, dynamic>.from(raw)..['order'] = i;
-    }
-  }
-
-  bool _isStudioUtilityLayerKey(String? key) {
-    if (key == null) return false;
-    return key == 'turning_point' ||
-        key == 'top_bezel' ||
-        key == 'bottom_bezel';
-  }
-
-  void _studioReorder2DLayer(int oldIndex, int newIndex) {
-    final scene = _studio2DScene();
-    final keys = _studio2DLayerKeys();
-    if (oldIndex < 0 || oldIndex >= keys.length) return;
-    if (newIndex < 0 || newIndex > keys.length) return;
-    if (newIndex > oldIndex) newIndex -= 1;
-    if (keys.isEmpty) return;
-    newIndex = newIndex.clamp(0, keys.length - 1);
-    final moved = keys.removeAt(oldIndex);
-    keys.insert(newIndex, moved);
-    for (int i = 0; i < keys.length; i++) {
-      final raw = scene[keys[i]];
-      if (raw is! Map) continue;
-      scene[keys[i]] = Map<String, dynamic>.from(raw)..['order'] = i;
-    }
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    payload['scene'] = scene;
-    _studioSelected2dLayerKey = moved;
-    _applyStudioPayload(payload);
-  }
-
-  void _studioAdd2DLayer(
-    bool textLayer, {
-    String imageUrl = '',
-    String sourceName = '',
-  }) {
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio2DScene();
-    if (!scene.containsKey('turning_point')) {
-      scene['turning_point'] = <String, dynamic>{
-        'x': 0.0,
-        'y': 0.0,
-        'scale': 1.0,
-        'order': 0.0,
-        'isVisible': false,
-        'isLocked': true,
-        'isText': false,
-        'canShift': false,
-        'canZoom': false,
-        'canTilt': false,
-        'minScale': 0.1,
-        'maxScale': 5.0,
-        'minX': -3000.0,
-        'maxX': 3000.0,
-        'minY': -3000.0,
-        'maxY': 3000.0,
-        'shiftSensMult': 1.0,
-        'zoomSensMult': 1.0,
-        'url': '',
-      };
-    }
-    _normalizeStudio2DOrder(scene);
-    final String inferredSource =
-        sourceName.trim().isNotEmpty ? sourceName.trim() : imageUrl;
-    final String prefix =
-        textLayer ? 'text_' : _studioLayerPrefixFromImageSource(inferredSource);
-    final key = _nextStudio2DLayerKey(prefix, scene);
-    scene[key] = <String, dynamic>{
-      'x': 0.0,
-      'y': 0.0,
-      'scale': 1.0,
-      'order': _studio2DLayerKeys().length,
-      'isVisible': true,
-      'isLocked': false,
-      'isText': textLayer,
-      'canShift': true,
-      'canZoom': true,
-      'canTilt': true,
-      'minScale': 0.1,
-      'maxScale': 5.0,
-      if (textLayer) ...{
-        'textValue': 'New Text',
-        'fontSize': 40.0,
-        'fontFamily': 'Poppins',
-      } else ...{
-        'url': imageUrl,
-      },
-    };
-    payload['scene'] = scene;
-    _studioSelected2dLayerKey = key;
-    _applyStudioPayload(payload);
-  }
-
-  void _studioDuplicate2DLayer() {
-    final key = _studioSelected2dLayerKey;
-    if (key == null || _isStudioUtilityLayerKey(key)) return;
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio2DScene();
-    final raw = scene[key];
-    if (raw is! Map) return;
-    _normalizeStudio2DOrder(scene);
-    final copyKey = _nextStudio2DLayerKey('${key}_copy_', scene);
-    final copy = _cloneMap(Map<String, dynamic>.from(raw));
-    copy['order'] = _studio2DLayerKeys().length;
-    scene[copyKey] = copy;
-    payload['scene'] = scene;
-    _studioSelected2dLayerKey = copyKey;
-    _applyStudioPayload(payload);
-  }
-
-  void _studioDelete2DLayer() {
-    final key = _studioSelected2dLayerKey;
-    if (key == null || _isStudioUtilityLayerKey(key)) return;
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio2DScene();
-    scene.remove(key);
-    _normalizeStudio2DOrder(scene);
-    payload['scene'] = scene;
-    final remaining = scene.entries
-        .where((e) => e.key != 'turning_point' && e.value is Map)
-        .map((e) => e.key)
-        .toList()
-      ..sort((a, b) {
-        final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
-        final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
-        return aOrder.compareTo(bOrder);
-      });
-    _studioSelected2dLayerKey = remaining.isEmpty ? null : remaining.first;
-    _applyStudioPayload(payload);
-  }
-
-  void _studioSet2DLayerField(String key, String field, dynamic value) {
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio2DScene();
-    final raw = scene[key];
-    if (raw is! Map) return;
-    scene[key] = Map<String, dynamic>.from(raw)..[field] = value;
-    payload['scene'] = scene;
-    _applyStudioPayload(payload);
-  }
-
-  Map<String, dynamic> _studio2DControls() {
-    final dynamic payload = _studioLivePayload;
-    if (payload is! Map) return <String, dynamic>{};
-    final dynamic raw = payload['controls'];
-    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return <String, dynamic>{};
-  }
-
-  void _studioSet2DControlField(String field, dynamic value) {
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final controls = _studio2DControls();
-    controls[field] = value;
-    payload['controls'] = controls;
-    _applyStudioPayload(payload);
-  }
-
-  void _studioRecenter2DParallax() {
-    final frame = TrackingService.instance.frameNotifier.value;
-    final controls = _studio2DControls();
-    controls['anchorHeadX'] = frame.headX;
-    controls['anchorHeadY'] = frame.headY;
-    controls['zBase'] = frame.headZ.abs() < 0.000001
-        ? _toDouble(controls['zBase'], 0.2)
-        : frame.headZ;
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    payload['controls'] = controls;
-    _applyStudioPayload(payload);
-  }
-
-  Future<void> _studioPromptAddImageUrl() async {
-    final TextEditingController controller = TextEditingController();
-    final String? url = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Image URL'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'https://example.com/image.png',
-          ),
+  Widget _buildPreview(ColorScheme cs) {
+    final Map<String, dynamic>? payload = _postTypeIndex == 0
+        ? _singlePayload
+        : (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length
+            ? _draftItems[_selectedItemIndex].snapshot
+            : (_draftItems.isNotEmpty ? _draftItems.first.snapshot : null));
+    if (payload == null) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (url == null || url.trim().isEmpty) return;
-    _studioAdd2DLayer(false, imageUrl: url.trim());
-  }
-
-  Future<void> _studioUpload2DImage() async {
-    if (_studioUploadingImage) return;
-    setState(() => _studioUploadingImage = true);
-    try {
-      final picked = await pickDeviceFile(accept: 'image/*');
-      if (picked == null) return;
-      final String publicUrl = await _repository.uploadAssetBytes(
-        bytes: picked.bytes,
-        fileName: picked.name,
-        contentType: picked.contentType,
-        folder: 'studio-layers',
-      );
-      if (!mounted) return;
-      _studioAdd2DLayer(
-        false,
-        imageUrl: publicUrl,
-        sourceName: picked.name,
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Image uploaded to studio layer.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Image upload failed: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _studioUploadingImage = false);
-      }
-    }
-  }
-
-  Map<String, dynamic> _studio3DScene() {
-    final dynamic payload = _studioLivePayload;
-    if (payload is! Map) return <String, dynamic>{};
-    final dynamic raw = payload['scene'];
-    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return <String, dynamic>{};
-  }
-
-  List<String> _studioSceneTokens(Map<String, dynamic> scene) {
-    final List<String> tokens = <String>[];
-    final models = scene['models'];
-    if (models is List) {
-      for (final item in models.whereType<Map>()) {
-        final id = (item['id'] ?? '').toString();
-        if (id.isNotEmpty) tokens.add('model:$id');
-      }
-    }
-    final lights = scene['lights'];
-    if (lights is List) {
-      for (final item in lights.whereType<Map>()) {
-        final id = (item['id'] ?? '').toString();
-        if (id.isNotEmpty) tokens.add('light:$id');
-      }
-    }
-    final audios = scene['audios'];
-    if (audios is List) {
-      for (final item in audios.whereType<Map>()) {
-        final id = (item['id'] ?? '').toString();
-        if (id.isNotEmpty) tokens.add('audio:$id');
-      }
-    }
-    return tokens;
-  }
-
-  List<String> _studioOrdered3DTokens() {
-    final scene = _studio3DScene();
-    final available = _studioSceneTokens(scene);
-    final rawOrder = scene['renderOrder'];
-    final ordered = rawOrder is List
-        ? rawOrder.map((e) => e.toString()).where(available.contains).toList()
-        : <String>[];
-    for (final token in available) {
-      if (!ordered.contains(token)) ordered.add(token);
-    }
-    return ordered;
-  }
-
-  void _studioReorder3DEntity(int oldIndex, int newIndex) {
-    final order = _studioOrdered3DTokens();
-    if (oldIndex < 0 || oldIndex >= order.length) return;
-    if (newIndex < 0 || newIndex > order.length) return;
-    if (newIndex > oldIndex) newIndex -= 1;
-    if (order.isEmpty) return;
-    newIndex = newIndex.clamp(0, order.length - 1);
-    final moved = order.removeAt(oldIndex);
-    order.insert(newIndex, moved);
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio3DScene()..['renderOrder'] = order;
-    payload['scene'] = scene;
-    _studioSelected3dToken = moved;
-    _applyStudioPayload(payload);
-  }
-
-  List<Map<String, dynamic>> _studioEntityListForType(
-    Map<String, dynamic> scene,
-    String type,
-  ) {
-    final key = type == 'model'
-        ? 'models'
-        : type == 'light'
-            ? 'lights'
-            : 'audios';
-    final raw = scene[key];
-    if (raw is! List) return <Map<String, dynamic>>[];
-    return raw
-        .map((e) =>
-            e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
-        .toList();
-  }
-
-  void _studioSetEntityListForType(
-    Map<String, dynamic> scene,
-    String type,
-    List<Map<String, dynamic>> list,
-  ) {
-    final key = type == 'model'
-        ? 'models'
-        : type == 'light'
-            ? 'lights'
-            : 'audios';
-    scene[key] = list;
-  }
-
-  String _studioNextEntityId(Map<String, dynamic> scene, String type) {
-    final list = _studioEntityListForType(scene, type);
-    int index = 1;
-    while (list.any((e) => (e['id'] ?? '').toString() == '${type}_$index')) {
-      index++;
-    }
-    return '${type}_$index';
-  }
-
-  void _studioAdd3DEntity(String type) {
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio3DScene();
-    final list = _studioEntityListForType(scene, type);
-    final id = _studioNextEntityId(scene, type);
-    if (type == 'model') {
-      list.add(<String, dynamic>{
-        'id': id,
-        'name': 'Model $id',
-        'url': '',
-        'position': <double>[0, 0, 0],
-        'rotation': <double>[0, 0, 0],
-        'scale': <double>[1, 1, 1],
-        'visible': true,
-        'windowLayer': 'inside',
-      });
-    } else if (type == 'light') {
-      list.add(<String, dynamic>{
-        'id': id,
-        'color': 'ffffff',
-        'intensity': 10,
-        'position': <double>[0, 5, 0],
-        'scale': 1,
-        'ghost': false,
-        'windowLayer': 'inside',
-      });
-    } else {
-      list.add(<String, dynamic>{
-        'id': id,
-        'url': '',
-        'volume': 1,
-        'position': <double>[0, 0, 0],
-        'ghost': false,
-        'windowLayer': 'inside',
-      });
-    }
-    _studioSetEntityListForType(scene, type, list);
-    final order = _studioOrdered3DTokens()..add('$type:$id');
-    scene['renderOrder'] = order.toSet().toList();
-    scene.putIfAbsent('sunIntensity', () => 2.0);
-    scene.putIfAbsent('ambLight', () => 0.5);
-    scene.putIfAbsent('bloomIntensity', () => 1.0);
-    scene.putIfAbsent('shadowQuality', () => '512');
-    scene.putIfAbsent('shadowSoftness', () => 1.0);
-    scene.putIfAbsent('envRot', () => 0.0);
-    scene.putIfAbsent('initPos', () => <double>[0, 2, 10]);
-    scene.putIfAbsent('initRot', () => <double>[0, 0, 0]);
-    payload['scene'] = scene;
-    _studioSelected3dToken = '$type:$id';
-    _applyStudioPayload(payload);
-  }
-
-  void _studioDuplicate3DEntity(String token) {
-    final parts = token.split(':');
-    if (parts.length != 2) return;
-    final type = parts.first;
-    final id = parts.last;
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio3DScene();
-    final list = _studioEntityListForType(scene, type);
-    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
-    if (index < 0) return;
-    final copy = _cloneMap(list[index]);
-    final newId = _studioNextEntityId(scene, type);
-    copy['id'] = newId;
-    list.insert(index + 1, copy);
-    _studioSetEntityListForType(scene, type, list);
-    final order = _studioOrdered3DTokens();
-    final orderIndex = order.indexOf(token);
-    if (orderIndex >= 0) {
-      order.insert(orderIndex + 1, '$type:$newId');
-    } else {
-      order.add('$type:$newId');
-    }
-    scene['renderOrder'] = order;
-    payload['scene'] = scene;
-    _studioSelected3dToken = '$type:$newId';
-    _applyStudioPayload(payload);
-  }
-
-  void _studioDelete3DEntity(String token) {
-    final parts = token.split(':');
-    if (parts.length != 2) return;
-    final type = parts.first;
-    final id = parts.last;
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio3DScene();
-    final list = _studioEntityListForType(scene, type)
-      ..removeWhere((e) => (e['id'] ?? '').toString() == id);
-    _studioSetEntityListForType(scene, type, list);
-    final order = _studioOrdered3DTokens()..remove(token);
-    scene['renderOrder'] = order;
-    payload['scene'] = scene;
-    if (_studioSelected3dToken == token) {
-      _studioSelected3dToken = order.isEmpty ? null : order.first;
-    }
-    _applyStudioPayload(payload);
-  }
-
-  void _studioSet3DWindowLayer(String token, String layer) {
-    final parts = token.split(':');
-    if (parts.length != 2) return;
-    final type = parts.first;
-    final id = parts.last;
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio3DScene();
-    final list = _studioEntityListForType(scene, type);
-    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
-    if (index < 0) return;
-    list[index] = Map<String, dynamic>.from(list[index])
-      ..['windowLayer'] = layer;
-    _studioSetEntityListForType(scene, type, list);
-    payload['scene'] = scene;
-    _applyStudioPayload(payload);
-  }
-
-  Map<String, dynamic> _studio3DControls() {
-    final dynamic payload = _studioLivePayload;
-    if (payload is! Map) return <String, dynamic>{};
-    final dynamic raw = payload['controls'];
-    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return <String, dynamic>{};
-  }
-
-  void _studioSet3DControlField(String field, dynamic value) {
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final controls = _studio3DControls();
-    controls[field] = value;
-    payload['controls'] = controls;
-    _applyStudioPayload(payload);
-  }
-
-  void _studioSet3DSceneField(String field, dynamic value) {
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio3DScene();
-    scene[field] = value;
-    payload['scene'] = scene;
-    _applyStudioPayload(payload);
-  }
-
-  void _studioSet3DEntityField({
-    required String token,
-    required String field,
-    required dynamic value,
-  }) {
-    final parts = token.split(':');
-    if (parts.length != 2) return;
-    final type = parts.first;
-    final id = parts.last;
-    final payload = _cloneMap(_studioLivePayload ?? <String, dynamic>{});
-    final scene = _studio3DScene();
-    final list = _studioEntityListForType(scene, type);
-    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
-    if (index < 0) return;
-    list[index] = Map<String, dynamic>.from(list[index])..[field] = value;
-    _studioSetEntityListForType(scene, type, list);
-    payload['scene'] = scene;
-    _applyStudioPayload(payload);
-  }
-
-  double _studioVectorComponent(dynamic raw, int index, double fallback) {
-    if (raw is List && index >= 0 && index < raw.length) {
-      return _toDouble(raw[index], fallback);
-    }
-    if (raw is num) return raw.toDouble();
-    return fallback;
-  }
-
-  void _studioSet3DEntityVectorComponent({
-    required String token,
-    required String field,
-    required int index,
-    required double value,
-  }) {
-    final scene = _studio3DScene();
-    final entity = _studioEntityByToken(scene, token);
-    if (entity == null) return;
-    final dynamic raw = entity[field];
-    final List<double> next = <double>[0, 0, 0];
-    if (raw is List) {
-      for (int i = 0; i < raw.length && i < next.length; i++) {
-        next[i] = _toDouble(raw[i], 0);
-      }
-    } else if (field == 'scale' && raw is num) {
-      final double uniform = raw.toDouble();
-      for (int i = 0; i < next.length; i++) {
-        next[i] = uniform;
-      }
-    }
-    if (index >= 0 && index < next.length) {
-      next[index] = value;
-    }
-    _studioSet3DEntityField(
-      token: token,
-      field: field,
-      value: next,
-    );
-  }
-
-  void _studioSet3DSceneVectorComponent({
-    required String field,
-    required int index,
-    required double value,
-    List<double> fallback = const <double>[0, 0, 0],
-  }) {
-    final scene = _studio3DScene();
-    final dynamic raw = scene[field];
-    final List<double> next = <double>[
-      fallback.isNotEmpty ? fallback[0] : 0,
-      fallback.length > 1 ? fallback[1] : 0,
-      fallback.length > 2 ? fallback[2] : 0,
-    ];
-    if (raw is List) {
-      for (int i = 0; i < raw.length && i < next.length; i++) {
-        next[i] = _toDouble(raw[i], next[i]);
-      }
-    }
-    if (index >= 0 && index < next.length) {
-      next[index] = value;
-    }
-    _studioSet3DSceneField(field, next);
-  }
-
-  Map<String, dynamic> _studio360Scene() {
-    final dynamic payload = _studioLivePayload;
-    final dynamic raw = payload is Map ? payload['scene'] : null;
-    if (raw is Map<String, dynamic>) {
-      return <String, dynamic>{
-        ...default360Scene(),
-        ...Map<String, dynamic>.from(raw),
-      };
-    }
-    if (raw is Map) {
-      return <String, dynamic>{
-        ...default360Scene(),
-        ...Map<String, dynamic>.from(raw),
-      };
-    }
-    return default360Scene();
-  }
-
-  Map<String, dynamic> _studio360Controls() {
-    final dynamic payload = _studioLivePayload;
-    final dynamic raw = payload is Map ? payload['controls'] : null;
-    if (raw is Map<String, dynamic>) {
-      return <String, dynamic>{
-        ...default360Controls(),
-        ...Map<String, dynamic>.from(raw),
-      };
-    }
-    if (raw is Map) {
-      return <String, dynamic>{
-        ...default360Controls(),
-        ...Map<String, dynamic>.from(raw),
-      };
-    }
-    return default360Controls();
-  }
-
-  void _studioSet360SceneField(String field, dynamic value) {
-    final Map<String, dynamic> payload = _cloneMap(
-      _studioLivePayload ?? blank360Payload(editor: 'studio'),
-    );
-    payload['scene'] = _studio360Scene()..[field] = value;
-    _applyStudioPayload(payload);
-  }
-
-  void _studioSet360ControlField(String field, dynamic value) {
-    final Map<String, dynamic> payload = _cloneMap(
-      _studioLivePayload ?? blank360Payload(editor: 'studio'),
-    );
-    payload['controls'] = _studio360Controls()..[field] = value;
-    _applyStudioPayload(payload);
-  }
-
-  Future<void> _studioPromptAdd360Url() async {
-    final TextEditingController controller = TextEditingController(
-      text: (_studio360Scene()['assetUrl'] ?? '').toString(),
-    );
-    final String? url = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Set 360 Asset URL'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'https://example.com/panorama.jpg',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Apply'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (url == null || url.trim().isEmpty) return;
-    _studioSet360SceneField('assetUrl', url.trim());
-    _studioSet360SceneField(
-      'assetKind',
-      infer360AssetKind(fileName: url.trim(), contentType: ''),
-    );
-  }
-
-  Future<void> _studioUpload360Asset() async {
-    if (_studioUploadingImage) return;
-    setState(() => _studioUploadingImage = true);
-    try {
-      final picked = await pickDeviceFile(accept: 'image/*,video/*');
-      if (picked == null) return;
-      final String publicUrl = await _repository.uploadAssetBytes(
-        bytes: picked.bytes,
-        fileName: picked.name,
-        contentType: picked.contentType,
-        folder: 'studio-360',
-      );
-      if (!mounted) return;
-      _studioSet360SceneField('assetUrl', publicUrl);
-      _studioSet360SceneField(
-        'assetKind',
-        infer360AssetKind(
-          fileName: picked.name,
-          contentType: picked.contentType,
-        ),
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('360 asset uploaded.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('360 upload failed: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _studioUploadingImage = false);
-      }
-    }
-  }
-
-  Map<String, dynamic>? _studioEntityByToken(
-    Map<String, dynamic> scene,
-    String token,
-  ) {
-    final parts = token.split(':');
-    if (parts.length != 2) return null;
-    final type = parts.first;
-    final id = parts.last;
-    final list = _studioEntityListForType(scene, type);
-    for (final item in list) {
-      if ((item['id'] ?? '').toString() == id) {
-        return Map<String, dynamic>.from(item);
-      }
-    }
-    return null;
-  }
-
-  String _studioEntityLabel(String token, Map<String, dynamic> scene) {
-    final parts = token.split(':');
-    if (parts.length != 2) return token;
-    final String type = parts.first;
-    final String id = parts.last;
-    final Map<String, dynamic>? entity = _studioEntityByToken(scene, token);
-    final String named =
-        (entity?['name'] ?? entity?['id'] ?? '').toString().trim();
-    if (named.isNotEmpty) return named;
-    final String fallback = type == 'model'
-        ? 'Model'
-        : type == 'light'
-            ? 'Light'
-            : 'Audio';
-    return '$fallback $id';
-  }
-
-  Widget _buildStudioControlsPanel(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    if (_modeIndex == 0) {
-      final keys = _studio2DLayerKeys();
-      final controls = _studio2DControls();
-      final scene = _studio2DScene();
-      final dynamic selectedLayerRaw = _studioSelected2dLayerKey == null
-          ? null
-          : scene[_studioSelected2dLayerKey!];
-      final Map<String, dynamic>? selectedLayer = selectedLayerRaw is Map
-          ? Map<String, dynamic>.from(selectedLayerRaw)
-          : null;
-      final dynamic turningRaw = scene['turning_point'];
-      final Map<String, dynamic> turningPoint = turningRaw is Map
-          ? Map<String, dynamic>.from(turningRaw)
-          : <String, dynamic>{};
-      _ensureStudio2DSelection();
-      return Container(
-        color: cs.surface,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('2D Layers',
-                style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _studioPromptAddImageUrl,
-                  icon:
-                      const Icon(Icons.add_photo_alternate_outlined, size: 16),
-                  label: const Text('Image URL'),
-                ),
-                OutlinedButton.icon(
-                  onPressed:
-                      _studioUploadingImage ? null : _studioUpload2DImage,
-                  icon: const Icon(Icons.upload_file_outlined, size: 16),
-                  label:
-                      Text(_studioUploadingImage ? 'Uploading...' : 'Upload'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => _studioAdd2DLayer(true),
-                  icon: const Icon(Icons.text_fields, size: 16),
-                  label: const Text('Text'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: (_studioSelected2dLayerKey == null ||
-                          _isStudioUtilityLayerKey(_studioSelected2dLayerKey))
-                      ? null
-                      : _studioDuplicate2DLayer,
-                  icon: const Icon(Icons.copy_outlined, size: 16),
-                  label: const Text('Duplicate'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: (_studioSelected2dLayerKey == null ||
-                          _isStudioUtilityLayerKey(_studioSelected2dLayerKey))
-                      ? null
-                      : _studioDelete2DLayer,
-                  icon: const Icon(Icons.delete_outline, size: 16),
-                  label: const Text('Delete'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (keys.isEmpty)
-              const SizedBox(
-                height: 120,
-                child: Center(child: Text('No layers')),
-              )
-            else
-              SizedBox(
-                height: 180,
-                child: ReorderableListView.builder(
-                  buildDefaultDragHandles: false,
-                  itemCount: keys.length,
-                  onReorder: _studioReorder2DLayer,
-                  itemBuilder: (context, index) {
-                    final key = keys[index];
-                    final scene = _studio2DScene();
-                    final layer = scene[key];
-                    final visible =
-                        !(layer is Map && layer['isVisible'] == false);
-                    final locked = layer is Map && layer['isLocked'] == true;
-                    return ListTile(
-                      key: ValueKey<String>('studio-2d-$key'),
-                      selected: _studioSelected2dLayerKey == key,
-                      selectedTileColor: cs.primary.withValues(alpha: 0.16),
-                      title: Text(key,
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text(locked ? 'Locked' : 'Unlocked'),
-                      trailing: SizedBox(
-                        width: 132,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            IconButton(
-                              onPressed: () => _studioSet2DLayerField(
-                                key,
-                                'isVisible',
-                                !visible,
-                              ),
-                              icon: Icon(
-                                visible
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                                size: 18,
-                              ),
-                            ),
-                            IconButton(
-                              onPressed: () => _studioSet2DLayerField(
-                                key,
-                                'isLocked',
-                                !locked,
-                              ),
-                              icon: Icon(
-                                locked ? Icons.lock_outline : Icons.lock_open,
-                                size: 18,
-                              ),
-                            ),
-                            ReorderableDragStartListener(
-                              index: index,
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 4),
-                                child: Icon(Icons.drag_handle, size: 18),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      onTap: () =>
-                          setState(() => _studioSelected2dLayerKey = key),
-                    );
-                  },
-                ),
-              ),
-            const SizedBox(height: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (selectedLayer != null) ...[
-                  Text(
-                    'Layer: ${_studioSelected2dLayerKey ?? ''}',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 6),
-                  if (selectedLayer['isText'] == true)
-                    TextFormField(
-                      initialValue:
-                          (selectedLayer['textValue'] ?? '').toString(),
-                      onChanged: (value) => _studioSet2DLayerField(
-                        _studioSelected2dLayerKey!,
-                        'textValue',
-                        value,
-                      ),
-                      decoration: const InputDecoration(labelText: 'Text'),
-                    )
-                  else
-                    TextFormField(
-                      initialValue: (selectedLayer['url'] ?? '').toString(),
-                      onChanged: (value) => _studioSet2DLayerField(
-                        _studioSelected2dLayerKey!,
-                        'url',
-                        value.trim(),
-                      ),
-                      decoration: const InputDecoration(labelText: 'Image URL'),
-                    ),
-                  _studioSlider(
-                    label: 'X',
-                    min: -1500,
-                    max: 1500,
-                    value: _toDouble(selectedLayer['x'], 0),
-                    onChanged: (v) => _studioSet2DLayerField(
-                      _studioSelected2dLayerKey!,
-                      'x',
-                      v,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Y',
-                    min: -1500,
-                    max: 1500,
-                    value: _toDouble(selectedLayer['y'], 0),
-                    onChanged: (v) => _studioSet2DLayerField(
-                      _studioSelected2dLayerKey!,
-                      'y',
-                      v,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Scale',
-                    min: 0.05,
-                    max: 6,
-                    value: _toDouble(selectedLayer['scale'], 1),
-                    onChanged: (v) => _studioSet2DLayerField(
-                      _studioSelected2dLayerKey!,
-                      'scale',
-                      v,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 8),
-                const Text(
-                  '2D Controls',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                _studioSlider(
-                  label: 'Global Scale',
-                  min: 0.5,
-                  max: 2.5,
-                  value: _toDouble(controls['scale'], 1.2),
-                  onChanged: (v) => _studioSet2DControlField('scale', v),
-                ),
-                _studioSlider(
-                  label: 'Global Depth',
-                  min: 0,
-                  max: 1,
-                  value: _toDouble(controls['depth'], 0.1),
-                  onChanged: (v) => _studioSet2DControlField('depth', v),
-                ),
-                _studioSlider(
-                  label: 'Global Shift',
-                  min: 0,
-                  max: 1,
-                  value: _toDouble(controls['shift'], 0.025),
-                  onChanged: (v) => _studioSet2DControlField('shift', v),
-                ),
-                _studioSlider(
-                  label: 'Global Tilt',
-                  min: 0,
-                  max: 1,
-                  value: _toDouble(controls['tilt'], 0),
-                  onChanged: (v) => _studioSet2DControlField('tilt', v),
-                ),
-                _studioSlider(
-                  label: 'Dead Zone X',
-                  min: 0,
-                  max: 0.1,
-                  value: _toDouble(controls['deadZoneX'], 0),
-                  onChanged: (v) => _studioSet2DControlField('deadZoneX', v),
-                ),
-                _studioSlider(
-                  label: 'Dead Zone Y',
-                  min: 0,
-                  max: 0.1,
-                  value: _toDouble(controls['deadZoneY'], 0),
-                  onChanged: (v) => _studioSet2DControlField('deadZoneY', v),
-                ),
-                _studioSlider(
-                  label: 'Dead Zone Z',
-                  min: 0,
-                  max: 0.1,
-                  value: _toDouble(controls['deadZoneZ'], 0),
-                  onChanged: (v) => _studioSet2DControlField('deadZoneZ', v),
-                ),
-                _studioSlider(
-                  label: 'Dead Zone Yaw',
-                  min: 0,
-                  max: 10,
-                  value: _toDouble(controls['deadZoneYaw'], 0),
-                  onChanged: (v) => _studioSet2DControlField('deadZoneYaw', v),
-                ),
-                _studioSlider(
-                  label: 'Dead Zone Pitch',
-                  min: 0,
-                  max: 10,
-                  value: _toDouble(controls['deadZonePitch'], 0),
-                  onChanged: (v) =>
-                      _studioSet2DControlField('deadZonePitch', v),
-                ),
-                _studioSlider(
-                  label: 'Z Base',
-                  min: 0.05,
-                  max: 2.0,
-                  value: _toDouble(controls['zBase'], 0.2),
-                  onChanged: (v) => _studioSet2DControlField('zBase', v),
-                ),
-                SwitchListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Manual Mode'),
-                  value: controls['manualMode'] == true,
-                  onChanged: (v) => _studioSet2DControlField('manualMode', v),
-                ),
-                if (controls['manualMode'] == true) ...[
-                  _studioSlider(
-                    label: 'Manual Head X',
-                    min: -1,
-                    max: 1,
-                    value: _toDouble(controls['manualHeadX'], 0),
-                    onChanged: (v) =>
-                        _studioSet2DControlField('manualHeadX', v),
-                  ),
-                  _studioSlider(
-                    label: 'Manual Head Y',
-                    min: -1,
-                    max: 1,
-                    value: _toDouble(controls['manualHeadY'], 0),
-                    onChanged: (v) =>
-                        _studioSet2DControlField('manualHeadY', v),
-                  ),
-                  _studioSlider(
-                    label: 'Manual Head Z',
-                    min: 0.05,
-                    max: 2.0,
-                    value: _toDouble(controls['manualHeadZ'], 0.2),
-                    onChanged: (v) =>
-                        _studioSet2DControlField('manualHeadZ', v),
-                  ),
-                  _studioSlider(
-                    label: 'Manual Yaw',
-                    min: -60,
-                    max: 60,
-                    value: _toDouble(controls['manualYaw'], 0),
-                    onChanged: (v) => _studioSet2DControlField('manualYaw', v),
-                  ),
-                  _studioSlider(
-                    label: 'Manual Pitch',
-                    min: -40,
-                    max: 40,
-                    value: _toDouble(controls['manualPitch'], 0),
-                    onChanged: (v) =>
-                        _studioSet2DControlField('manualPitch', v),
-                  ),
-                ],
-                DropdownButtonFormField<String>(
-                  // ignore: deprecated_member_use
-                  value: (() {
-                    final String selectedAspect =
-                        (controls['selectedAspect'] ?? '').toString();
-                    const options = <String>[
-                      '16:9 (width:height)',
-                      '18:9 (width:height)',
-                      '21:9 (width:height)',
-                      '4:3 (width:height)',
-                      '1:1 (square)',
-                      '9:16 (height:width)',
-                      '3:4 (height:width)',
-                      '2.35:1 (width:height)',
-                      '1.85:1 (width:height)',
-                      '2.39:1 (width:height)',
-                    ];
-                    return options.contains(selectedAspect)
-                        ? selectedAspect
-                        : null;
-                  })(),
-                  items: const <String>[
-                    '16:9 (width:height)',
-                    '18:9 (width:height)',
-                    '21:9 (width:height)',
-                    '4:3 (width:height)',
-                    '1:1 (square)',
-                    '9:16 (height:width)',
-                    '3:4 (height:width)',
-                    '2.35:1 (width:height)',
-                    '1.85:1 (width:height)',
-                    '2.39:1 (width:height)',
-                  ]
-                      .map((ratio) => DropdownMenuItem<String>(
-                            value: ratio,
-                            child: Text(ratio),
-                          ))
-                      .toList(),
-                  onChanged: (value) =>
-                      _studioSet2DControlField('selectedAspect', value),
-                  decoration: const InputDecoration(labelText: 'Aspect Ratio'),
-                ),
-                _studioSlider(
-                  label: 'Turning Point',
-                  min: -200,
-                  max: 200,
-                  value: _toDouble(turningPoint['order'], 0),
-                  onChanged: (v) => _studioSet2DLayerField(
-                    'turning_point',
-                    'order',
-                    v,
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _studioRecenter2DParallax,
-                  icon: const Icon(Icons.gps_fixed, size: 16),
-                  label: const Text('Recenter'),
-                ),
-              ],
-            ),
-          ],
+        child: Center(
+          child:
+              Icon(Icons.image_outlined, color: cs.onSurfaceVariant, size: 52),
         ),
       );
     }
-
-    if (_modeIndex == 2) {
-      final Map<String, dynamic> scene = _studio360Scene();
-      final Map<String, dynamic> controls = _studio360Controls();
-      final bool manualMode = controls['manualMode'] == true;
-      final String assetUrl = (scene['assetUrl'] ?? '').toString();
-      final String rawAssetKind = (scene['assetKind'] ?? 'image').toString();
-      final String assetKind = rawAssetKind == 'video' ? 'video' : 'image';
-      return Container(
-        color: cs.surface,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '360 Controls',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _studioPromptAdd360Url,
-                  icon: const Icon(Icons.link_rounded, size: 16),
-                  label: const Text('Asset URL'),
-                ),
-                OutlinedButton.icon(
-                  onPressed:
-                      _studioUploadingImage ? null : _studioUpload360Asset,
-                  icon: const Icon(Icons.upload_file_outlined, size: 16),
-                  label: Text(
-                    _studioUploadingImage ? 'Uploading...' : 'Upload',
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    setState(() => _studioReanchorToken++);
-                  },
-                  icon: const Icon(Icons.gps_fixed, size: 16),
-                  label: const Text('Reanchor'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              key: ValueKey<String>('studio-360-url-$assetUrl'),
-              initialValue: assetUrl,
-              onChanged: (value) =>
-                  _studioSet360SceneField('assetUrl', value.trim()),
-              decoration: const InputDecoration(labelText: 'Asset URL'),
-            ),
-            const SizedBox(height: 6),
-            DropdownButtonFormField<String>(
-              // ignore: deprecated_member_use
-              value: assetKind,
-              decoration: const InputDecoration(labelText: 'Asset Kind'),
-              items: const [
-                DropdownMenuItem<String>(
-                  value: 'image',
-                  child: Text('Image'),
-                ),
-                DropdownMenuItem<String>(
-                  value: 'video',
-                  child: Text('Video'),
-                ),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                _studioSet360SceneField('assetKind', value);
-              },
-            ),
-            const SizedBox(height: 8),
-            _studioSlider(
-              label: 'Base FOV',
-              min: 45,
-              max: 95,
-              value: _toDouble(controls['baseFov'], 75),
-              onChanged: (value) => _studioSet360ControlField('baseFov', value),
-            ),
-            _studioSlider(
-              label: 'Min FOV',
-              min: 30,
-              max: 90,
-              value: _toDouble(controls['minFov'], 45),
-              onChanged: (value) => _studioSet360ControlField('minFov', value),
-            ),
-            _studioSlider(
-              label: 'Max FOV',
-              min: 50,
-              max: 110,
-              value: _toDouble(controls['maxFov'], 95),
-              onChanged: (value) => _studioSet360ControlField('maxFov', value),
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Manual Mode'),
-              value: manualMode,
-              onChanged: (value) =>
-                  _studioSet360ControlField('manualMode', value),
-            ),
-            if (manualMode) ...[
-              _studioSlider(
-                label: 'Manual Yaw',
-                min: -180,
-                max: 180,
-                value: _toDouble(controls['manualYaw'], 0),
-                onChanged: (value) =>
-                    _studioSet360ControlField('manualYaw', value),
-              ),
-              _studioSlider(
-                label: 'Manual Pitch',
-                min: -85,
-                max: 85,
-                value: _toDouble(controls['manualPitch'], 0),
-                onChanged: (value) =>
-                    _studioSet360ControlField('manualPitch', value),
-              ),
-              _studioSlider(
-                label: 'Manual FOV',
-                min: 45,
-                max: 95,
-                value: _toDouble(controls['manualFov'], 75),
-                onChanged: (value) =>
-                    _studioSet360ControlField('manualFov', value),
-              ),
-            ] else ...[
-              _studioSlider(
-                label: 'Yaw Sensitivity',
-                min: 0.2,
-                max: 2.5,
-                value: _toDouble(controls['yawSensitivity'], 1),
-                onChanged: (value) =>
-                    _studioSet360ControlField('yawSensitivity', value),
-              ),
-              _studioSlider(
-                label: 'Pitch Sensitivity',
-                min: 0.2,
-                max: 2.5,
-                value: _toDouble(controls['pitchSensitivity'], 1),
-                onChanged: (value) =>
-                    _studioSet360ControlField('pitchSensitivity', value),
-              ),
-              _studioSlider(
-                label: 'Zoom Sensitivity',
-                min: 0.2,
-                max: 2.5,
-                value: _toDouble(controls['zoomSensitivity'], 1),
-                onChanged: (value) =>
-                    _studioSet360ControlField('zoomSensitivity', value),
-              ),
-            ],
-            if (assetKind == 'video') ...[
-              const SizedBox(height: 8),
-              ValueListenableBuilder<PanoramaViewer360Status>(
-                valueListenable: _studio360PreviewController.status,
-                builder: (context, status, _) {
-                  final int durationMs = math.max(
-                    status.durationMs,
-                    _mapInt(controls['posterTimeMs'], 0),
-                  );
-                  final int posterTimeMs =
-                      _mapInt(controls['posterTimeMs'], 0).clamp(
-                    0,
-                    durationMs <= 0 ? 86400000 : durationMs,
-                  );
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Cover Frame: ${_formatDurationClock(posterTimeMs)}',
-                        style: TextStyle(color: cs.onSurfaceVariant),
-                      ),
-                      if (durationMs > 0)
-                        _studioSlider(
-                          label: 'Cover Time',
-                          min: 0,
-                          max: durationMs / 1000,
-                          value: posterTimeMs / 1000,
-                          onChanged: (value) => _studioSet360ControlField(
-                            'posterTimeMs',
-                            (value * 1000).round(),
-                          ),
-                        )
-                      else
-                        Text(
-                          'Play the preview once to load the full duration.',
-                          style: TextStyle(
-                            color: cs.onSurfaceVariant,
-                            fontSize: 12,
-                          ),
-                        ),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: status.isVideo
-                                ? () => _studioSet360ControlField(
-                                      'posterTimeMs',
-                                      status.currentTimeMs,
-                                    )
-                                : null,
-                            icon: const Icon(Icons.bookmark_outline, size: 16),
-                            label: const Text('Use Current Frame'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: status.isVideo
-                                ? () => _studio360PreviewController.seekToMs(
-                                      posterTimeMs,
-                                    )
-                                : null,
-                            icon: const Icon(Icons.image_outlined, size: 16),
-                            label: const Text('Preview Cover Frame'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ],
-          ],
-        ),
-      );
-    }
-
-    final scene = _studio3DScene();
-    final tokens = _studioOrdered3DTokens();
-    if (_studioSelected3dToken == null && tokens.isNotEmpty) {
-      _studioSelected3dToken = tokens.first;
-    }
-    final controls = _studio3DControls();
-    final String? selectedToken = _studioSelected3dToken != null &&
-            tokens.contains(_studioSelected3dToken)
-        ? _studioSelected3dToken
-        : (tokens.isEmpty ? null : tokens.first);
-    final Map<String, dynamic>? selectedEntity = selectedToken == null
-        ? null
-        : _studioEntityByToken(scene, selectedToken);
-    final String selectedType = selectedToken?.split(':').first ?? '';
-
-    bool asBool(dynamic value, [bool fallback = false]) {
-      if (value is bool) return value;
-      final String raw = value?.toString().toLowerCase() ?? '';
-      if (raw == 'true') return true;
-      if (raw == 'false') return false;
-      return fallback;
-    }
-
-    final bool manualMode =
-        asBool(controls['manual-mode']) || asBool(controls['manualMode']);
-    final List<double> initPos = <double>[
-      _studioVectorComponent(scene['initPos'], 0, 0),
-      _studioVectorComponent(scene['initPos'], 1, 2),
-      _studioVectorComponent(scene['initPos'], 2, 10),
-    ];
-    final List<double> initRot = <double>[
-      _studioVectorComponent(scene['initRot'], 0, 0),
-      _studioVectorComponent(scene['initRot'], 1, 0),
-      _studioVectorComponent(scene['initRot'], 2, 0),
-    ];
-    final String shadowQuality = () {
-      const valid = <String>{'256', '512', '1024', '2048'};
-      final raw = (scene['shadowQuality'] ?? controls['shadowQuality'] ?? '512')
-          .toString();
-      return valid.contains(raw) ? raw : '512';
-    }();
-
-    return Container(
-      color: cs.surface,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('3D Controls',
-              style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: () => _studioAdd3DEntity('model'),
-                icon: const Icon(Icons.add_circle_outline, size: 16),
-                label: const Text('Model'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _studioAdd3DEntity('light'),
-                icon: const Icon(Icons.wb_incandescent_outlined, size: 16),
-                label: const Text('Light'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _studioAdd3DEntity('audio'),
-                icon: const Icon(Icons.graphic_eq_outlined, size: 16),
-                label: const Text('Audio'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (tokens.isEmpty)
-            const SizedBox(
-              height: 84,
-              child: Center(child: Text('No entities')),
-            )
-          else
-            Container(
-              constraints: const BoxConstraints(maxHeight: 220),
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHighest.withValues(alpha: 0.25),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: cs.outline.withValues(alpha: 0.14)),
-              ),
-              child: ReorderableListView.builder(
-                itemCount: tokens.length,
-                onReorder: _studioReorder3DEntity,
-                itemBuilder: (context, index) {
-                  final token = tokens[index];
-                  final parts = token.split(':');
-                  final type = parts.first;
-                  final entity = _studioEntityByToken(scene, token);
-                  final layer = (entity?['windowLayer'] ?? 'inside').toString();
-                  return InkWell(
-                    key: ValueKey<String>('studio-3d-$token'),
-                    onTap: () => setState(() => _studioSelected3dToken = token),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: selectedToken == token
-                            ? cs.primary.withValues(alpha: 0.16)
-                            : Colors.transparent,
-                        border: Border(
-                          bottom: BorderSide(
-                            color: cs.outline.withValues(alpha: 0.1),
-                          ),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _studioEntityLabel(token, scene),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              Text(type.toUpperCase()),
-                              IconButton(
-                                onPressed: () =>
-                                    _studioDuplicate3DEntity(token),
-                                icon: const Icon(Icons.copy_outlined, size: 18),
-                              ),
-                              IconButton(
-                                onPressed: () => _studioDelete3DEntity(token),
-                                icon:
-                                    const Icon(Icons.delete_outline, size: 18),
-                              ),
-                            ],
-                          ),
-                          SegmentedButton<String>(
-                            segments: const [
-                              ButtonSegment<String>(
-                                value: 'inside',
-                                label: Text('Inside'),
-                              ),
-                              ButtonSegment<String>(
-                                value: 'outside',
-                                label: Text('Outside'),
-                              ),
-                            ],
-                            selected: <String>{layer},
-                            onSelectionChanged: (values) =>
-                                _studioSet3DWindowLayer(token, values.first),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (selectedEntity != null && selectedToken != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  'Selected: ${_studioEntityLabel(selectedToken, scene)}',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                if (selectedType == 'model')
-                  TextFormField(
-                    key: ValueKey<String>(
-                      'studio-model-name-$selectedToken-${selectedEntity['name'] ?? ''}',
-                    ),
-                    initialValue: (selectedEntity['name'] ?? '').toString(),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'name',
-                      value: value.trim(),
-                    ),
-                    decoration: const InputDecoration(labelText: 'Model Name'),
-                  ),
-                if (selectedType == 'model' || selectedType == 'audio') ...[
-                  const SizedBox(height: 6),
-                  TextFormField(
-                    key: ValueKey<String>(
-                      'studio-entity-url-$selectedToken-${selectedEntity['url'] ?? ''}',
-                    ),
-                    initialValue: (selectedEntity['url'] ?? '').toString(),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'url',
-                      value: value.trim(),
-                    ),
-                    decoration: InputDecoration(
-                      labelText:
-                          selectedType == 'model' ? 'Model URL' : 'Audio URL',
-                    ),
-                  ),
-                ],
-                if (selectedType == 'model') ...[
-                  SwitchListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Visible'),
-                    value: asBool(selectedEntity['visible'], true),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'visible',
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos X',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 0, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 0,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos Y',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 1, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 1,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos Z',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 2, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 2,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Rot X',
-                    min: -6.28,
-                    max: 6.28,
-                    value: _studioVectorComponent(
-                        selectedEntity['rotation'], 0, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'rotation',
-                      index: 0,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Rot Y',
-                    min: -6.28,
-                    max: 6.28,
-                    value: _studioVectorComponent(
-                        selectedEntity['rotation'], 1, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'rotation',
-                      index: 1,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Rot Z',
-                    min: -6.28,
-                    max: 6.28,
-                    value: _studioVectorComponent(
-                        selectedEntity['rotation'], 2, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'rotation',
-                      index: 2,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Scale X',
-                    min: 0.01,
-                    max: 10,
-                    value:
-                        _studioVectorComponent(selectedEntity['scale'], 0, 1),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'scale',
-                      index: 0,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Scale Y',
-                    min: 0.01,
-                    max: 10,
-                    value:
-                        _studioVectorComponent(selectedEntity['scale'], 1, 1),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'scale',
-                      index: 1,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Scale Z',
-                    min: 0.01,
-                    max: 10,
-                    value:
-                        _studioVectorComponent(selectedEntity['scale'], 2, 1),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'scale',
-                      index: 2,
-                      value: value,
-                    ),
-                  ),
-                ] else if (selectedType == 'light') ...[
-                  TextFormField(
-                    key: ValueKey<String>(
-                      'studio-light-color-$selectedToken-${selectedEntity['color'] ?? ''}',
-                    ),
-                    initialValue:
-                        (selectedEntity['color'] ?? 'ffffff').toString(),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'color',
-                      value: value.replaceAll('#', '').trim(),
-                    ),
-                    decoration: const InputDecoration(labelText: 'Color (hex)'),
-                  ),
-                  _studioSlider(
-                    label: 'Intensity',
-                    min: 0,
-                    max: 50,
-                    value: _toDouble(selectedEntity['intensity'], 10),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'intensity',
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos X',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 0, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 0,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos Y',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 1, 5),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 1,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos Z',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 2, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 2,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Helper Scale',
-                    min: 0.1,
-                    max: 10,
-                    value: _toDouble(selectedEntity['scale'], 1),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'scale',
-                      value: value,
-                    ),
-                  ),
-                  SwitchListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Ghost'),
-                    value: asBool(selectedEntity['ghost']),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'ghost',
-                      value: value,
-                    ),
-                  ),
-                ] else if (selectedType == 'audio') ...[
-                  _studioSlider(
-                    label: 'Volume',
-                    min: 0,
-                    max: 2,
-                    value: _toDouble(selectedEntity['volume'], 1),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'volume',
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos X',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 0, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 0,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos Y',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 1, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 1,
-                      value: value,
-                    ),
-                  ),
-                  _studioSlider(
-                    label: 'Pos Z',
-                    min: -30,
-                    max: 30,
-                    value: _studioVectorComponent(
-                        selectedEntity['position'], 2, 0),
-                    onChanged: (value) => _studioSet3DEntityVectorComponent(
-                      token: selectedToken,
-                      field: 'position',
-                      index: 2,
-                      value: value,
-                    ),
-                  ),
-                  SwitchListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Ghost'),
-                    value: asBool(selectedEntity['ghost']),
-                    onChanged: (value) => _studioSet3DEntityField(
-                      token: selectedToken,
-                      field: 'ghost',
-                      value: value,
-                    ),
-                  ),
-                ],
-              ],
-              const SizedBox(height: 8),
-              const Text('World & FX',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
-              _studioSlider(
-                label: 'Sun',
-                min: 0,
-                max: 10,
-                value: _toDouble(scene['sunIntensity'], 2.0),
-                onChanged: (value) =>
-                    _studioSet3DSceneField('sunIntensity', value),
-              ),
-              _studioSlider(
-                label: 'Ambient',
-                min: 0,
-                max: 2,
-                value: _toDouble(scene['ambLight'], 0.5),
-                onChanged: (value) => _studioSet3DSceneField('ambLight', value),
-              ),
-              _studioSlider(
-                label: 'Bloom',
-                min: 0,
-                max: 4,
-                value: _toDouble(scene['bloomIntensity'], 1.0),
-                onChanged: (value) =>
-                    _studioSet3DSceneField('bloomIntensity', value),
-              ),
-              DropdownButtonFormField<String>(
-                // ignore: deprecated_member_use
-                value: shadowQuality,
-                decoration: const InputDecoration(labelText: 'Shadow Quality'),
-                items: const <String>['256', '512', '1024', '2048']
-                    .map((value) => DropdownMenuItem<String>(
-                          value: value,
-                          child: Text(value),
-                        ))
-                    .toList(),
-                onChanged: (value) {
-                  if (value == null) return;
-                  _studioSet3DSceneField('shadowQuality', value);
-                },
-              ),
-              _studioSlider(
-                label: 'Shadow Softness',
-                min: 0,
-                max: 5,
-                value: _toDouble(scene['shadowSoftness'], 1.0),
-                onChanged: (value) =>
-                    _studioSet3DSceneField('shadowSoftness', value),
-              ),
-              TextFormField(
-                key:
-                    ValueKey<String>('studio-sky-url-${scene['skyUrl'] ?? ''}'),
-                initialValue: (scene['skyUrl'] ?? '').toString(),
-                onChanged: (value) =>
-                    _studioSet3DSceneField('skyUrl', value.trim()),
-                decoration: const InputDecoration(labelText: 'Sky URL'),
-              ),
-              const SizedBox(height: 6),
-              TextFormField(
-                key:
-                    ValueKey<String>('studio-env-url-${scene['envUrl'] ?? ''}'),
-                initialValue: (scene['envUrl'] ?? '').toString(),
-                onChanged: (value) =>
-                    _studioSet3DSceneField('envUrl', value.trim()),
-                decoration: const InputDecoration(labelText: 'Env URL'),
-              ),
-              _studioSlider(
-                label: 'Env Rot',
-                min: -6.28,
-                max: 6.28,
-                value: _toDouble(scene['envRot'], 0),
-                onChanged: (value) => _studioSet3DSceneField('envRot', value),
-              ),
-              const SizedBox(height: 8),
-              const Text('Initial Camera',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
-              _studioSlider(
-                label: 'Init Pos X',
-                min: -30,
-                max: 30,
-                value: initPos[0],
-                onChanged: (value) => _studioSet3DSceneVectorComponent(
-                  field: 'initPos',
-                  index: 0,
-                  value: value,
-                  fallback: initPos,
-                ),
-              ),
-              _studioSlider(
-                label: 'Init Pos Y',
-                min: -30,
-                max: 30,
-                value: initPos[1],
-                onChanged: (value) => _studioSet3DSceneVectorComponent(
-                  field: 'initPos',
-                  index: 1,
-                  value: value,
-                  fallback: initPos,
-                ),
-              ),
-              _studioSlider(
-                label: 'Init Pos Z',
-                min: -30,
-                max: 30,
-                value: initPos[2],
-                onChanged: (value) => _studioSet3DSceneVectorComponent(
-                  field: 'initPos',
-                  index: 2,
-                  value: value,
-                  fallback: initPos,
-                ),
-              ),
-              _studioSlider(
-                label: 'Init Rot X',
-                min: -6.28,
-                max: 6.28,
-                value: initRot[0],
-                onChanged: (value) => _studioSet3DSceneVectorComponent(
-                  field: 'initRot',
-                  index: 0,
-                  value: value,
-                  fallback: initRot,
-                ),
-              ),
-              _studioSlider(
-                label: 'Init Rot Y',
-                min: -6.28,
-                max: 6.28,
-                value: initRot[1],
-                onChanged: (value) => _studioSet3DSceneVectorComponent(
-                  field: 'initRot',
-                  index: 1,
-                  value: value,
-                  fallback: initRot,
-                ),
-              ),
-              _studioSlider(
-                label: 'Init Rot Z',
-                min: -6.28,
-                max: 6.28,
-                value: initRot[2],
-                onChanged: (value) => _studioSet3DSceneVectorComponent(
-                  field: 'initRot',
-                  index: 2,
-                  value: value,
-                  fallback: initRot,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text('Tracking',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
-              DropdownButtonFormField<String>(
-                // ignore: deprecated_member_use
-                value: () {
-                  const modes = <String>{'orbit', 'fps', 'free'};
-                  final String raw = (controls['camera-mode'] ?? 'orbit')
-                      .toString()
-                      .toLowerCase();
-                  return modes.contains(raw) ? raw : 'orbit';
-                }(),
-                decoration: const InputDecoration(labelText: 'Camera Mode'),
-                items: const [
-                  DropdownMenuItem<String>(
-                      value: 'orbit', child: Text('Orbit')),
-                  DropdownMenuItem<String>(value: 'fps', child: Text('FPS')),
-                  DropdownMenuItem<String>(value: 'free', child: Text('Free')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  _studioSet3DControlField('camera-mode', value);
-                },
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Manual Mode'),
-                value: manualMode,
-                onChanged: (value) =>
-                    _studioSet3DControlField('manual-mode', value),
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Tracker UI'),
-                value: asBool(controls['show-tracker']),
-                onChanged: (value) =>
-                    _studioSet3DControlField('show-tracker', value),
-              ),
-              _studioSlider(
-                label: 'Dead Zone X',
-                min: 0,
-                max: 0.1,
-                value: _toDouble(controls['dz-x'], 0),
-                onChanged: (value) => _studioSet3DControlField('dz-x', value),
-              ),
-              _studioSlider(
-                label: 'Dead Zone Y',
-                min: 0,
-                max: 0.1,
-                value: _toDouble(controls['dz-y'], 0),
-                onChanged: (value) => _studioSet3DControlField('dz-y', value),
-              ),
-              _studioSlider(
-                label: 'Dead Zone Z',
-                min: 0,
-                max: 0.1,
-                value: _toDouble(controls['dz-z'], 0),
-                onChanged: (value) => _studioSet3DControlField('dz-z', value),
-              ),
-              _studioSlider(
-                label: 'Dead Zone Yaw',
-                min: 0,
-                max: 10,
-                value: _toDouble(controls['dz-yaw'], 0),
-                onChanged: (value) => _studioSet3DControlField('dz-yaw', value),
-              ),
-              _studioSlider(
-                label: 'Dead Zone Pitch',
-                min: 0,
-                max: 10,
-                value: _toDouble(controls['dz-pitch'], 0),
-                onChanged: (value) =>
-                    _studioSet3DControlField('dz-pitch', value),
-              ),
-              OutlinedButton.icon(
-                onPressed: () {
-                  final frame = TrackingService.instance.frameNotifier.value;
-                  _studioSet3DControlField('head-x', frame.headX);
-                  _studioSet3DControlField('head-y', frame.headY);
-                  _studioSet3DControlField('z-value', frame.headZ);
-                  _studioSet3DControlField('yaw', frame.yaw);
-                  _studioSet3DControlField('pitch', frame.pitch);
-                },
-                icon: const Icon(Icons.gps_fixed, size: 16),
-                label: const Text('Recenter Manual Anchor'),
-              ),
-              if (manualMode) ...[
-                _studioSlider(
-                  label: 'Manual Head X',
-                  min: -1,
-                  max: 1,
-                  value: _toDouble(controls['head-x'], 0),
-                  onChanged: (value) =>
-                      _studioSet3DControlField('head-x', value),
-                ),
-                _studioSlider(
-                  label: 'Manual Head Y',
-                  min: -1,
-                  max: 1,
-                  value: _toDouble(controls['head-y'], 0),
-                  onChanged: (value) =>
-                      _studioSet3DControlField('head-y', value),
-                ),
-                _studioSlider(
-                  label: 'Manual Z',
-                  min: 0.05,
-                  max: 2,
-                  value: _toDouble(controls['z-value'], 0.2),
-                  onChanged: (value) =>
-                      _studioSet3DControlField('z-value', value),
-                ),
-                _studioSlider(
-                  label: 'Manual Yaw',
-                  min: -60,
-                  max: 60,
-                  value: _toDouble(controls['yaw'], 0),
-                  onChanged: (value) => _studioSet3DControlField('yaw', value),
-                ),
-                _studioSlider(
-                  label: 'Manual Pitch',
-                  min: -40,
-                  max: 40,
-                  value: _toDouble(controls['pitch'], 0),
-                  onChanged: (value) =>
-                      _studioSet3DControlField('pitch', value),
-                ),
-              ],
-            ],
-          ),
-        ],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: _SharedPresetPreview(
+        mode: kImageRenderMode,
+        payload: payload,
+        borderRadius: BorderRadius.circular(16),
+        fit: BoxFit.contain,
       ),
     );
   }
@@ -9053,345 +5419,140 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final bool collectionMode = _postTypeIndex == 1;
-    final TrackingService tracking = TrackingService.instance;
-    final bool trackerEnabled = tracking.trackerEnabled;
-    final bool trackerUiVisible = tracking.trackerUiVisible;
-    final Widget previewPane = _editorFullscreen
-        ? Container(
-            margin: EdgeInsets.zero,
-            decoration: BoxDecoration(
-              color: Colors.black,
-              border: Border.all(color: cs.outline.withValues(alpha: 0.16)),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: _buildEditor(),
-          )
-        : Center(
-            child: Container(
-              margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              constraints: const BoxConstraints(maxWidth: 1680),
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: cs.outline.withValues(alpha: 0.16),
-                    ),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: _buildEditor(),
-                ),
-              ),
-            ),
-          );
-
-    final Widget studioTopRail = Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: EdgeInsets.fromLTRB(14, widget.topInset + 14, 14, 14),
+      child: Row(
         children: [
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment<int>(value: 0, label: Text('2D')),
-              ButtonSegment<int>(value: 1, label: Text('3D')),
-              ButtonSegment<int>(value: 2, label: Text('360')),
-            ],
-            selected: <int>{_modeIndex},
-            onSelectionChanged: (values) {
-              final next = values.first;
-              setState(() {
-                _modeIndex = next;
-                if (_postTypeIndex == 1 &&
-                    _selectedItemIndex >= 0 &&
-                    _selectedItemIndex < _draftItems.length) {
-                  final current = _draftItems[_selectedItemIndex];
-                  _studioLivePayload = current.mode == renderModeForIndex(next)
-                      ? current.snapshot
-                      : null;
-                }
-              });
-              _schedulePersistStudioDraft();
-            },
-          ),
-          const SizedBox(height: 8),
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment<int>(value: 0, label: Text('Single')),
-              ButtonSegment<int>(value: 1, label: Text('Collection')),
-            ],
-            selected: <int>{_postTypeIndex},
-            onSelectionChanged: (values) {
-              setState(() => _postTypeIndex = values.first);
-              _schedulePersistStudioDraft();
-            },
-          ),
-          const SizedBox(height: 8),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            value: trackerUiVisible,
-            title: const Text('Show Tracker'),
-            onChanged: trackerEnabled
-                ? (value) async {
-                    await tracking.setTrackerUiVisible(value);
-                    if (!mounted) return;
-                    setState(() {});
-                  }
-                : null,
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: () {
-                  setState(() => _studioReanchorToken++);
-                  TrackingService.instance.remapHeadBaselineToCurrentFrame();
-                  _schedulePersistStudioDraft();
-                },
-                icon: const Icon(Icons.gps_fixed),
-                label: const Text('Recenter'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () {
-                  setState(() => _editorFullscreen = !_editorFullscreen);
-                  _schedulePersistStudioDraft();
-                },
-                icon: Icon(
-                  _editorFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                ),
-                label: Text(_editorFullscreen ? 'Exit Full' : 'Full'),
-              ),
-              if (!collectionMode)
-                FilledButton.icon(
-                  onPressed: (_openingComposer || _studioLivePayload == null)
-                      ? null
-                      : _openStudioSingleComposer,
-                  icon: const Icon(Icons.send_rounded),
-                  label: Text(_openingComposer ? 'Opening...' : 'Compose'),
-                ),
-              if (collectionMode) ...[
-                OutlinedButton.icon(
-                  onPressed: _createNewCollectionItem,
-                  icon: const Icon(Icons.add_circle_outline),
-                  label: const Text('Add Item'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _saveCurrentStudioItemToCollection,
-                  icon: const Icon(Icons.save_outlined),
-                  label: const Text('Save Item'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _previewCollection,
-                  icon: const Icon(Icons.preview_outlined),
-                  label: const Text('Preview'),
-                ),
-                FilledButton.icon(
-                  onPressed: _publishing ? null : _publishCollection,
-                  icon: const Icon(Icons.publish_outlined),
-                  label: Text(_publishing ? 'Publishing...' : 'Compose'),
-                ),
-              ],
-            ],
-          ),
-          if (collectionMode) ...[
-            const SizedBox(height: 10),
-            TextField(
-              controller: _collectionNameController,
-              decoration: const InputDecoration(
-                labelText: 'Collection Name',
-                prefixIcon: Icon(Icons.collections_bookmark_outlined),
-              ),
-            ),
-            if (_selectedItemIndex >= 0 &&
-                _selectedItemIndex < _draftItems.length) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () =>
-                        _duplicateCollectionItem(_selectedItemIndex),
-                    icon: const Icon(Icons.copy_outlined),
-                    label: const Text('Duplicate Selected'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => _removeCollectionItem(_selectedItemIndex),
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Delete Selected'),
-                  ),
-                ],
-              ),
-            ],
-            if (_draftItems.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: List<Widget>.generate(_draftItems.length, (index) {
-                    final item = _draftItems[index];
-                    final bool active = index == _selectedItemIndex;
-                    return Padding(
-                      padding: EdgeInsets.only(
-                          right: index == _draftItems.length - 1 ? 0 : 8),
-                      child: ChoiceChip(
-                        selected: active,
-                        label: Text(
-                          '${index + 1}. ${item.name}',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: active ? Colors.black : cs.onSurface,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        selectedColor: Colors.white,
-                        checkmarkColor: Colors.black,
-                        onSelected: (_) => _selectCollectionItem(index),
-                      ),
-                    );
-                  }),
-                ),
-              ),
-            ],
-          ],
-        ],
-      ),
-    );
-
-    Widget buildPanel({required bool overlay}) {
-      const double panelHeaderHeight = 96;
-      return SizedBox(
-        width: 360,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: overlay
-                ? Colors.black.withValues(alpha: 0.56)
-                : cs.surface.withValues(alpha: 0.96),
-            border: Border(
-              left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
-            ),
-          ),
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(
-                      0, panelHeaderHeight + 8, 0, 12),
-                  children: [
-                    studioTopRail,
-                    Divider(
-                        height: 1, color: cs.outline.withValues(alpha: 0.2)),
-                    _buildStudioControlsPanel(context),
-                  ],
-                ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                height: panelHeaderHeight,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black.withValues(alpha: 0.84),
-                          Colors.transparent,
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 14,
-                right: 14,
-                top: 12,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
                     Text(
                       'Post Studio',
                       style: TextStyle(
                         color: cs.onSurface,
+                        fontSize: 22,
                         fontWeight: FontWeight.w700,
-                        fontSize: 18,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Edit, compose, and publish from one workflow.',
-                      style: TextStyle(
-                        color: cs.onSurfaceVariant,
-                        fontSize: 12,
-                      ),
+                    const Spacer(),
+                    SegmentedButton<int>(
+                      segments: const <ButtonSegment<int>>[
+                        ButtonSegment<int>(
+                          value: 0,
+                          icon: Icon(Icons.image_outlined),
+                          label: Text('Single'),
+                        ),
+                        ButtonSegment<int>(
+                          value: 1,
+                          icon: Icon(Icons.collections_outlined),
+                          label: Text('Collection'),
+                        ),
+                      ],
+                      selected: <int>{_postTypeIndex},
+                      onSelectionChanged: (value) {
+                        setState(() => _postTypeIndex = value.first);
+                      },
                     ),
                   ],
                 ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_editorFullscreen) {
-      return Stack(
-        children: [
-          Positioned.fill(
-            child: Padding(
-              padding: EdgeInsets.only(top: widget.topInset),
-              child: previewPane,
+                const SizedBox(height: 12),
+                Expanded(child: _buildPreview(cs)),
+              ],
             ),
           ),
-          Positioned(
-            right: 10,
-            top: widget.topInset + 10,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                backgroundColor: Colors.black.withValues(alpha: 0.5),
+          const SizedBox(width: 14),
+          SizedBox(
+            width: 320 + 40,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
               ),
-              onPressed: () {
-                setState(() => _studioChromeVisible = !_studioChromeVisible);
-                _schedulePersistStudioDraft();
-              },
-              icon: Icon(
-                _studioChromeVisible
-                    ? Icons.visibility_off_outlined
-                    : Icons.visibility_outlined,
-                color: Colors.white,
-              ),
-              label: Text(
-                _studioChromeVisible ? 'Hide Panel' : 'Show Panel',
-                style: const TextStyle(color: Colors.white),
+              child: ListView(
+                padding: const EdgeInsets.all(14),
+                children: [
+                  FilledButton.icon(
+                    onPressed: _uploading ? null : _uploadImage,
+                    icon: _uploading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.upload_file_rounded),
+                    label: Text(_uploading ? 'Uploading...' : 'Upload Image'),
+                  ),
+                  const SizedBox(height: 14),
+                  if (collectionMode) ...[
+                    TextField(
+                      controller: _collectionNameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Collection Name',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Images',
+                      style: TextStyle(
+                        color: cs.onSurface,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    if (_draftItems.isEmpty)
+                      Text(
+                        'Upload images to build this collection.',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      )
+                    else
+                      ...List<Widget>.generate(_draftItems.length, (index) {
+                        final item = _draftItems[index];
+                        final bool selected = index == _selectedItemIndex;
+                        return ListTile(
+                          dense: true,
+                          selected: selected,
+                          leading: const Icon(Icons.image_outlined),
+                          title: Text(item.name,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                          onTap: () =>
+                              setState(() => _selectedItemIndex = index),
+                          trailing: IconButton(
+                            tooltip: 'Remove image',
+                            icon: const Icon(Icons.close_rounded),
+                            onPressed: () => _removeCollectionItem(index),
+                          ),
+                        );
+                      }),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _openingComposer ? null : _publishCollection,
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                      label: Text(_openingComposer ? 'Opening...' : 'Continue'),
+                    ),
+                  ] else ...[
+                    Text(
+                      _singlePayload == null
+                          ? 'Upload one image to create a post.'
+                          : 'Image ready for publishing.',
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _openingComposer ? null : _openSingleComposer,
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                      label: Text(_openingComposer ? 'Opening...' : 'Continue'),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
-          if (_studioChromeVisible)
-            Align(
-              alignment: Alignment.centerRight,
-              child: buildPanel(overlay: true),
-            ),
         ],
-      );
-    }
-
-    return Row(
-      children: [
-        Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(top: widget.topInset),
-            child: previewPane,
-          ),
-        ),
-        buildPanel(overlay: false),
-      ],
+      ),
     );
   }
 }
@@ -9412,7 +5573,6 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
   @override
   void initState() {
     super.initState();
-    TrackingService.instance.remapHeadBaselineToCurrentFrame();
     _stackController.addListener(_onStackChanged);
   }
 
@@ -9443,10 +5603,7 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
           child: PresetViewer(
             mode: item.mode,
             payload: item.snapshot,
-            cleanView: true,
-            embedded: true,
-            disableAudio: true,
-            pointerPassthrough: true,
+            fit: BoxFit.contain,
           ),
         ),
         Positioned(
@@ -9577,8 +5734,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   final SwipableStackController _stackController = SwipableStackController();
   final TextEditingController _collectionCommentController =
       TextEditingController();
-  final PanoramaViewer360Controller _detail360Controller =
-      PanoramaViewer360Controller();
   final FocusNode _swipeFocusNode =
       FocusNode(debugLabel: 'collection-detail-swipe-focus');
   final ScrollController _leftPaneScrollController = ScrollController();
@@ -9610,12 +5765,10 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   Offset? _swipeStartGlobal;
   DateTime? _swipeStartAt;
   bool _swipeCaptured = false;
-  bool _active360PreviewHover = false;
 
   @override
   void initState() {
     super.initState();
-    TrackingService.instance.remapHeadBaselineToCurrentFrame();
     _stackController.addListener(_onStackChanged);
     _load();
     _loadSuggestions();
@@ -9628,7 +5781,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     _leftPaneScrollController.dispose();
     _rightPaneScrollController.dispose();
     _chipRailScrollController.dispose();
-    _detail360Controller.dispose();
     _stackController
       ..removeListener(_onStackChanged)
       ..dispose();
@@ -9725,7 +5877,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     _swipeCaptured = false;
   }
 
-  void _trackGlobalSwipe(PointerMoveEvent event) {
+  void _updateGlobalSwipe(PointerMoveEvent event) {
     if (_swipePointer != event.pointer) return;
     if (_swipeCaptured) return;
     final Offset? start = _swipeStartGlobal;
@@ -10243,10 +6395,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     CollectionItemSnapshot item,
     int index,
   ) async {
-    if (item.mode == '360' && index == _index) {
-      _detail360Controller.toggleFullscreen();
-      return;
-    }
     await _openDetailFullscreenViewer(
       context,
       heroTag: _collectionHeroTag(index),
@@ -10259,37 +6407,20 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     CollectionItemSnapshot item, {
     required bool active,
   }) {
-    final bool isPanorama = active && item.mode == '360';
-    return MouseRegion(
-      onEnter: (_) {
-        if (!isPanorama || _active360PreviewHover) return;
-        setState(() => _active360PreviewHover = true);
-      },
-      onExit: (_) {
-        if (!isPanorama && !_active360PreviewHover) return;
-        setState(() => _active360PreviewHover = false);
-      },
-      child: Stack(
-        clipBehavior: Clip.none,
-        fit: StackFit.expand,
-        children: [
-          const Positioned.fill(
-            child: ColoredBox(color: Colors.transparent),
-          ),
-          _SharedPresetPreview(
-            mode: item.mode,
-            payload: item.snapshot,
-            borderRadius: BorderRadius.circular(16),
-            pointerPassthrough: !isPanorama,
-            outsideOverflowMax: _kCardOutsideOverflow,
-            allowOutsideOverflow: true,
-            panoramaController: isPanorama ? _detail360Controller : null,
-            show360PlayerControls: isPanorama,
-            muted: true,
-            loop: true,
-          ),
-        ],
-      ),
+    return Stack(
+      clipBehavior: Clip.none,
+      fit: StackFit.expand,
+      children: [
+        const Positioned.fill(
+          child: ColoredBox(color: Colors.transparent),
+        ),
+        _SharedPresetPreview(
+          mode: item.mode,
+          payload: item.snapshot,
+          borderRadius: BorderRadius.circular(16),
+          fit: BoxFit.contain,
+        ),
+      ],
     );
   }
 
@@ -10321,7 +6452,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     }
     if (summary == null || detail == null) {
       return Scaffold(
-        backgroundColor: Color(0xFF101213),
+        backgroundColor: const Color(0xFF101213),
         body: Center(
           child: Text(
             'Collection unavailable.',
@@ -10656,7 +6787,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           ),
         );
       }
-      final bool activePanorama = activeItem.mode == '360';
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap:
@@ -10703,16 +6833,14 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                 icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
               ),
             ),
-            if (!activePanorama)
-              Positioned(
-                right: 8,
-                bottom: 8,
-                child: IconButton.filledTonal(
-                  onPressed: () =>
-                      _openCollectionFullscreen(activeItem, _index),
-                  icon: const Icon(Icons.fullscreen, size: 20),
-                ),
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: IconButton.filledTonal(
+                onPressed: () => _openCollectionFullscreen(activeItem, _index),
+                icon: const Icon(Icons.fullscreen, size: 20),
               ),
+            ),
           ],
         ),
       );
@@ -10886,67 +7014,95 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox.shrink(),
-          const SizedBox(height: 6),
-          buildSwipeControlRail(),
-          buildFilterRail(),
-          const SizedBox(height: 8),
           Expanded(
-            child: _loadingSuggestions
-                ? const _TopEdgeLoadingPane(
-                    label: 'Loading suggestions...',
-                    backgroundColor: Colors.transparent,
-                    minHeight: 2,
-                  )
-                : ListView.separated(
-                    controller: _rightPaneScrollController,
-                    itemCount: suggestions.length.clamp(0, 24),
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final item = suggestions[index];
-                      final String mode =
-                          item.thumbnailMode ?? item.firstItem?.mode ?? '2d';
-                      final Map<String, dynamic> payload =
-                          item.thumbnailPayload.isNotEmpty
-                              ? item.thumbnailPayload
-                              : (item.firstItem?.snapshot ??
-                                  const <String, dynamic>{});
-                      return _SuggestionGridCard(
-                        heroTag: 'collection-detail-hero-${item.id}-0',
-                        mode: mode,
-                        payload: payload,
-                        title: item.name,
-                        author: item.author?.displayName ?? 'Unknown creator',
-                        metaText:
-                            '${_friendlyCount(item.viewsCount)} views • ${_friendlyTime(item.createdAt)}',
-                        priceText: _cardPriceLabel(
-                          isPaid: item.isPaid,
-                          priceCents: item.priceCents,
-                          viewerHasPaid: item.viewerHasPaid,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: _loadingSuggestions
+                      ? const _TopEdgeLoadingPane(
+                          label: 'Loading suggestions...',
+                          backgroundColor: Colors.transparent,
+                          minHeight: 2,
+                        )
+                      : ListView.builder(
+                          controller: _rightPaneScrollController,
+                          padding: EdgeInsets.zero,
+                          itemCount: suggestions.length.clamp(0, 24),
+                          itemBuilder: (context, index) {
+                            final item = suggestions[index];
+                            final String mode = item.thumbnailMode ??
+                                item.firstItem?.mode ??
+                                '2d';
+                            final Map<String, dynamic> payload =
+                                item.thumbnailPayload.isNotEmpty
+                                    ? item.thumbnailPayload
+                                    : (item.firstItem?.snapshot ??
+                                        const <String, dynamic>{});
+                            return _SuggestionGridCard(
+                              heroTag: 'collection-detail-hero-${item.id}-0',
+                              mode: mode,
+                              payload: payload,
+                              title: item.name,
+                              author:
+                                  item.author?.displayName ?? 'Unknown creator',
+                              metaText:
+                                  '${_friendlyCount(item.viewsCount)} views • ${_friendlyTime(item.createdAt)}',
+                              priceText: _cardPriceLabel(
+                                isPaid: item.isPaid,
+                                priceCents: item.priceCents,
+                                viewerHasPaid: item.viewerHasPaid,
+                              ),
+                              isVerified: item.author?.isVerified == true,
+                              accentColor:
+                                  _cardAccentColorFromHex(item.accentColorHex),
+                              showCollectionCount: true,
+                              collectionCountText: '${item.itemsCount}',
+                              avatarImage: (item.author?.avatarUrl ?? '')
+                                      .trim()
+                                      .isNotEmpty
+                                  ? NetworkImage(item.author!.avatarUrl!.trim())
+                                  : null,
+                              onAvatarTap: () =>
+                                  _openPublicProfileRoute(context, item.author),
+                              onTap: () => _pushHeroRoute(
+                                context,
+                                builder: (_) => _CollectionDetailPage(
+                                  collectionId: item.id,
+                                  initialSummary: item,
+                                ),
+                                name: buildCollectionRoutePathForSummary(item),
+                                replace: true,
+                              ),
+                            );
+                          },
                         ),
-                        isVerified: item.author?.isVerified == true,
-                        accentColor:
-                            _cardAccentColorFromHex(item.accentColorHex),
-                        showCollectionCount: true,
-                        collectionCountText: '${item.itemsCount}',
-                        avatarImage:
-                            (item.author?.avatarUrl ?? '').trim().isNotEmpty
-                                ? NetworkImage(item.author!.avatarUrl!.trim())
-                                : null,
-                        onAvatarTap: () =>
-                            _openPublicProfileRoute(context, item.author),
-                        onTap: () => _pushHeroRoute(
-                          context,
-                          builder: (_) => _CollectionDetailPage(
-                            collectionId: item.id,
-                            initialSummary: item,
-                          ),
-                          name: buildCollectionRoutePathForSummary(item),
-                          replace: true,
-                        ),
-                        outsideOverflowMax: _kCardOutsideOverflow,
-                      );
-                    },
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.72),
+                          Colors.black.withValues(alpha: 0.0),
+                        ],
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        buildSwipeControlRail(),
+                        buildFilterRail(),
+                      ],
+                    ),
                   ),
+                ),
+              ],
+            ),
           ),
         ],
       );
@@ -10959,15 +7115,10 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     }) {
       final Widget body =
           _commentsOpen ? buildCommentsPanel() : buildSuggestionsPanel();
-      final EdgeInsets panelPadding =
-          desktop ? const EdgeInsets.fromLTRB(10, 0, 2, 0) : EdgeInsets.zero;
       return SizedBox(
         width: desktop ? panelWidth : double.infinity,
         height: desktop ? viewportHeight : 640,
-        child: Padding(
-          padding: panelPadding,
-          child: body,
-        ),
+        child: body,
       );
     }
 
@@ -10978,16 +7129,11 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         autofocus: true,
         onKeyEvent: (event) {
           if (event is! KeyDownEvent) return;
-          final bool activePanorama =
-              activeItem != null && activeItem.mode == '360';
-          final bool panoramaOwnsKeys = activePanorama &&
-              (_active360PreviewHover || _detail360Controller.value.fullscreen);
           if (event.logicalKey == LogicalKeyboardKey.keyF &&
               activeItem != null) {
             _openCollectionFullscreen(activeItem, _index);
             return;
           }
-          if (panoramaOwnsKeys) return;
           if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
             _swipeByDirection(SwipeDirection.left);
           } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
@@ -11040,7 +7186,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                   width: sideWidth,
                   child: buildRightPanel(
                     desktop: true,
-                    viewportHeight: viewport.maxHeight - 28,
+                    viewportHeight: viewport.maxHeight,
                     panelWidth: sideWidth,
                   ),
                 ),
@@ -11068,7 +7214,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                     children: [
                       SizedBox(height: previewHeight),
                       buildBelowPreviewMeta(),
-                      const SizedBox(height: 12),
                       buildRightPanel(
                         desktop: false,
                         viewportHeight: viewport.maxHeight,
@@ -11096,7 +7241,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                     leftPadding: _kDetailContentPadding,
                     topPadding: _kDetailContentPadding,
                     desktop: desktop,
-                    panoramaController: _detail360Controller,
                   ),
                 ),
                 Positioned.fill(
@@ -11116,7 +7260,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             return Listener(
               behavior: HitTestBehavior.translucent,
               onPointerDown: _beginGlobalSwipe,
-              onPointerMove: _trackGlobalSwipe,
+              onPointerMove: _updateGlobalSwipe,
               onPointerUp: _endGlobalSwipe,
               onPointerCancel: _endGlobalSwipe,
               child: content,
@@ -11722,8 +7866,8 @@ class _ProfileTabState extends State<_ProfileTab> {
                   showCollectionCount: false,
                   collectionCountText: '',
                   menuItems: menuItems,
-                  onAvatarTap: () =>
-                      _openPublicProfileRoute(context, _authorById[preset.userId]),
+                  onAvatarTap: () => _openPublicProfileRoute(
+                      context, _authorById[preset.userId]),
                   onMenuSelected: (value) {
                     if (value == 'share') _copyPostLink(preset);
                     if (value == 'edit') _editPost(preset);
@@ -11732,7 +7876,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                     }
                     if (value == 'delete') _deletePreset(preset);
                   },
-                  outsideOverflowMax: _kCardOutsideOverflow,
                 ),
               ),
             );
@@ -11964,8 +8107,9 @@ class _ProfileTabState extends State<_ProfileTab> {
                               metaText:
                                   '${_friendlyCount(viewsCount)} views • ${_friendlyTime(createdAt)}',
                               showCollectionCount: isCollection,
-                              collectionCountText:
-                                  isCollection ? '${collection.itemsCount}' : '',
+                              collectionCountText: isCollection
+                                  ? '${collection.itemsCount}'
+                                  : '',
                               menuItems: menuItems,
                               onAvatarTap: () {
                                 if (isCollection) {
@@ -11992,7 +8136,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                                   }
                                 }
                               },
-                              outsideOverflowMax: _kCardOutsideOverflow,
                               emptyChild: isCollection
                                   ? Container(
                                       color: cs.surfaceContainerLow,
@@ -12675,7 +8818,9 @@ class _ChatTabState extends State<_ChatTab> {
                                   vertical: 2,
                                 ),
                                 child: Material(
-                                  color: active ? Colors.white : Colors.transparent,
+                                  color: active
+                                      ? Colors.white
+                                      : Colors.transparent,
                                   borderRadius: BorderRadius.circular(14),
                                   child: ListTile(
                                     selected: active,
@@ -12687,7 +8832,9 @@ class _ChatTabState extends State<_ChatTab> {
                                       chat.titleFor(
                                           _repository.currentUser?.id ?? ''),
                                       style: TextStyle(
-                                        color: active ? Colors.black : cs.onSurface,
+                                        color: active
+                                            ? Colors.black
+                                            : cs.onSurface,
                                       ),
                                     ),
                                     subtitle: Text(
@@ -13338,7 +9485,7 @@ class _PostCardComposerPage extends StatefulWidget {
   })  : kind = _ComposerKind.collection,
         existingPreset = null,
         name = '',
-        mode = '',
+        mode = kImageRenderMode,
         payload = const <String, dynamic>{};
 
   final _ComposerKind kind;
@@ -13349,7 +9496,6 @@ class _PostCardComposerPage extends StatefulWidget {
   final bool initialIsPaid;
   final int? initialPriceCents;
   final String? initialAccentColorHex;
-
   final String? collectionId;
   final String collectionName;
   final String collectionDescription;
@@ -13373,31 +9519,6 @@ class _PostCardComposerPage extends StatefulWidget {
 
 class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   final AppRepository _repository = AppRepository.instance;
-  static const List<String> _fontOptions = <String>[
-    'Poppins',
-    'Roboto',
-    'Montserrat',
-    'Open Sans',
-    'Lato',
-    'Oswald',
-    'Raleway',
-    'Playfair Display',
-    'Bebas Neue',
-    'Pacifico',
-  ];
-  static const List<String> _aspectOptions = <String>[
-    '16:9 (width:height)',
-    '18:9 (width:height)',
-    '21:9 (width:height)',
-    '4:3 (width:height)',
-    '1:1 (square)',
-    '9:16 (height:width)',
-    '3:4 (height:width)',
-    '2.35:1 (width:height)',
-    '1.85:1 (width:height)',
-    '2.39:1 (width:height)',
-  ];
-
   late final TextEditingController _titleController;
   late final TextEditingController _descriptionController;
   late final TextEditingController _tagsController;
@@ -13408,3570 +9529,249 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   final Set<String> _selectedMentionIds = <String>{};
   final Map<String, AppUserProfile> _selectedMentionProfiles =
       <String, AppUserProfile>{};
-
   List<AppUserProfile> _mentionResults = const <AppUserProfile>[];
   Timer? _mentionDebounce;
   int _mentionToken = 0;
   bool _mentionLoading = false;
-
   bool _submitting = false;
-  bool _uploadingLayerImage = false;
   bool _isPublic = true;
   bool _isPaidContent = false;
-  bool _resolvingAccentColor = false;
-  bool _showPublishStep = false;
-  int _thumbnailIndex = 0;
   String _accentColorHex = '#FD4687';
-  String? _selected2dLayerKey;
-  String? _selected3dToken;
-  late String _thumbnailMode;
-  late Map<String, dynamic> _thumbnailPayload;
-  List<CollectionDraftItem> _editableCollectionItems = <CollectionDraftItem>[];
-  Map<String, dynamic>? _pullSourcePayload;
-  String? _pullSourceMode;
-  final PanoramaViewer360Controller _composer360PreviewController =
-      PanoramaViewer360Controller();
+  int _thumbnailIndex = 0;
+  late final List<CollectionDraftItem> _items;
 
-  bool get _isCardEditor => widget.editTarget == _ComposerEditTarget.card;
-  bool get _isDetailEditor => widget.editTarget == _ComposerEditTarget.detail;
-
-  Map<String, dynamic> _default2DControls() {
-    return <String, dynamic>{
-      'scale': 1.2,
-      'depth': 0.1,
-      'shift': 0.025,
-      'tilt': 0.0,
-      'tiltSensitivity': 1.0,
-      'sensitivity': 1.0,
-      'deadZoneX': 0.0,
-      'deadZoneY': 0.0,
-      'deadZoneZ': 0.0,
-      'deadZoneYaw': 0.0,
-      'deadZonePitch': 0.0,
-      'manualMode': false,
-      'manualHeadX': 0.0,
-      'manualHeadY': 0.0,
-      'manualHeadZ': 0.2,
-      'manualYaw': 0.0,
-      'manualPitch': 0.0,
-      'zBase': 0.2,
-      'anchorHeadX': 0.0,
-      'anchorHeadY': 0.0,
-      'selectedAspect': '16:9 (width:height)',
-    };
-  }
-
-  Map<String, dynamic> _blankPayloadForMode(String mode) {
-    if (mode == '3d') {
-      return PresetPayloadV2(
-        mode: '3d',
-        scene: <String, dynamic>{
-          'models': <Map<String, dynamic>>[],
-          'lights': <Map<String, dynamic>>[],
-          'audios': <Map<String, dynamic>>[],
-          'renderOrder': <String>[],
-        },
-        controls: <String, dynamic>{
-          'manual-mode': false,
-          'show-tracker': false,
-          'camera-mode': 'orbit',
-          'dz-x': 0.0,
-          'dz-y': 0.0,
-          'dz-z': 0.0,
-          'dz-yaw': 0.0,
-          'dz-pitch': 0.0,
-        },
-        meta: const <String, dynamic>{'editor': 'composer'},
-      ).toMap();
-    }
-    if (mode == '360') {
-      return blank360Payload(editor: 'composer');
-    }
-    return PresetPayloadV2(
-      mode: '2d',
-      scene: <String, dynamic>{
-        'top_bezel': <String, dynamic>{
-          'isRect': true,
-          'bezelType': 'top',
-          'order': -1000.0,
-          'isVisible': true,
-          'isLocked': true,
-        },
-        'bottom_bezel': <String, dynamic>{
-          'isRect': true,
-          'bezelType': 'bottom',
-          'order': 1000.0,
-          'isVisible': true,
-          'isLocked': true,
-        },
-        'turning_point': <String, dynamic>{
-          'x': 0.0,
-          'y': 0.0,
-          'scale': 1.0,
-          'order': 0.0,
-          'isVisible': false,
-          'isLocked': true,
-          'isText': false,
-          'canShift': false,
-          'canZoom': false,
-          'canTilt': false,
-          'minScale': 0.1,
-          'maxScale': 5.0,
-          'minX': -3000.0,
-          'maxX': 3000.0,
-          'minY': -3000.0,
-          'maxY': 3000.0,
-          'shiftSensMult': 1.0,
-          'zoomSensMult': 1.0,
-          'url': '',
-        },
-      },
-      controls: _default2DControls(),
-      meta: const <String, dynamic>{'editor': 'composer'},
-    ).toMap();
-  }
+  bool get _isCollection => widget.kind == _ComposerKind.collection;
 
   @override
   void initState() {
     super.initState();
-    if (widget.kind == _ComposerKind.single) {
-      final RenderPreset? existing = widget.existingPreset;
-      final String sourceMode = existing?.mode ?? widget.mode;
-      final Map<String, dynamic> sourcePayload =
-          existing?.payload ?? widget.payload;
-      _titleController = TextEditingController(
-        text:
-            existing?.title.isNotEmpty == true ? existing!.title : widget.name,
-      );
-      _descriptionController =
-          TextEditingController(text: existing?.description ?? '');
-      _tagsController = TextEditingController(
-        text: (existing?.tags ?? const <String>[]).join(' ').trim(),
-      );
-      _isPublic = existing?.isPublic ?? true;
-      _pullSourceMode = sourceMode;
-      _pullSourcePayload =
-          jsonDecode(jsonEncode(sourcePayload)) as Map<String, dynamic>;
-      if (_isDetailEditor) {
-        _thumbnailMode = sourceMode;
-        _thumbnailPayload =
-            jsonDecode(jsonEncode(sourcePayload)) as Map<String, dynamic>;
-      } else if (widget.isEdit) {
-        _thumbnailMode = existing?.thumbnailMode ?? widget.mode;
-        final payload = existing?.thumbnailPayload.isNotEmpty == true
-            ? existing!.thumbnailPayload
-            : widget.payload;
-        _thumbnailPayload =
-            jsonDecode(jsonEncode(payload)) as Map<String, dynamic>;
-      } else if (widget.startBlankCard) {
-        _thumbnailMode = sourceMode;
-        _thumbnailPayload = _blankPayloadForMode(_thumbnailMode);
-      } else {
-        _thumbnailMode = existing?.thumbnailMode ?? widget.mode;
-        final payload = existing?.thumbnailPayload.isNotEmpty == true
-            ? existing!.thumbnailPayload
-            : widget.payload;
-        _thumbnailPayload =
-            jsonDecode(jsonEncode(payload)) as Map<String, dynamic>;
-      }
-      _selectedMentionIds.addAll(existing?.mentionUserIds ?? const <String>[]);
-    } else {
-      _editableCollectionItems = widget.items
-          .map(
-            (item) => CollectionDraftItem(
-              mode: item.mode,
-              name: item.name,
-              snapshot:
-                  jsonDecode(jsonEncode(item.snapshot)) as Map<String, dynamic>,
+    final RenderPreset? existing = widget.existingPreset;
+    _items = widget.items
+        .map(
+          (item) => CollectionDraftItem(
+            mode: kImageRenderMode,
+            name: item.name,
+            snapshot: normalizeImagePayload(
+              item.snapshot,
+              fallbackMode: item.mode,
+              editor: 'collection_item_normalizer',
             ),
-          )
-          .toList();
-      _titleController = TextEditingController(text: widget.collectionName);
-      _descriptionController =
-          TextEditingController(text: widget.collectionDescription);
-      _tagsController = TextEditingController(text: widget.tags.join(' '));
-      _selectedMentionIds.addAll(widget.mentionUserIds);
-      _isPublic = widget.published;
-      if (_editableCollectionItems.isNotEmpty) {
-        _pullSourceMode = _editableCollectionItems.first.mode;
-        _pullSourcePayload =
-            jsonDecode(jsonEncode(_editableCollectionItems.first.snapshot))
-                as Map<String, dynamic>;
-      }
-      if (_editableCollectionItems.isNotEmpty) {
-        if (_isDetailEditor) {
-          _thumbnailMode = _editableCollectionItems.first.mode;
-          _thumbnailPayload = jsonDecode(
-            jsonEncode(_editableCollectionItems.first.snapshot),
-          ) as Map<String, dynamic>;
-        } else if (widget.isEdit) {
-          _thumbnailMode =
-              widget.initialCardMode ?? _editableCollectionItems.first.mode;
-          final payload = widget.initialCardPayload.isNotEmpty
-              ? widget.initialCardPayload
-              : _editableCollectionItems.first.snapshot;
-          _thumbnailPayload =
-              jsonDecode(jsonEncode(payload)) as Map<String, dynamic>;
-        } else if (widget.startBlankCard) {
-          _thumbnailMode = _editableCollectionItems.first.mode;
-          _thumbnailPayload = _blankPayloadForMode(_thumbnailMode);
-        } else {
-          _thumbnailMode =
-              widget.initialCardMode ?? _editableCollectionItems.first.mode;
-          final payload = widget.initialCardPayload.isNotEmpty
-              ? widget.initialCardPayload
-              : _editableCollectionItems.first.snapshot;
-          _thumbnailPayload =
-              jsonDecode(jsonEncode(payload)) as Map<String, dynamic>;
-        }
-      } else {
-        _thumbnailMode = '2d';
-        _thumbnailPayload = _blankPayloadForMode('2d');
-      }
+          ),
+        )
+        .toList();
+    _titleController = TextEditingController(
+      text: _isCollection
+          ? widget.collectionName
+          : (existing?.title.isNotEmpty == true
+              ? existing!.title
+              : widget.name),
+    );
+    _descriptionController = TextEditingController(
+      text: _isCollection
+          ? widget.collectionDescription
+          : existing?.description ?? '',
+    );
+    _tagsController = TextEditingController(
+      text: (_isCollection ? widget.tags : existing?.tags ?? const <String>[])
+          .join(' '),
+    );
+    _isPublic = _isCollection ? widget.published : existing?.isPublic ?? true;
+    _isPaidContent = widget.initialIsPaid;
+    if (widget.initialPriceCents != null) {
+      _priceController.text = (widget.initialPriceCents! / 100).toStringAsFixed(
+        widget.initialPriceCents! % 100 == 0 ? 0 : 2,
+      );
     }
-    final bool seedIsPaid = widget.kind == _ComposerKind.single
-        ? (widget.existingPreset?.isPaid ?? widget.initialIsPaid)
-        : widget.initialIsPaid;
-    final int? seedPriceCents = widget.kind == _ComposerKind.single
-        ? (widget.existingPreset?.priceCents ?? widget.initialPriceCents)
-        : widget.initialPriceCents;
-    final String? seedAccentHex = widget.kind == _ComposerKind.single
-        ? (widget.existingPreset?.accentColorHex ?? widget.initialAccentColorHex)
-        : widget.initialAccentColorHex;
-    _isPaidContent = seedIsPaid;
-    if (_isPaidContent) {
-      _priceController.text = _priceInputFromCents(seedPriceCents);
-    }
-    _accentColorHex = _normalizeAccentHex(seedAccentHex) ?? '#FD4687';
+    _accentColorHex = widget.initialAccentColorHex ?? '#FD4687';
     _accentHexController = TextEditingController(text: _accentColorHex);
-    _ensure3DWindowLayerDefaults();
-    _ensureTurningPointLayer();
-    _ensure2DLayerSelection();
-    _ensure3DSelection();
-    if ((seedAccentHex ?? '').trim().isEmpty) {
-      unawaited(_autoDetectAccentColor());
-    }
-    _mentionController.addListener(_onMentionQueryChanged);
+    final mentions = _isCollection
+        ? widget.mentionUserIds
+        : existing?.mentionUserIds ?? const <String>[];
+    _selectedMentionIds.addAll(mentions);
+    _mentionController.addListener(_scheduleMentionSearch);
   }
 
   @override
   void dispose() {
+    _mentionDebounce?.cancel();
     _titleController.dispose();
     _descriptionController.dispose();
     _tagsController.dispose();
+    _mentionController
+      ..removeListener(_scheduleMentionSearch)
+      ..dispose();
     _priceController.dispose();
     _accentHexController.dispose();
-    _mentionController.removeListener(_onMentionQueryChanged);
-    _mentionController.dispose();
-    _mentionDebounce?.cancel();
-    _composer360PreviewController.dispose();
     super.dispose();
   }
 
-  void _onMentionQueryChanged() {
+  void _scheduleMentionSearch() {
     _mentionDebounce?.cancel();
-    _mentionDebounce =
-        Timer(const Duration(milliseconds: 260), _searchMentions);
-  }
-
-  Future<void> _searchMentions() async {
-    final query = _mentionController.text.trim();
-    if (query.isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _mentionLoading = false;
-        _mentionResults = const <AppUserProfile>[];
-      });
+    final String query = _mentionController.text.trim().replaceFirst('@', '');
+    if (query.length < 2) {
+      setState(() => _mentionResults = const <AppUserProfile>[]);
       return;
     }
     final int token = ++_mentionToken;
-    setState(() => _mentionLoading = true);
-    try {
-      final results = await QueryGuard.run(
-        () => _repository.searchMentionTargets(query, limit: 12),
-      );
-      if (!mounted || token != _mentionToken) return;
-      setState(() {
-        _mentionLoading = false;
-        _mentionResults = results
-            .where((profile) => !_selectedMentionIds.contains(profile.userId))
-            .toList();
-      });
-    } catch (_) {
-      if (!mounted || token != _mentionToken) return;
-      setState(() {
-        _mentionLoading = false;
-        _mentionResults = const <AppUserProfile>[];
-      });
-    }
+    _mentionDebounce = Timer(const Duration(milliseconds: 260), () async {
+      setState(() => _mentionLoading = true);
+      try {
+        final results = await QueryGuard.run(
+          () => _repository.searchMentionTargets(query, limit: 8),
+        );
+        if (!mounted || token != _mentionToken) return;
+        setState(() {
+          _mentionResults = results;
+          _mentionLoading = false;
+        });
+      } catch (_) {
+        if (!mounted || token != _mentionToken) return;
+        setState(() => _mentionLoading = false);
+      }
+    });
   }
 
   void _addMention(AppUserProfile profile) {
     setState(() {
       _selectedMentionIds.add(profile.userId);
       _selectedMentionProfiles[profile.userId] = profile;
-      _mentionResults = _mentionResults
-          .where((element) => element.userId != profile.userId)
-          .toList();
       _mentionController.clear();
+      _mentionResults = const <AppUserProfile>[];
     });
   }
 
-  void _removeMention(String userId) {
+  void _removeMention(String id) {
     setState(() {
-      _selectedMentionIds.remove(userId);
-      _selectedMentionProfiles.remove(userId);
+      _selectedMentionIds.remove(id);
+      _selectedMentionProfiles.remove(id);
     });
   }
 
-  String _priceInputFromCents(int? cents) {
-    final int value = (cents ?? 0).clamp(0, 999999999);
-    if (value <= 0) return '';
-    if (value % 100 == 0) {
-      return (value ~/ 100).toString();
-    }
-    return (value / 100).toStringAsFixed(2);
+  List<String> _tagsFromInput() {
+    return _tagsController.text
+        .split(RegExp(r'[\s,]+'))
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
   }
 
   int? _priceInputToCents(String raw) {
-    final String text = raw.trim();
-    if (text.isEmpty) return null;
-    final double? parsed = double.tryParse(text);
-    if (parsed == null || parsed.isNaN || parsed.isInfinite || parsed < 0) {
-      return null;
-    }
-    return (parsed * 100).round().clamp(0, 999999999).toInt();
+    final String normalized = raw.trim().replaceAll(',', '');
+    if (normalized.isEmpty) return null;
+    final double? dollars = double.tryParse(normalized);
+    if (dollars == null) return null;
+    return (dollars * 100).round().clamp(0, 999999999);
   }
 
-  String? _normalizeAccentHex(String? raw) {
-    final String value = (raw ?? '').trim();
-    if (value.isEmpty) return null;
-    final String normalized = value.startsWith('#') ? value : '#$value';
-    if (!RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(normalized)) return null;
-    return normalized.toUpperCase();
-  }
-
-  void _applyAccentText(String raw) {
-    final String? normalized = _normalizeAccentHex(raw);
-    if (normalized == null) return;
-    if (!mounted) return;
-    setState(() => _accentColorHex = normalized);
-  }
-
-  String? _extractAccentFromPayload(Map<String, dynamic> payload) {
-    bool usableAccent(String hex) {
-      final int? parsed = int.tryParse(hex.substring(1), radix: 16);
-      if (parsed == null) return false;
-      final int red = (parsed >> 16) & 0xFF;
-      final int green = (parsed >> 8) & 0xFF;
-      final int blue = parsed & 0xFF;
-      final int maxChannel = math.max(red, math.max(green, blue));
-      final int minChannel = math.min(red, math.min(green, blue));
-      final int intensity = red + green + blue;
-      final int spread = maxChannel - minChannel;
-      return intensity > 120 && spread > 14;
-    }
-
-    String? findHexInValue(dynamic value) {
-      if (value == null) return null;
-      if (value is String) {
-        final String? normalized = _normalizeAccentHex(value);
-        if (normalized == null) return null;
-        return usableAccent(normalized) ? normalized : null;
-      }
-      if (value is num) {
-        final int numeric = value.toInt();
-        if (numeric >= 0x000000 && numeric <= 0xFFFFFF) {
-          final String normalized =
-              '#${numeric.toRadixString(16).padLeft(6, '0')}'.toUpperCase();
-          return usableAccent(normalized) ? normalized : null;
-        }
-      }
-      return null;
-    }
-
-    final List<dynamic> queue = <dynamic>[payload];
-    int visited = 0;
-    while (queue.isNotEmpty && visited < 900) {
-      visited += 1;
-      final dynamic current = queue.removeAt(0);
-      if (current is Map) {
-        for (final MapEntry<dynamic, dynamic> entry in current.entries) {
-          final String key = entry.key.toString().toLowerCase();
-          if (key.contains('accent')) {
-            final String? accent = findHexInValue(entry.value);
-            if (accent != null) return accent;
-          }
-          if (key.contains('color') ||
-              key.contains('stroke') ||
-              key.contains('fill')) {
-            final String? color = findHexInValue(entry.value);
-            if (color != null) return color;
-          }
-          if (entry.value is Map || entry.value is List) {
-            queue.add(entry.value);
-          }
-        }
-      } else if (current is List) {
-        for (final dynamic value in current) {
-          if (value is Map || value is List) {
-            queue.add(value);
-            continue;
-          }
-          final String? color = findHexInValue(value);
-          if (color != null) return color;
-        }
-      }
-    }
-    return null;
-  }
-
-  Future<String?> _sampleAccentFromImageUrl(String? imageUrl) async {
-    if (!kIsWeb) return null;
-    final String normalizedUrl = (imageUrl ?? '').trim();
-    if (normalizedUrl.isEmpty) return null;
-    try {
-      final html.ImageElement image = html.ImageElement()
-        ..crossOrigin = 'anonymous'
-        ..src = normalizedUrl;
-      await image.onLoad.first.timeout(const Duration(seconds: 6));
-      final html.CanvasElement canvas =
-          html.CanvasElement(width: 20, height: 20);
-      final html.CanvasRenderingContext2D context = canvas.context2D;
-      context.drawImageScaled(image, 0, 0, 20, 20);
-      final html.ImageData pixelData = context.getImageData(0, 0, 20, 20);
-      final List<int> bytes = pixelData.data;
-      int red = 0;
-      int green = 0;
-      int blue = 0;
-      int count = 0;
-      for (int i = 0; i + 3 < bytes.length; i += 4) {
-        final int alpha = bytes[i + 3];
-        if (alpha < 24) continue;
-        red += bytes[i];
-        green += bytes[i + 1];
-        blue += bytes[i + 2];
-        count += 1;
-      }
-      if (count == 0) return null;
-      red = (red / count).round().clamp(0, 255);
-      green = (green / count).round().clamp(0, 255);
-      blue = (blue / count).round().clamp(0, 255);
-      return '#${red.toRadixString(16).padLeft(2, '0')}${green.toRadixString(16).padLeft(2, '0')}${blue.toRadixString(16).padLeft(2, '0')}'
-          .toUpperCase();
-    } catch (_) {
-      return null;
+  void _applyAccentText(String value) {
+    final String raw = value.trim();
+    final String normalized = raw.startsWith('#') ? raw : '#$raw';
+    if (RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(normalized)) {
+      setState(() => _accentColorHex = normalized.toUpperCase());
     }
   }
 
-  Future<void> _autoDetectAccentColor() async {
-    if (_resolvingAccentColor) return;
-    if (mounted) {
-      setState(() => _resolvingAccentColor = true);
-    }
-    try {
-      String? detected = _extractAccentFromPayload(_thumbnailPayload);
-      detected ??= await _sampleAccentFromImageUrl(
-        ambientImageUrlFromPayload(
-          _thumbnailPayload,
-          fallbackMode: _thumbnailMode,
-        ),
-      );
-      if (!mounted || detected == null) return;
-      final String resolvedAccent = detected;
-      setState(() {
-        _accentColorHex = resolvedAccent;
-        _accentHexController.text = _accentColorHex;
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _resolvingAccentColor = false);
-      }
-    }
-  }
-
-  Future<void> _pickAccentFromScreen() async {
-    if (!kIsWeb) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('EyeDropper is supported on web only.')),
-      );
-      return;
-    }
-    try {
-      final JSAny? eyeDropperCtorAny = globalContext['EyeDropper'];
-      if (eyeDropperCtorAny == null || eyeDropperCtorAny.isUndefinedOrNull) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('EyeDropper is not supported in this browser.'),
-          ),
-        );
-        return;
-      }
-      final JSFunction eyeDropperCtor = eyeDropperCtorAny as JSFunction;
-      final JSObject picker =
-          eyeDropperCtor.callAsConstructorVarArgs<JSObject>(const <JSAny?>[]);
-      final JSPromise<JSAny?> openPromise = picker.callMethodVarArgs<
-          JSPromise<JSAny?>>('open'.toJS, const <JSAny?>[]);
-      final JSAny? result = await openPromise.toDart;
-      String? sampledHex;
-      if (result is JSObject) {
-        final JSAny? rawHex = result['sRGBHex'];
-        if (rawHex != null && rawHex.isDefinedAndNotNull && rawHex is JSString) {
-          sampledHex = rawHex.toDart;
-        }
-      }
-      final String? normalized = _normalizeAccentHex(sampledHex);
-      if (normalized == null || !mounted) return;
-      setState(() {
-        _accentColorHex = normalized;
-        _accentHexController.text = normalized;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Color pick canceled.')),
-      );
-    }
-  }
-
-  List<String> _parseTags(String raw) {
-    return raw
-        .split(RegExp(r'[\s,]+'))
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .map((e) => e.startsWith('#') ? e : '#$e')
-        .toSet()
-        .toList();
-  }
-
-  void _persistActiveCollectionItemSnapshot() {
-    if (widget.kind != _ComposerKind.collection || !_isDetailEditor) return;
-    if (_thumbnailIndex < 0 ||
-        _thumbnailIndex >= _editableCollectionItems.length) {
-      return;
-    }
-    _editableCollectionItems[_thumbnailIndex] = CollectionDraftItem(
-      mode: _thumbnailMode,
-      name: _editableCollectionItems[_thumbnailIndex].name,
-      snapshot:
-          jsonDecode(jsonEncode(_thumbnailPayload)) as Map<String, dynamic>,
+  Map<String, dynamic> _singlePayload() {
+    return normalizeImagePayload(
+      widget.payload,
+      fallbackMode: widget.mode,
+      editor: 'composer_single',
     );
   }
 
-  void _setThumbnailFromCollectionIndex(int index) {
-    if (index < 0 || index >= _editableCollectionItems.length) return;
-    _persistActiveCollectionItemSnapshot();
-    final item = _editableCollectionItems[index];
-    _pullSourceMode = item.mode;
-    _pullSourcePayload =
-        jsonDecode(jsonEncode(item.snapshot)) as Map<String, dynamic>;
-    setState(() {
-      _thumbnailIndex = index;
-      _thumbnailMode = item.mode;
-      _thumbnailPayload =
-          jsonDecode(jsonEncode(item.snapshot)) as Map<String, dynamic>;
-      _ensure3DWindowLayerDefaults();
-      _ensureTurningPointLayer();
-      _ensure2DLayerSelection();
-      _ensure3DSelection();
-    });
-  }
-
-  void _pullFromSourcePayload() {
-    final source = _pullSourcePayload;
-    final sourceMode = _pullSourceMode;
-    if (source == null || sourceMode == null || sourceMode.isEmpty) return;
-    setState(() {
-      _thumbnailMode = sourceMode;
-      _thumbnailPayload =
-          jsonDecode(jsonEncode(source)) as Map<String, dynamic>;
-      _ensure3DWindowLayerDefaults();
-      _ensureTurningPointLayer();
-      _ensure2DLayerSelection();
-      _ensure3DSelection();
-    });
-  }
-
-  void _ensure3DWindowLayerDefaults() {
-    if (_thumbnailMode != '3d') return;
-    final dynamic sceneRaw = _thumbnailPayload['scene'];
-    if (sceneRaw is! Map) return;
-    final Map<String, dynamic> scene = Map<String, dynamic>.from(sceneRaw);
-    final Map<String, dynamic> controls = _thumbnail3DControls();
-    bool changed = false;
-
-    final dynamic modelsRaw = scene['models'];
-    if (modelsRaw is List) {
-      final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
-      for (int i = 0; i < modelsRaw.length; i++) {
-        final item = modelsRaw[i];
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        if ((map['id']?.toString().trim().isEmpty ?? true)) {
-          map['id'] = 'model_$i';
-          changed = true;
-        }
-        if ((map['windowLayer']?.toString().isEmpty ?? true)) {
-          map['windowLayer'] = 'inside';
-          changed = true;
-        }
-        normalized.add(map);
-      }
-      scene['models'] = normalized;
+  Map<String, dynamic> _previewPayload() {
+    if (_isCollection) {
+      if (_items.isEmpty) return simpleImagePayload(imageUrl: '');
+      final int index = _thumbnailIndex.clamp(0, _items.length - 1);
+      return _items[index].snapshot;
     }
-
-    final dynamic lightsRaw = scene['lights'];
-    if (lightsRaw is List) {
-      final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
-      for (int i = 0; i < lightsRaw.length; i++) {
-        final item = lightsRaw[i];
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        if ((map['id']?.toString().trim().isEmpty ?? true)) {
-          map['id'] = 'light_$i';
-          changed = true;
-        }
-        if ((map['windowLayer']?.toString().isEmpty ?? true)) {
-          map['windowLayer'] = 'inside';
-          changed = true;
-        }
-        normalized.add(map);
-      }
-      scene['lights'] = normalized;
-    }
-
-    final dynamic audiosRaw = scene['audios'];
-    if (audiosRaw is List) {
-      final List<Map<String, dynamic>> normalized = <Map<String, dynamic>>[];
-      for (int i = 0; i < audiosRaw.length; i++) {
-        final item = audiosRaw[i];
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        if ((map['id']?.toString().trim().isEmpty ?? true)) {
-          map['id'] = 'audio_$i';
-          changed = true;
-        }
-        if ((map['windowLayer']?.toString().isEmpty ?? true)) {
-          map['windowLayer'] = 'inside';
-          changed = true;
-        }
-        normalized.add(map);
-      }
-      scene['audios'] = normalized;
-    }
-
-    final List<String> availableTokens = <String>[
-      ..._sceneEntityTokens(scene),
-    ];
-    final dynamic renderOrderRaw = scene['renderOrder'];
-    final List<String> renderOrder = renderOrderRaw is List
-        ? renderOrderRaw.map((e) => e.toString()).toList()
-        : <String>[];
-    final List<String> sanitized =
-        renderOrder.where((token) => availableTokens.contains(token)).toList();
-    for (final token in availableTokens) {
-      if (!sanitized.contains(token)) {
-        sanitized.add(token);
-      }
-    }
-    if (!const ListEquality<String>().equals(renderOrder, sanitized)) {
-      scene['renderOrder'] = sanitized;
-      changed = true;
-    }
-
-    final Map<String, dynamic> migratedControls =
-        Map<String, dynamic>.from(controls);
-    if (migratedControls.containsKey('manualMode') &&
-        !migratedControls.containsKey('manual-mode')) {
-      migratedControls['manual-mode'] = migratedControls['manualMode'];
-      changed = true;
-    }
-    if (migratedControls.containsKey('deadZoneX') &&
-        !migratedControls.containsKey('dz-x')) {
-      migratedControls['dz-x'] = migratedControls['deadZoneX'];
-      changed = true;
-    }
-    if (migratedControls.containsKey('deadZoneY') &&
-        !migratedControls.containsKey('dz-y')) {
-      migratedControls['dz-y'] = migratedControls['deadZoneY'];
-      changed = true;
-    }
-    if (migratedControls.containsKey('deadZoneZ') &&
-        !migratedControls.containsKey('dz-z')) {
-      migratedControls['dz-z'] = migratedControls['deadZoneZ'];
-      changed = true;
-    }
-    if (migratedControls.containsKey('deadZoneYaw') &&
-        !migratedControls.containsKey('dz-yaw')) {
-      migratedControls['dz-yaw'] = migratedControls['deadZoneYaw'];
-      changed = true;
-    }
-    if (migratedControls.containsKey('deadZonePitch') &&
-        !migratedControls.containsKey('dz-pitch')) {
-      migratedControls['dz-pitch'] = migratedControls['deadZonePitch'];
-      changed = true;
-    }
-    void ensureControlDefault(String key, dynamic value) {
-      if (!migratedControls.containsKey(key)) {
-        migratedControls[key] = value;
-        changed = true;
-      }
-    }
-
-    void ensureSceneDefault(String key, dynamic value) {
-      if (!scene.containsKey(key)) {
-        scene[key] = value;
-        changed = true;
-      }
-    }
-
-    ensureControlDefault('camera-mode', 'orbit');
-    ensureControlDefault('manual-mode', false);
-    ensureControlDefault('show-tracker', false);
-    ensureControlDefault('dz-x', 0.0);
-    ensureControlDefault('dz-y', 0.0);
-    ensureControlDefault('dz-z', 0.0);
-    ensureControlDefault('dz-yaw', 0.0);
-    ensureControlDefault('dz-pitch', 0.0);
-    ensureControlDefault('head-x', 0.0);
-    ensureControlDefault('head-y', 0.0);
-    ensureControlDefault('z-value', 0.2);
-    ensureControlDefault('yaw', 0.0);
-    ensureControlDefault('pitch', 0.0);
-
-    ensureSceneDefault('sunIntensity', 2.0);
-    ensureSceneDefault('ambLight', 0.5);
-    ensureSceneDefault('bloomIntensity', 1.0);
-    ensureSceneDefault('shadowQuality', '512');
-    ensureSceneDefault('shadowSoftness', 1.0);
-    ensureSceneDefault('envRot', 0.0);
-    ensureSceneDefault('initPos', <double>[0, 2, 10]);
-    ensureSceneDefault('initRot', <double>[0, 0, 0]);
-
-    if (!changed) return;
-    _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-      ..['scene'] = scene
-      ..['controls'] = migratedControls;
-  }
-
-  List<String> _sceneEntityTokens(Map<String, dynamic> scene) {
-    final List<String> tokens = <String>[];
-    final dynamic models = scene['models'];
-    if (models is List) {
-      for (final item in models) {
-        if (item is! Map) continue;
-        final id = (item['id'] ?? '').toString();
-        if (id.isEmpty) continue;
-        tokens.add('model:$id');
-      }
-    }
-    final dynamic lights = scene['lights'];
-    if (lights is List) {
-      for (final item in lights) {
-        if (item is! Map) continue;
-        final id = (item['id'] ?? '').toString();
-        if (id.isEmpty) continue;
-        tokens.add('light:$id');
-      }
-    }
-    final dynamic audios = scene['audios'];
-    if (audios is List) {
-      for (final item in audios) {
-        if (item is! Map) continue;
-        final id = (item['id'] ?? '').toString();
-        if (id.isEmpty) continue;
-        tokens.add('audio:$id');
-      }
-    }
-    return tokens;
-  }
-
-  void _ensure2DLayerSelection() {
-    if (_thumbnailMode != '2d') {
-      _selected2dLayerKey = null;
-      return;
-    }
-    final Map<String, dynamic> scene = _thumbnail2DScene();
-    if (scene.isEmpty) {
-      _selected2dLayerKey = null;
-      return;
-    }
-    if (_selected2dLayerKey != null && scene.containsKey(_selected2dLayerKey)) {
-      return;
-    }
-    final List<String> keys = scene.entries
-        .where((e) => e.value is Map<String, dynamic> || e.value is Map)
-        .map((e) => e.key.toString())
-        .toList();
-    _selected2dLayerKey = keys.isEmpty ? null : keys.first;
-  }
-
-  Map<String, dynamic> _thumbnail2DScene() {
-    final dynamic rawScene = _thumbnailPayload['scene'];
-    if (rawScene is Map<String, dynamic>) {
-      return Map<String, dynamic>.from(rawScene);
-    }
-    if (rawScene is Map) return Map<String, dynamic>.from(rawScene);
-    return <String, dynamic>{};
-  }
-
-  void _ensureTurningPointLayer() {
-    if (_thumbnailMode != '2d') return;
-    final Map<String, dynamic> scene = _thumbnail2DScene();
-    if (scene.containsKey('turning_point') &&
-        scene['turning_point'] is Map<String, dynamic>) {
-      return;
-    }
-    final List<double> orders = scene.entries
-        .where((entry) => entry.value is Map && entry.key != 'turning_point')
-        .map((entry) => _toDouble((entry.value as Map)['order'], 0))
-        .toList()
-      ..sort();
-    final int midIndex = orders.isEmpty
-        ? 0
-        : ((orders.length / 2).floor()).clamp(0, orders.length - 1).toInt();
-    final double midpointOrder = orders.isEmpty ? 0 : orders[midIndex];
-    scene['turning_point'] = <String, dynamic>{
-      'x': 0.0,
-      'y': 0.0,
-      'scale': 1.0,
-      'order': midpointOrder,
-      'isVisible': false,
-      'isLocked': true,
-      'isText': false,
-      'canShift': false,
-      'canZoom': false,
-      'canTilt': false,
-      'minScale': 0.1,
-      'maxScale': 5.0,
-      'minX': -3000.0,
-      'maxX': 3000.0,
-      'minY': -3000.0,
-      'maxY': 3000.0,
-      'shiftSensMult': 1.0,
-      'zoomSensMult': 1.0,
-      'url': '',
-    };
-    _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-      ..['scene'] = scene;
-  }
-
-  Map<String, dynamic> _thumbnailControls() {
-    final dynamic raw = _thumbnailPayload['controls'];
-    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return <String, dynamic>{};
-  }
-
-  List<String> _thumbnail2DLayerKeys() {
-    final scene = _thumbnail2DScene();
-    final keys = scene.entries
-        .where((e) => e.value is Map<String, dynamic> || e.value is Map)
-        .map((e) => e.key.toString())
-        .toList();
-    keys.sort((a, b) {
-      final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
-      final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
-      final int cmp = aOrder.compareTo(bOrder);
-      if (cmp != 0) return cmp;
-      if (a == 'turning_point' && b != 'turning_point') return 1;
-      if (b == 'turning_point' && a != 'turning_point') return -1;
-      return a.compareTo(b);
-    });
-    return keys;
-  }
-
-  Map<String, dynamic>? _selected2DLayerMap() {
-    final key = _selected2dLayerKey;
-    if (key == null) return null;
-    final scene = _thumbnail2DScene();
-    final raw = scene[key];
-    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return null;
-  }
-
-  bool _isUtilityLayerKey(String? key) {
-    if (key == null) return false;
-    return key == 'turning_point' ||
-        key == 'top_bezel' ||
-        key == 'bottom_bezel';
-  }
-
-  void _set2DLayerField(String key, String field, dynamic value) {
-    final scene = _thumbnail2DScene();
-    final raw = scene[key];
-    if (raw is! Map) return;
-    final layer = Map<String, dynamic>.from(raw);
-    layer[field] = value;
-    scene[key] = layer;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-      _ensure2DLayerSelection();
-    });
-  }
-
-  void _set2DControlField(String field, dynamic value) {
-    final controls = _thumbnailControls();
-    controls[field] = value;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['controls'] = controls;
-    });
-  }
-
-  void _setTurningPointOrder(double value) {
-    final scene = _thumbnail2DScene();
-    final raw = scene['turning_point'];
-    if (raw is! Map) return;
-    scene['turning_point'] = Map<String, dynamic>.from(raw)..['order'] = value;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-    });
-  }
-
-  Future<void> _promptAdd2DImageUrl() async {
-    final TextEditingController controller = TextEditingController();
-    final String? url = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Image URL'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'https://example.com/image.png',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (url == null || url.trim().isEmpty) return;
-    _add2DLayer(textLayer: false, imageUrl: url.trim());
-  }
-
-  Future<void> _upload2DImageFromDevice() async {
-    if (_uploadingLayerImage) return;
-    setState(() => _uploadingLayerImage = true);
-    try {
-      final picked = await pickDeviceFile(accept: 'image/*');
-      if (picked == null) return;
-      final String publicUrl = await _repository.uploadAssetBytes(
-        bytes: picked.bytes,
-        fileName: picked.name,
-        contentType: picked.contentType,
-        folder: 'composer-layers',
-      );
-      if (!mounted) return;
-      _add2DLayer(
-        textLayer: false,
-        imageUrl: publicUrl,
-        sourceName: picked.name,
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Image uploaded and layer added.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Image upload failed: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _uploadingLayerImage = false);
-      }
-    }
-  }
-
-  void _recenterComposerParallax() {
-    final frame = TrackingService.instance.frameNotifier.value;
-    final controls = _thumbnailControls();
-    final double zBase = frame.headZ.abs() < 0.000001
-        ? _toDouble(controls['zBase'], 0.2)
-        : frame.headZ;
-    controls['anchorHeadX'] = frame.headX;
-    controls['anchorHeadY'] = frame.headY;
-    controls['zBase'] = zBase;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['controls'] = controls;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Parallax baseline recentered.')),
-    );
-  }
-
-  void _handle2DPreviewPanUpdate(DragUpdateDetails details) {
-    if (_thumbnailMode != '2d') return;
-    final key = _selected2dLayerKey;
-    if (key == null) return;
-    final scene = _thumbnail2DScene();
-    final raw = scene[key];
-    if (raw is! Map) return;
-    final layer = Map<String, dynamic>.from(raw);
-    if (layer['isLocked'] == true) return;
-    final double x = _toDouble(layer['x'], 0) + details.delta.dx;
-    final double y = _toDouble(layer['y'], 0) + details.delta.dy;
-    layer['x'] = x;
-    layer['y'] = y;
-    scene[key] = layer;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-    });
-  }
-
-  void _handle2DPreviewPointerSignal(PointerSignalEvent event) {
-    if (_thumbnailMode != '2d' || event is! PointerScrollEvent) return;
-    final key = _selected2dLayerKey;
-    if (key == null) return;
-    final scene = _thumbnail2DScene();
-    final raw = scene[key];
-    if (raw is! Map) return;
-    final layer = Map<String, dynamic>.from(raw);
-    if (layer['isLocked'] == true) return;
-    final double current = _toDouble(layer['scale'], 1);
-    layer['scale'] = (current - event.scrollDelta.dy / 700).clamp(0.05, 10.0);
-    scene[key] = layer;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-    });
-  }
-
-  String _next2DLayerKey(String prefix) {
-    String sanitized = prefix.trim();
-    if (sanitized.isEmpty) sanitized = 'layer_';
-    sanitized = sanitized
-        .replaceAll(RegExp(r'[^A-Za-z0-9_]+'), '_')
-        .replaceAll(RegExp(r'_+'), '_')
-        .toLowerCase();
-    if (!sanitized.endsWith('_')) {
-      sanitized = '${sanitized}_';
-    }
-    final scene = _thumbnail2DScene();
-    int index = 1;
-    while (scene.containsKey('$sanitized$index')) {
-      index++;
-    }
-    return '$sanitized$index';
-  }
-
-  String _layerPrefixFromImageSource(String imageUrl) {
-    final String trimmed = imageUrl.trim();
-    if (trimmed.isEmpty) return 'layer_';
-    try {
-      final Uri uri = Uri.parse(trimmed);
-      String candidate = uri.pathSegments.isNotEmpty
-          ? uri.pathSegments.last
-          : trimmed.split('/').last;
-      if (candidate.isEmpty) return 'layer_';
-      candidate = Uri.decodeComponent(candidate);
-      candidate = candidate.split('?').first.split('#').first;
-      final int dot = candidate.lastIndexOf('.');
-      if (dot > 0) {
-        candidate = candidate.substring(0, dot);
-      }
-      candidate = candidate.trim();
-      if (candidate.isEmpty) return 'layer_';
-      return '${candidate}_';
-    } catch (_) {
-      final String fallback = trimmed.split('/').last.split('?').first;
-      if (fallback.isEmpty) return 'layer_';
-      final int dot = fallback.lastIndexOf('.');
-      final String raw =
-          dot > 0 ? fallback.substring(0, dot).trim() : fallback.trim();
-      return raw.isEmpty ? 'layer_' : '${raw}_';
-    }
-  }
-
-  void _normalize2DOrders(Map<String, dynamic> scene) {
-    final keys = scene.entries
-        .where((e) => e.key != 'turning_point' && e.value is Map)
-        .map((e) => e.key)
-        .toList();
-    keys.sort((a, b) {
-      final aOrder = _toDouble((scene[a] as Map?)?['order'], 0);
-      final bOrder = _toDouble((scene[b] as Map?)?['order'], 0);
-      return aOrder.compareTo(bOrder);
-    });
-    for (int i = 0; i < keys.length; i++) {
-      final raw = scene[keys[i]];
-      if (raw is! Map) continue;
-      final layer = Map<String, dynamic>.from(raw);
-      layer['order'] = i;
-      scene[keys[i]] = layer;
-    }
-  }
-
-  void _reorder2DLayer(int oldIndex, int newIndex) {
-    final scene = _thumbnail2DScene();
-    final keys = _thumbnail2DLayerKeys();
-    if (oldIndex < 0 || oldIndex >= keys.length) return;
-    if (newIndex < 0 || newIndex > keys.length) return;
-    if (newIndex > oldIndex) newIndex -= 1;
-    if (keys.isEmpty) return;
-    newIndex = newIndex.clamp(0, keys.length - 1);
-    final moved = keys.removeAt(oldIndex);
-    keys.insert(newIndex, moved);
-    for (int i = 0; i < keys.length; i++) {
-      final raw = scene[keys[i]];
-      if (raw is! Map) continue;
-      final layer = Map<String, dynamic>.from(raw);
-      layer['order'] = i;
-      scene[keys[i]] = layer;
-    }
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-      _selected2dLayerKey = moved;
-    });
-  }
-
-  void _add2DLayer({
-    required bool textLayer,
-    String imageUrl = '',
-    String sourceName = '',
-  }) {
-    final scene = _thumbnail2DScene();
-    if (!scene.containsKey('turning_point')) {
-      scene['turning_point'] = <String, dynamic>{
-        'x': 0.0,
-        'y': 0.0,
-        'scale': 1.0,
-        'order': 0.0,
-        'isVisible': false,
-        'isLocked': true,
-        'isText': false,
-        'canShift': false,
-        'canZoom': false,
-        'canTilt': false,
-        'minScale': 0.1,
-        'maxScale': 5.0,
-        'minX': -3000.0,
-        'maxX': 3000.0,
-        'minY': -3000.0,
-        'maxY': 3000.0,
-        'shiftSensMult': 1.0,
-        'zoomSensMult': 1.0,
-        'url': '',
-      };
-    }
-    final String inferredSource =
-        sourceName.trim().isNotEmpty ? sourceName.trim() : imageUrl;
-    final key = _next2DLayerKey(
-      textLayer ? 'text_' : _layerPrefixFromImageSource(inferredSource),
-    );
-    _normalize2DOrders(scene);
-    final int order = _thumbnail2DLayerKeys().length;
-    final Map<String, dynamic> layer = <String, dynamic>{
-      'x': 0.0,
-      'y': 0.0,
-      'scale': 1.0,
-      'order': order,
-      'isVisible': true,
-      'isLocked': false,
-      'isText': textLayer,
-      'canShift': true,
-      'canZoom': true,
-      'canTilt': true,
-      'minScale': 0.1,
-      'maxScale': 5.0,
-      'minX': -3000.0,
-      'maxX': 3000.0,
-      'minY': -3000.0,
-      'maxY': 3000.0,
-      'shiftSensMult': 1.0,
-      'zoomSensMult': 1.0,
-      if (textLayer) ...{
-        'textValue': 'New Text',
-        'fontSize': 40.0,
-        'fontWeightIndex': 4,
-        'isItalic': false,
-        'shadowBlur': 0.0,
-        'shadowColorHex': '#000000',
-        'strokeWidth': 0.0,
-        'strokeColorHex': '#000000',
-        'textColorHex': '#FFFFFF',
-        'fontFamily': 'Poppins',
-      } else ...{
-        'url': imageUrl,
-      },
-    };
-    scene[key] = layer;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-      _selected2dLayerKey = key;
-    });
-  }
-
-  void _duplicateSelected2DLayer() {
-    final key = _selected2dLayerKey;
-    if (key == null || _isUtilityLayerKey(key)) return;
-    final scene = _thumbnail2DScene();
-    final raw = scene[key];
-    if (raw is! Map) return;
-    _normalize2DOrders(scene);
-    final copyKey = _next2DLayerKey('${key}_copy_');
-    final Map<String, dynamic> copy =
-        jsonDecode(jsonEncode(raw)) as Map<String, dynamic>;
-    copy['order'] = _thumbnail2DLayerKeys().length;
-    scene[copyKey] = copy;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-      _selected2dLayerKey = copyKey;
-    });
-  }
-
-  void _deleteSelected2DLayer() {
-    final key = _selected2dLayerKey;
-    if (key == null || _isUtilityLayerKey(key)) return;
-    final scene = _thumbnail2DScene();
-    scene.remove(key);
-    _normalize2DOrders(scene);
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-      _ensure2DLayerSelection();
-    });
-  }
-
-  Map<String, dynamic> _thumbnail3DScene() {
-    final dynamic sceneRaw = _thumbnailPayload['scene'];
-    if (sceneRaw is Map<String, dynamic>) {
-      return Map<String, dynamic>.from(sceneRaw);
-    }
-    if (sceneRaw is Map) return Map<String, dynamic>.from(sceneRaw);
-    return <String, dynamic>{};
-  }
-
-  String _sceneKeyForType(String type) {
-    switch (type) {
-      case 'model':
-        return 'models';
-      case 'light':
-        return 'lights';
-      case 'audio':
-        return 'audios';
-      default:
-        return 'models';
-    }
-  }
-
-  List<Map<String, dynamic>> _listForEntityType(
-      Map<String, dynamic> scene, String type) {
-    final dynamic raw = scene[_sceneKeyForType(type)];
-    if (raw is! List) return <Map<String, dynamic>>[];
-    return raw
-        .map((e) =>
-            e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
-        .toList();
-  }
-
-  void _setListForEntityType(
-    Map<String, dynamic> scene,
-    String type,
-    List<Map<String, dynamic>> list,
-  ) {
-    scene[_sceneKeyForType(type)] = list;
-  }
-
-  List<String> _ordered3dEntityTokens([Map<String, dynamic>? inputScene]) {
-    final scene = inputScene ?? _thumbnail3DScene();
-    final available = _sceneEntityTokens(scene);
-    final dynamic rawOrder = scene['renderOrder'];
-    final List<String> stored = rawOrder is List
-        ? rawOrder.map((e) => e.toString()).toList()
-        : <String>[];
-    final List<String> ordered =
-        stored.where((token) => available.contains(token)).toList();
-    for (final token in available) {
-      if (!ordered.contains(token)) {
-        ordered.add(token);
-      }
-    }
-    return ordered;
-  }
-
-  void _ensure3DSelection() {
-    if (_thumbnailMode != '3d') {
-      _selected3dToken = null;
-      return;
-    }
-    final List<String> tokens = _ordered3dEntityTokens();
-    if (tokens.isEmpty) {
-      _selected3dToken = null;
-      return;
-    }
-    if (_selected3dToken != null && tokens.contains(_selected3dToken)) {
-      return;
-    }
-    _selected3dToken = tokens.first;
-  }
-
-  Map<String, dynamic> _thumbnail3DControls() {
-    final dynamic raw = _thumbnailPayload['controls'];
-    if (raw is Map<String, dynamic>) return Map<String, dynamic>.from(raw);
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return <String, dynamic>{};
-  }
-
-  void _set3DControlField(String field, dynamic value) {
-    final controls = _thumbnail3DControls();
-    controls[field] = value;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['controls'] = controls;
-    });
-  }
-
-  void _set3DSceneField(String field, dynamic value) {
-    final scene = _thumbnail3DScene();
-    scene[field] = value;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-      _ensure3DSelection();
-    });
-  }
-
-  void _set3DEntityField({
-    required String token,
-    required String field,
-    required dynamic value,
-  }) {
-    final parts = token.split(':');
-    if (parts.length != 2) return;
-    final String type = parts.first;
-    final String id = parts.last;
-    final scene = _thumbnail3DScene();
-    final list = _listForEntityType(scene, type);
-    final int index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
-    if (index < 0) return;
-    list[index] = Map<String, dynamic>.from(list[index])..[field] = value;
-    _setListForEntityType(scene, type, list);
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-    });
-  }
-
-  void _set3DEntityVectorComponent({
-    required String token,
-    required String field,
-    required int index,
-    required double value,
-  }) {
-    final entity = _entityByToken(_thumbnail3DScene(), token);
-    if (entity == null) return;
-    final dynamic raw = entity[field];
-    final List<double> next = <double>[
-      0,
-      0,
-      0,
-    ];
-    if (raw is List) {
-      for (int i = 0; i < raw.length && i < next.length; i++) {
-        next[i] = _toDouble(raw[i], 0);
-      }
-    } else if (field == 'scale' && raw is num) {
-      final double uniform = raw.toDouble();
-      for (int i = 0; i < next.length; i++) {
-        next[i] = uniform;
-      }
-    }
-    if (index >= 0 && index < next.length) {
-      next[index] = value;
-    }
-    _set3DEntityField(token: token, field: field, value: next);
-  }
-
-  double _vectorComponent(
-    dynamic raw,
-    int index,
-    double fallback,
-  ) {
-    if (raw is List && index >= 0 && index < raw.length) {
-      return _toDouble(raw[index], fallback);
-    }
-    if (raw is num) return raw.toDouble();
-    return fallback;
-  }
-
-  void _set3DSceneVectorComponent({
-    required String field,
-    required int index,
-    required double value,
-    List<double> fallback = const <double>[0, 0, 0],
-  }) {
-    final scene = _thumbnail3DScene();
-    final dynamic raw = scene[field];
-    final List<double> next = <double>[
-      fallback.isNotEmpty ? fallback[0] : 0,
-      fallback.length > 1 ? fallback[1] : 0,
-      fallback.length > 2 ? fallback[2] : 0,
-    ];
-    if (raw is List) {
-      for (int i = 0; i < raw.length && i < next.length; i++) {
-        next[i] = _toDouble(raw[i], next[i]);
-      }
-    }
-    if (index >= 0 && index < next.length) {
-      next[index] = value;
-    }
-    _set3DSceneField(field, next);
-  }
-
-  Map<String, dynamic> _thumbnail360Scene() {
-    final dynamic rawScene = _thumbnailPayload['scene'];
-    if (rawScene is Map<String, dynamic>) {
-      return <String, dynamic>{
-        ...default360Scene(),
-        ...Map<String, dynamic>.from(rawScene),
-      };
-    }
-    if (rawScene is Map) {
-      return <String, dynamic>{
-        ...default360Scene(),
-        ...Map<String, dynamic>.from(rawScene),
-      };
-    }
-    return default360Scene();
-  }
-
-  Map<String, dynamic> _thumbnail360Controls() {
-    final dynamic raw = _thumbnailPayload['controls'];
-    if (raw is Map<String, dynamic>) {
-      return <String, dynamic>{
-        ...default360Controls(),
-        ...Map<String, dynamic>.from(raw),
-      };
-    }
-    if (raw is Map) {
-      return <String, dynamic>{
-        ...default360Controls(),
-        ...Map<String, dynamic>.from(raw),
-      };
-    }
-    return default360Controls();
-  }
-
-  void _set360SceneField(String field, dynamic value) {
-    final Map<String, dynamic> scene = _thumbnail360Scene()..[field] = value;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-    });
-  }
-
-  void _set360ControlField(String field, dynamic value) {
-    final Map<String, dynamic> controls = _thumbnail360Controls()
-      ..[field] = value;
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['controls'] = controls;
-    });
-  }
-
-  Future<void> _promptAdd360AssetUrl() async {
-    final TextEditingController controller = TextEditingController(
-      text: (_thumbnail360Scene()['assetUrl'] ?? '').toString(),
-    );
-    final String? url = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Set 360 Asset URL'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'https://example.com/panorama.jpg',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Apply'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (url == null || url.trim().isEmpty) return;
-    _set360SceneField('assetUrl', url.trim());
-    _set360SceneField(
-      'assetKind',
-      infer360AssetKind(fileName: url.trim(), contentType: ''),
-    );
-  }
-
-  Future<void> _upload360AssetFromDevice() async {
-    if (_uploadingLayerImage) return;
-    setState(() => _uploadingLayerImage = true);
-    try {
-      final picked = await pickDeviceFile(accept: 'image/*,video/*');
-      if (picked == null) return;
-      final String publicUrl = await _repository.uploadAssetBytes(
-        bytes: picked.bytes,
-        fileName: picked.name,
-        contentType: picked.contentType,
-        folder: 'composer-360',
-      );
-      if (!mounted) return;
-      _set360SceneField('assetUrl', publicUrl);
-      _set360SceneField(
-        'assetKind',
-        infer360AssetKind(
-          fileName: picked.name,
-          contentType: picked.contentType,
-        ),
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('360 asset uploaded.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('360 upload failed: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _uploadingLayerImage = false);
-      }
-    }
-  }
-
-  String _next3dEntityId(Map<String, dynamic> scene, String type) {
-    final list = _listForEntityType(scene, type);
-    int idx = 1;
-    while (list.any((e) => (e['id'] ?? '').toString() == '${type}_$idx')) {
-      idx++;
-    }
-    return '${type}_$idx';
-  }
-
-  Map<String, dynamic>? _entityByToken(
-    Map<String, dynamic> scene,
-    String token, {
-    bool clone = true,
-  }) {
-    final parts = token.split(':');
-    if (parts.length != 2) return null;
-    final type = parts.first;
-    final id = parts.last;
-    final list = _listForEntityType(scene, type);
-    for (final item in list) {
-      if ((item['id'] ?? '').toString() == id) {
-        return clone ? Map<String, dynamic>.from(item) : item;
-      }
-    }
-    return null;
-  }
-
-  String _labelForEntityToken(String token, Map<String, dynamic> scene) {
-    final parts = token.split(':');
-    if (parts.length != 2) return token;
-    final type = parts.first;
-    final id = parts.last;
-    final entity = _entityByToken(scene, token);
-    final fallbackPrefix = type == 'model'
-        ? 'Model'
-        : type == 'light'
-            ? 'Light'
-            : 'Audio';
-    final named = (entity?['name'] ?? entity?['id'] ?? '').toString().trim();
-    if (named.isNotEmpty) return named;
-    return '$fallbackPrefix $id';
-  }
-
-  void _set3dWindowLayerByToken({
-    required String token,
-    required String layer,
-  }) {
-    if (_thumbnailMode != '3d') return;
-    final scene = _thumbnail3DScene();
-    final parts = token.split(':');
-    if (parts.length != 2) return;
-    final type = parts.first;
-    final id = parts.last;
-    final list = _listForEntityType(scene, type);
-    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
-    if (index < 0) return;
-    list[index] = Map<String, dynamic>.from(list[index])
-      ..['windowLayer'] = layer;
-    _setListForEntityType(scene, type, list);
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = scene;
-      _selected3dToken = token;
-    });
-  }
-
-  void _reorder3dEntity(int oldIndex, int newIndex) {
-    final scene = _thumbnail3DScene();
-    final order = _ordered3dEntityTokens(scene);
-    if (oldIndex < 0 || oldIndex >= order.length) return;
-    if (newIndex < 0 || newIndex > order.length) return;
-    if (newIndex > oldIndex) newIndex -= 1;
-    if (order.isEmpty) return;
-    newIndex = newIndex.clamp(0, order.length - 1);
-    final token = order.removeAt(oldIndex);
-    order.insert(newIndex, token);
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = (scene..['renderOrder'] = order);
-      _selected3dToken = token;
-    });
-  }
-
-  void _add3dEntity(String type) {
-    final scene = _thumbnail3DScene();
-    final list = _listForEntityType(scene, type);
-    final id = _next3dEntityId(scene, type);
-    if (type == 'model') {
-      list.add(<String, dynamic>{
-        'id': id,
-        'name': 'Model $id',
-        'url': '',
-        'position': <double>[0, 0, 0],
-        'rotation': <double>[0, 0, 0],
-        'scale': <double>[1, 1, 1],
-        'visible': true,
-        'windowLayer': 'inside',
-      });
-    } else if (type == 'light') {
-      list.add(<String, dynamic>{
-        'id': id,
-        'color': 'ffffff',
-        'intensity': 10,
-        'position': <double>[0, 5, 0],
-        'scale': 1,
-        'ghost': false,
-        'windowLayer': 'inside',
-      });
-    } else {
-      list.add(<String, dynamic>{
-        'id': id,
-        'url': '',
-        'volume': 1,
-        'position': <double>[0, 0, 0],
-        'ghost': false,
-        'windowLayer': 'inside',
-      });
-    }
-    _setListForEntityType(scene, type, list);
-    final order = _ordered3dEntityTokens(scene)..add('$type:$id');
-    final String newToken = '$type:$id';
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = (scene..['renderOrder'] = order.toSet().toList());
-      _selected3dToken = newToken;
-    });
-  }
-
-  void _duplicate3dEntity(String token) {
-    final scene = _thumbnail3DScene();
-    final parts = token.split(':');
-    if (parts.length != 2) return;
-    final type = parts.first;
-    final id = parts.last;
-    final list = _listForEntityType(scene, type);
-    final index = list.indexWhere((e) => (e['id'] ?? '').toString() == id);
-    if (index < 0) return;
-    final copy = Map<String, dynamic>.from(list[index]);
-    final newId = _next3dEntityId(scene, type);
-    copy['id'] = newId;
-    list.insert(index + 1, copy);
-    _setListForEntityType(scene, type, list);
-    final order = _ordered3dEntityTokens(scene);
-    final orderIndex = order.indexOf(token);
-    if (orderIndex >= 0) {
-      order.insert(orderIndex + 1, '$type:$newId');
-    } else {
-      order.add('$type:$newId');
-    }
-    final String newToken = '$type:$newId';
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = (scene..['renderOrder'] = order);
-      _selected3dToken = newToken;
-    });
-  }
-
-  void _delete3dEntity(String token) {
-    final scene = _thumbnail3DScene();
-    final parts = token.split(':');
-    if (parts.length != 2) return;
-    final type = parts.first;
-    final id = parts.last;
-    final list = _listForEntityType(scene, type);
-    list.removeWhere((e) => (e['id'] ?? '').toString() == id);
-    _setListForEntityType(scene, type, list);
-    final order = _ordered3dEntityTokens(scene)..remove(token);
-    setState(() {
-      _thumbnailPayload = Map<String, dynamic>.from(_thumbnailPayload)
-        ..['scene'] = (scene..['renderOrder'] = order);
-      if (_selected3dToken == token) {
-        _selected3dToken = order.isEmpty ? null : order.first;
-      }
-    });
-  }
-
-  double _toDouble(dynamic value, double fallback) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? fallback;
-  }
-
-  Widget _build3DWindowLayerPanel(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final scene = _thumbnail3DScene();
-    final controls = _thumbnail3DControls();
-    final List<String> tokens = _ordered3dEntityTokens(scene);
-    final String? selectedToken =
-        _selected3dToken != null && tokens.contains(_selected3dToken)
-            ? _selected3dToken
-            : (tokens.isEmpty ? null : tokens.first);
-    final Map<String, dynamic>? selectedEntity =
-        selectedToken == null ? null : _entityByToken(scene, selectedToken);
-    final String selectedType = selectedToken?.split(':').first ?? '';
-
-    bool asBool(dynamic value, [bool fallback = false]) {
-      if (value is bool) return value;
-      final String raw = value?.toString().toLowerCase() ?? '';
-      if (raw == 'true') return true;
-      if (raw == 'false') return false;
-      return fallback;
-    }
-
-    final bool manualMode =
-        asBool(controls['manual-mode']) || asBool(controls['manualMode']);
-
-    final List<double> initPos = <double>[
-      _vectorComponent(scene['initPos'], 0, 0),
-      _vectorComponent(scene['initPos'], 1, 2),
-      _vectorComponent(scene['initPos'], 2, 10),
-    ];
-    final List<double> initRot = <double>[
-      _vectorComponent(scene['initRot'], 0, 0),
-      _vectorComponent(scene['initRot'], 1, 0),
-      _vectorComponent(scene['initRot'], 2, 0),
-    ];
-
-    final String shadowQuality = () {
-      final raw = (scene['shadowQuality'] ?? controls['shadowQuality'] ?? '512')
-          .toString();
-      const valid = <String>{'256', '512', '1024', '2048'};
-      return valid.contains(raw) ? raw : '512';
-    }();
-
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: cs.outline.withValues(alpha: 0.2),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '3D Card Editor',
-            style: TextStyle(
-              color: cs.onSurface,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Full 3D controls (entities, world/FX, camera, and tracking).',
-            style: TextStyle(
-              color: cs.onSurfaceVariant,
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: () => _add3dEntity('model'),
-                icon: const Icon(Icons.add_circle_outline, size: 16),
-                label: const Text('Add Model'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _add3dEntity('light'),
-                icon: const Icon(Icons.wb_incandescent_outlined, size: 16),
-                label: const Text('Add Light'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _add3dEntity('audio'),
-                icon: const Icon(Icons.graphic_eq_outlined, size: 16),
-                label: const Text('Add Audio'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (tokens.isEmpty)
-            Text(
-              'No 3D entities found. Add a model/light/audio to start.',
-              style: TextStyle(color: cs.onSurfaceVariant),
-            )
-          else
-            Container(
-              constraints: const BoxConstraints(maxHeight: 240),
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: cs.outline.withValues(alpha: 0.14)),
-              ),
-              child: ReorderableListView.builder(
-                shrinkWrap: true,
-                itemCount: tokens.length,
-                onReorder: _reorder3dEntity,
-                itemBuilder: (context, index) {
-                  final token = tokens[index];
-                  final parts = token.split(':');
-                  final type = parts.first;
-                  final entity = _entityByToken(scene, token);
-                  final String layer =
-                      (entity?['windowLayer'] ?? 'inside').toString();
-                  return InkWell(
-                    key: ValueKey<String>('entity-$token'),
-                    onTap: () => setState(() => _selected3dToken = token),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: selectedToken == token
-                            ? cs.primary.withValues(alpha: 0.12)
-                            : Colors.transparent,
-                        border: Border(
-                          bottom: BorderSide(
-                            color: cs.outline.withValues(alpha: 0.12),
-                          ),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _labelForEntityToken(token, scene),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              Text(
-                                type.toUpperCase(),
-                                style: TextStyle(
-                                  color: cs.onSurfaceVariant,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: 'Duplicate',
-                                onPressed: () => _duplicate3dEntity(token),
-                                icon: const Icon(Icons.copy_outlined, size: 16),
-                              ),
-                              IconButton(
-                                tooltip: 'Delete',
-                                onPressed: () => _delete3dEntity(token),
-                                icon:
-                                    const Icon(Icons.delete_outline, size: 16),
-                              ),
-                            ],
-                          ),
-                          SegmentedButton<String>(
-                            segments: const [
-                              ButtonSegment<String>(
-                                value: 'inside',
-                                label: Text('Inside'),
-                              ),
-                              ButtonSegment<String>(
-                                value: 'outside',
-                                label: Text('Outside'),
-                              ),
-                            ],
-                            selected: <String>{layer},
-                            onSelectionChanged: (values) {
-                              _set3dWindowLayerByToken(
-                                token: token,
-                                layer: values.first,
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          if (selectedEntity != null && selectedToken != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              'Selected: ${_labelForEntityToken(selectedToken, scene)}',
-              style: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (selectedType == 'model')
-              TextFormField(
-                key: ValueKey<String>(
-                  'model-name-$selectedToken-${selectedEntity['name'] ?? ''}',
-                ),
-                initialValue: (selectedEntity['name'] ?? '').toString(),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'name',
-                  value: value.trim(),
-                ),
-                decoration: const InputDecoration(labelText: 'Model Name'),
-              ),
-            if (selectedType == 'model' || selectedType == 'audio') ...[
-              const SizedBox(height: 8),
-              TextFormField(
-                key: ValueKey<String>(
-                  'entity-url-$selectedToken-${selectedEntity['url'] ?? ''}',
-                ),
-                initialValue: (selectedEntity['url'] ?? '').toString(),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'url',
-                  value: value.trim(),
-                ),
-                decoration: InputDecoration(
-                  labelText:
-                      selectedType == 'model' ? 'Model URL' : 'Audio URL',
-                ),
-              ),
-            ],
-            if (selectedType == 'model') ...[
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Visible'),
-                value: asBool(selectedEntity['visible'], true),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'visible',
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position X',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 0, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 0,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position Y',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 1, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 1,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position Z',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 2, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 2,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Rotation X',
-                min: -6.28,
-                max: 6.28,
-                value: _vectorComponent(selectedEntity['rotation'], 0, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'rotation',
-                  index: 0,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Rotation Y',
-                min: -6.28,
-                max: 6.28,
-                value: _vectorComponent(selectedEntity['rotation'], 1, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'rotation',
-                  index: 1,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Rotation Z',
-                min: -6.28,
-                max: 6.28,
-                value: _vectorComponent(selectedEntity['rotation'], 2, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'rotation',
-                  index: 2,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Scale X',
-                min: 0.01,
-                max: 10,
-                value: _vectorComponent(selectedEntity['scale'], 0, 1),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'scale',
-                  index: 0,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Scale Y',
-                min: 0.01,
-                max: 10,
-                value: _vectorComponent(selectedEntity['scale'], 1, 1),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'scale',
-                  index: 1,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Scale Z',
-                min: 0.01,
-                max: 10,
-                value: _vectorComponent(selectedEntity['scale'], 2, 1),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'scale',
-                  index: 2,
-                  value: value,
-                ),
-              ),
-            ] else if (selectedType == 'light') ...[
-              TextFormField(
-                key: ValueKey<String>(
-                  'light-color-$selectedToken-${selectedEntity['color'] ?? ''}',
-                ),
-                initialValue: (selectedEntity['color'] ?? 'ffffff').toString(),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'color',
-                  value: value.replaceAll('#', '').trim(),
-                ),
-                decoration: const InputDecoration(labelText: 'Color (hex)'),
-              ),
-              _composerSlider(
-                label: 'Intensity',
-                min: 0,
-                max: 50,
-                value: _toDouble(selectedEntity['intensity'], 10),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'intensity',
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position X',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 0, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 0,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position Y',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 1, 5),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 1,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position Z',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 2, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 2,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Helper Scale',
-                min: 0.1,
-                max: 10,
-                value: _toDouble(selectedEntity['scale'], 1),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'scale',
-                  value: value,
-                ),
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Ghost (hide helper)'),
-                value: asBool(selectedEntity['ghost']),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'ghost',
-                  value: value,
-                ),
-              ),
-            ] else if (selectedType == 'audio') ...[
-              _composerSlider(
-                label: 'Volume',
-                min: 0,
-                max: 2,
-                value: _toDouble(selectedEntity['volume'], 1),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'volume',
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position X',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 0, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 0,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position Y',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 1, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 1,
-                  value: value,
-                ),
-              ),
-              _composerSlider(
-                label: 'Position Z',
-                min: -30,
-                max: 30,
-                value: _vectorComponent(selectedEntity['position'], 2, 0),
-                onChanged: (value) => _set3DEntityVectorComponent(
-                  token: selectedToken,
-                  field: 'position',
-                  index: 2,
-                  value: value,
-                ),
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Ghost (hide helper)'),
-                value: asBool(selectedEntity['ghost']),
-                onChanged: (value) => _set3DEntityField(
-                  token: selectedToken,
-                  field: 'ghost',
-                  value: value,
-                ),
-              ),
-            ],
-          ],
-          const SizedBox(height: 10),
-          Text(
-            'World & FX',
-            style: TextStyle(
-              color: cs.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          _composerSlider(
-            label: 'Sun Intensity',
-            min: 0,
-            max: 10,
-            value: _toDouble(scene['sunIntensity'], 2.0),
-            onChanged: (value) => _set3DSceneField('sunIntensity', value),
-          ),
-          _composerSlider(
-            label: 'Ambient Light',
-            min: 0,
-            max: 2,
-            value: _toDouble(scene['ambLight'], 0.5),
-            onChanged: (value) => _set3DSceneField('ambLight', value),
-          ),
-          _composerSlider(
-            label: 'Bloom Intensity',
-            min: 0,
-            max: 4,
-            value: _toDouble(scene['bloomIntensity'], 1.0),
-            onChanged: (value) => _set3DSceneField('bloomIntensity', value),
-          ),
-          DropdownButtonFormField<String>(
-            key: ValueKey<String>('shadow-quality-$shadowQuality'),
-            // ignore: deprecated_member_use
-            value: shadowQuality,
-            decoration: const InputDecoration(labelText: 'Shadow Quality'),
-            items: const <String>[
-              '256',
-              '512',
-              '1024',
-              '2048',
-            ]
-                .map(
-                  (value) => DropdownMenuItem<String>(
-                    value: value,
-                    child: Text(value),
-                  ),
-                )
-                .toList(),
-            onChanged: (value) {
-              if (value == null) return;
-              _set3DSceneField('shadowQuality', value);
-            },
-          ),
-          _composerSlider(
-            label: 'Shadow Softness',
-            min: 0,
-            max: 5,
-            value: _toDouble(scene['shadowSoftness'], 1.0),
-            onChanged: (value) => _set3DSceneField('shadowSoftness', value),
-          ),
-          TextFormField(
-            key: ValueKey<String>('sky-url-${scene['skyUrl'] ?? ''}'),
-            initialValue: (scene['skyUrl'] ?? '').toString(),
-            onChanged: (value) => _set3DSceneField('skyUrl', value.trim()),
-            decoration: const InputDecoration(labelText: 'Sky URL'),
-          ),
-          const SizedBox(height: 8),
-          TextFormField(
-            key: ValueKey<String>('env-url-${scene['envUrl'] ?? ''}'),
-            initialValue: (scene['envUrl'] ?? '').toString(),
-            onChanged: (value) => _set3DSceneField('envUrl', value.trim()),
-            decoration: const InputDecoration(labelText: 'Environment URL'),
-          ),
-          _composerSlider(
-            label: 'Environment Rotation',
-            min: -6.28,
-            max: 6.28,
-            value: _toDouble(scene['envRot'], 0.0),
-            onChanged: (value) => _set3DSceneField('envRot', value),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Initial Camera',
-            style: TextStyle(
-              color: cs.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          _composerSlider(
-            label: 'Init Pos X',
-            min: -30,
-            max: 30,
-            value: initPos[0],
-            onChanged: (value) => _set3DSceneVectorComponent(
-              field: 'initPos',
-              index: 0,
-              value: value,
-              fallback: initPos,
-            ),
-          ),
-          _composerSlider(
-            label: 'Init Pos Y',
-            min: -30,
-            max: 30,
-            value: initPos[1],
-            onChanged: (value) => _set3DSceneVectorComponent(
-              field: 'initPos',
-              index: 1,
-              value: value,
-              fallback: initPos,
-            ),
-          ),
-          _composerSlider(
-            label: 'Init Pos Z',
-            min: -30,
-            max: 30,
-            value: initPos[2],
-            onChanged: (value) => _set3DSceneVectorComponent(
-              field: 'initPos',
-              index: 2,
-              value: value,
-              fallback: initPos,
-            ),
-          ),
-          _composerSlider(
-            label: 'Init Rot X',
-            min: -6.28,
-            max: 6.28,
-            value: initRot[0],
-            onChanged: (value) => _set3DSceneVectorComponent(
-              field: 'initRot',
-              index: 0,
-              value: value,
-              fallback: initRot,
-            ),
-          ),
-          _composerSlider(
-            label: 'Init Rot Y',
-            min: -6.28,
-            max: 6.28,
-            value: initRot[1],
-            onChanged: (value) => _set3DSceneVectorComponent(
-              field: 'initRot',
-              index: 1,
-              value: value,
-              fallback: initRot,
-            ),
-          ),
-          _composerSlider(
-            label: 'Init Rot Z',
-            min: -6.28,
-            max: 6.28,
-            value: initRot[2],
-            onChanged: (value) => _set3DSceneVectorComponent(
-              field: 'initRot',
-              index: 2,
-              value: value,
-              fallback: initRot,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Tracking',
-            style: TextStyle(
-              color: cs.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          DropdownButtonFormField<String>(
-            // ignore: deprecated_member_use
-            value: () {
-              const modes = <String>{'orbit', 'fps', 'free'};
-              final String raw =
-                  (controls['camera-mode'] ?? 'orbit').toString().toLowerCase();
-              return modes.contains(raw) ? raw : 'orbit';
-            }(),
-            decoration: const InputDecoration(labelText: 'Camera Mode'),
-            items: const [
-              DropdownMenuItem<String>(value: 'orbit', child: Text('Orbit')),
-              DropdownMenuItem<String>(value: 'fps', child: Text('FPS')),
-              DropdownMenuItem<String>(value: 'free', child: Text('Free')),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              _set3DControlField('camera-mode', value);
-            },
-          ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Manual Mode'),
-            value: manualMode,
-            onChanged: (value) => _set3DControlField('manual-mode', value),
-          ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Tracker UI'),
-            value: asBool(controls['show-tracker']),
-            onChanged: (value) => _set3DControlField('show-tracker', value),
-          ),
-          _composerSlider(
-            label: 'Dead Zone X',
-            min: 0,
-            max: 0.1,
-            value: _toDouble(controls['dz-x'], 0),
-            onChanged: (value) => _set3DControlField('dz-x', value),
-          ),
-          _composerSlider(
-            label: 'Dead Zone Y',
-            min: 0,
-            max: 0.1,
-            value: _toDouble(controls['dz-y'], 0),
-            onChanged: (value) => _set3DControlField('dz-y', value),
-          ),
-          _composerSlider(
-            label: 'Dead Zone Z',
-            min: 0,
-            max: 0.1,
-            value: _toDouble(controls['dz-z'], 0),
-            onChanged: (value) => _set3DControlField('dz-z', value),
-          ),
-          _composerSlider(
-            label: 'Dead Zone Yaw',
-            min: 0,
-            max: 10,
-            value: _toDouble(controls['dz-yaw'], 0),
-            onChanged: (value) => _set3DControlField('dz-yaw', value),
-          ),
-          _composerSlider(
-            label: 'Dead Zone Pitch',
-            min: 0,
-            max: 10,
-            value: _toDouble(controls['dz-pitch'], 0),
-            onChanged: (value) => _set3DControlField('dz-pitch', value),
-          ),
-          OutlinedButton.icon(
-            onPressed: () {
-              final frame = TrackingService.instance.frameNotifier.value;
-              _set3DControlField('head-x', frame.headX);
-              _set3DControlField('head-y', frame.headY);
-              _set3DControlField('z-value', frame.headZ);
-              _set3DControlField('yaw', frame.yaw);
-              _set3DControlField('pitch', frame.pitch);
-            },
-            icon: const Icon(Icons.gps_fixed, size: 16),
-            label: const Text('Recenter Manual Anchor'),
-          ),
-          if (manualMode) ...[
-            _composerSlider(
-              label: 'Manual Head X',
-              min: -1,
-              max: 1,
-              value: _toDouble(controls['head-x'], 0),
-              onChanged: (value) => _set3DControlField('head-x', value),
-            ),
-            _composerSlider(
-              label: 'Manual Head Y',
-              min: -1,
-              max: 1,
-              value: _toDouble(controls['head-y'], 0),
-              onChanged: (value) => _set3DControlField('head-y', value),
-            ),
-            _composerSlider(
-              label: 'Manual Z',
-              min: 0.05,
-              max: 2,
-              value: _toDouble(controls['z-value'], 0.2),
-              onChanged: (value) => _set3DControlField('z-value', value),
-            ),
-            _composerSlider(
-              label: 'Manual Yaw',
-              min: -60,
-              max: 60,
-              value: _toDouble(controls['yaw'], 0),
-              onChanged: (value) => _set3DControlField('yaw', value),
-            ),
-            _composerSlider(
-              label: 'Manual Pitch',
-              min: -40,
-              max: 40,
-              value: _toDouble(controls['pitch'], 0),
-              onChanged: (value) => _set3DControlField('pitch', value),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _build360CardEditorPanel(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final Map<String, dynamic> scene = _thumbnail360Scene();
-    final Map<String, dynamic> controls = _thumbnail360Controls();
-    final bool manualMode = controls['manualMode'] == true;
-    final String assetUrl = (scene['assetUrl'] ?? '').toString();
-    final String assetKind =
-        (scene['assetKind'] ?? 'image').toString() == 'video'
-            ? 'video'
-            : 'image';
-
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '360 Card Editor',
-            style: TextStyle(
-              color: cs.onSurface,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Upload an equirectangular image or video and tune tracking-driven rotation and zoom.',
-            style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _promptAdd360AssetUrl,
-                icon: const Icon(Icons.link_rounded, size: 16),
-                label: const Text('Asset URL'),
-              ),
-              OutlinedButton.icon(
-                onPressed:
-                    _uploadingLayerImage ? null : _upload360AssetFromDevice,
-                icon: const Icon(Icons.upload_file_outlined, size: 16),
-                label: Text(
-                  _uploadingLayerImage ? 'Uploading...' : 'Upload Asset',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          TextFormField(
-            key: ValueKey<String>('composer-360-url-$assetUrl'),
-            initialValue: assetUrl,
-            onChanged: (value) => _set360SceneField('assetUrl', value.trim()),
-            decoration: const InputDecoration(labelText: 'Asset URL'),
-          ),
-          const SizedBox(height: 6),
-          DropdownButtonFormField<String>(
-            // ignore: deprecated_member_use
-            value: assetKind,
-            decoration: const InputDecoration(labelText: 'Asset Kind'),
-            items: const [
-              DropdownMenuItem<String>(
-                value: 'image',
-                child: Text('Image'),
-              ),
-              DropdownMenuItem<String>(
-                value: 'video',
-                child: Text('Video'),
-              ),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              _set360SceneField('assetKind', value);
-            },
-          ),
-          const SizedBox(height: 8),
-          _composerSlider(
-            label: 'Base FOV',
-            min: 45,
-            max: 95,
-            value: _toDouble(controls['baseFov'], 75),
-            onChanged: (value) => _set360ControlField('baseFov', value),
-          ),
-          _composerSlider(
-            label: 'Min FOV',
-            min: 30,
-            max: 90,
-            value: _toDouble(controls['minFov'], 45),
-            onChanged: (value) => _set360ControlField('minFov', value),
-          ),
-          _composerSlider(
-            label: 'Max FOV',
-            min: 50,
-            max: 110,
-            value: _toDouble(controls['maxFov'], 95),
-            onChanged: (value) => _set360ControlField('maxFov', value),
-          ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Manual Mode'),
-            value: manualMode,
-            onChanged: (value) => _set360ControlField('manualMode', value),
-          ),
-          if (manualMode) ...[
-            _composerSlider(
-              label: 'Manual Yaw',
-              min: -180,
-              max: 180,
-              value: _toDouble(controls['manualYaw'], 0),
-              onChanged: (value) => _set360ControlField('manualYaw', value),
-            ),
-            _composerSlider(
-              label: 'Manual Pitch',
-              min: -85,
-              max: 85,
-              value: _toDouble(controls['manualPitch'], 0),
-              onChanged: (value) => _set360ControlField('manualPitch', value),
-            ),
-            _composerSlider(
-              label: 'Manual FOV',
-              min: 45,
-              max: 95,
-              value: _toDouble(controls['manualFov'], 75),
-              onChanged: (value) => _set360ControlField('manualFov', value),
-            ),
-          ] else ...[
-            _composerSlider(
-              label: 'Yaw Sensitivity',
-              min: 0.2,
-              max: 2.5,
-              value: _toDouble(controls['yawSensitivity'], 1),
-              onChanged: (value) =>
-                  _set360ControlField('yawSensitivity', value),
-            ),
-            _composerSlider(
-              label: 'Pitch Sensitivity',
-              min: 0.2,
-              max: 2.5,
-              value: _toDouble(controls['pitchSensitivity'], 1),
-              onChanged: (value) =>
-                  _set360ControlField('pitchSensitivity', value),
-            ),
-            _composerSlider(
-              label: 'Zoom Sensitivity',
-              min: 0.2,
-              max: 2.5,
-              value: _toDouble(controls['zoomSensitivity'], 1),
-              onChanged: (value) =>
-                  _set360ControlField('zoomSensitivity', value),
-            ),
-          ],
-          if (assetKind == 'video') ...[
-            const SizedBox(height: 8),
-            ValueListenableBuilder<PanoramaViewer360Status>(
-              valueListenable: _composer360PreviewController.status,
-              builder: (context, status, _) {
-                final int durationMs = math.max(
-                  status.durationMs,
-                  _mapInt(controls['posterTimeMs'], 0),
-                );
-                final int posterTimeMs =
-                    _mapInt(controls['posterTimeMs'], 0).clamp(
-                  0,
-                  durationMs <= 0 ? 86400000 : durationMs,
-                );
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Cover Frame: ${_formatDurationClock(posterTimeMs)}',
-                      style: TextStyle(color: cs.onSurfaceVariant),
-                    ),
-                    if (durationMs > 0)
-                      _composerSlider(
-                        label: 'Cover Time',
-                        min: 0,
-                        max: durationMs / 1000,
-                        value: posterTimeMs / 1000,
-                        onChanged: (value) => _set360ControlField(
-                          'posterTimeMs',
-                          (value * 1000).round(),
-                        ),
-                      )
-                    else
-                      Text(
-                        'Play the preview once to load the full duration.',
-                        style: TextStyle(
-                          color: cs.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
-                      ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: status.isVideo
-                              ? () => _set360ControlField(
-                                    'posterTimeMs',
-                                    status.currentTimeMs,
-                                  )
-                              : null,
-                          icon: const Icon(Icons.bookmark_outline, size: 16),
-                          label: const Text('Use Current Frame'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: status.isVideo
-                              ? () =>
-                                  _composer360PreviewController.seekToMs(
-                                    posterTimeMs,
-                                  )
-                              : null,
-                          icon: const Icon(Icons.image_outlined, size: 16),
-                          label: const Text('Preview Cover Frame'),
-                        ),
-                      ],
-                    ),
-                  ],
-                );
-              },
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _build2DCardEditorPanel(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final List<String> keys = _thumbnail2DLayerKeys();
-    final Map<String, dynamic>? selected = _selected2DLayerMap();
-    final controls = _thumbnailControls();
-    final dynamic turningRaw = _thumbnail2DScene()['turning_point'];
-    final Map<String, dynamic> turningPoint = turningRaw is Map
-        ? Map<String, dynamic>.from(turningRaw)
-        : <String, dynamic>{};
-    final String? selectedKey = _selected2dLayerKey;
-    final bool selectedEditable = selectedKey != null;
-    final bool selectedDeletable =
-        selectedKey != null && !_isUtilityLayerKey(selectedKey);
-
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '2D Card Editor',
-            style: TextStyle(
-              color: cs.onSurface,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Reorder/add/delete/duplicate layers. Drag on preview to move selected layer and use mouse wheel to scale.',
-            style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _promptAdd2DImageUrl,
-                icon: const Icon(Icons.add_photo_alternate_outlined, size: 16),
-                label: const Text('Add Image URL'),
-              ),
-              OutlinedButton.icon(
-                onPressed:
-                    _uploadingLayerImage ? null : _upload2DImageFromDevice,
-                icon: const Icon(Icons.upload_file_outlined, size: 16),
-                label: Text(
-                    _uploadingLayerImage ? 'Uploading...' : 'Upload Image'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _add2DLayer(textLayer: true),
-                icon: const Icon(Icons.text_fields, size: 16),
-                label: const Text('Add Text'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _recenterComposerParallax,
-                icon: const Icon(Icons.gps_fixed, size: 16),
-                label: const Text('Recenter'),
-              ),
-              OutlinedButton.icon(
-                onPressed: selectedDeletable ? _duplicateSelected2DLayer : null,
-                icon: const Icon(Icons.copy_outlined, size: 16),
-                label: const Text('Duplicate'),
-              ),
-              OutlinedButton.icon(
-                onPressed: selectedDeletable ? _deleteSelected2DLayer : null,
-                icon: const Icon(Icons.delete_outline, size: 16),
-                label: const Text('Delete'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (keys.isEmpty)
-            Text(
-              'No editable layers found in this preset.',
-              style: TextStyle(color: cs.onSurfaceVariant),
-            )
-          else ...[
-            Container(
-              constraints: const BoxConstraints(maxHeight: 220),
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: cs.outline.withValues(alpha: 0.14)),
-              ),
-              child: ReorderableListView.builder(
-                shrinkWrap: true,
-                buildDefaultDragHandles: false,
-                itemCount: keys.length,
-                onReorder: _reorder2DLayer,
-                itemBuilder: (context, index) {
-                  final key = keys[index];
-                  final layerMap = _thumbnail2DScene()[key];
-                  final bool visible =
-                      !(layerMap is Map && layerMap['isVisible'] == false);
-                  final bool locked =
-                      layerMap is Map && layerMap['isLocked'] == true;
-                  final bool selectedLayer = key == _selected2dLayerKey;
-                  return Container(
-                    key: ValueKey<String>('2d-layer-$key'),
-                    decoration: BoxDecoration(
-                      color: selectedLayer
-                          ? cs.primary.withValues(alpha: 0.14)
-                          : Colors.transparent,
-                      border: Border(
-                        bottom: BorderSide(
-                          color: cs.outline.withValues(alpha: 0.14),
-                        ),
-                      ),
-                    ),
-                    child: ListTile(
-                      dense: true,
-                      title: Text(
-                        key,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: SizedBox(
-                        width: 124,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            IconButton(
-                              tooltip: visible ? 'Hide layer' : 'Show layer',
-                              onPressed: () => _set2DLayerField(
-                                key,
-                                'isVisible',
-                                !visible,
-                              ),
-                              icon: Icon(
-                                visible
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                                size: 18,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: locked ? 'Unlock layer' : 'Lock layer',
-                              onPressed: () =>
-                                  _set2DLayerField(key, 'isLocked', !locked),
-                              icon: Icon(
-                                locked ? Icons.lock_outline : Icons.lock_open,
-                                size: 18,
-                              ),
-                            ),
-                            ReorderableDragStartListener(
-                              index: index,
-                              child: const Icon(Icons.drag_handle, size: 18),
-                            ),
-                          ],
-                        ),
-                      ),
-                      onTap: () => setState(() => _selected2dLayerKey = key),
-                    ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 10),
-            if (selected != null) ...[
-              Text(
-                'Layer: ${selectedKey ?? ''}',
-                style: TextStyle(
-                  color: cs.onSurface,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 6),
-              if (selected['isText'] == true)
-                TextFormField(
-                  initialValue: (selected['textValue'] ?? '').toString(),
-                  onChanged: (value) =>
-                      _set2DLayerField(selectedKey!, 'textValue', value),
-                  decoration: const InputDecoration(
-                    labelText: 'Text',
-                  ),
-                )
-              else
-                TextFormField(
-                  initialValue: (selected['url'] ?? '').toString(),
-                  onChanged: (value) =>
-                      _set2DLayerField(selectedKey!, 'url', value.trim()),
-                  decoration: const InputDecoration(
-                    labelText: 'Image URL',
-                  ),
-                ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _set2DLayerField(
-                        selectedKey!,
-                        'isVisible',
-                        !(selected['isVisible'] == false),
-                      ),
-                      icon: Icon(
-                        selected['isVisible'] == false
-                            ? Icons.visibility_off_outlined
-                            : Icons.visibility_outlined,
-                        size: 16,
-                      ),
-                      label: Text(
-                        selected['isVisible'] == false ? 'Show' : 'Hide',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _set2DLayerField(
-                        selectedKey!,
-                        'isLocked',
-                        !(selected['isLocked'] == true),
-                      ),
-                      icon: Icon(
-                        selected['isLocked'] == true
-                            ? Icons.lock_outline
-                            : Icons.lock_open,
-                        size: 16,
-                      ),
-                      label: Text(
-                        selected['isLocked'] == true ? 'Unlock' : 'Lock',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              _composerSlider(
-                label: 'X Position',
-                min: -1500,
-                max: 1500,
-                value: _toDouble(selected['x'], 0),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'x', v),
-              ),
-              _composerSlider(
-                label: 'Y Position',
-                min: -1500,
-                max: 1500,
-                value: _toDouble(selected['y'], 0),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'y', v),
-              ),
-              _composerSlider(
-                label: 'Scale',
-                min: 0.05,
-                max: 6,
-                value: _toDouble(selected['scale'], 1),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'scale', v),
-              ),
-              _composerSlider(
-                label: 'Depth Order',
-                min: -200,
-                max: 200,
-                value: _toDouble(selected['order'], 0),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'order', v),
-              ),
-              if (selected['isText'] == true)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _composerSlider(
-                      label: 'Font Size',
-                      min: 8,
-                      max: 300,
-                      value: _toDouble(selected['fontSize'], 40),
-                      onChanged: (v) =>
-                          _set2DLayerField(selectedKey!, 'fontSize', v),
-                    ),
-                    _composerSlider(
-                      label: 'Font Weight',
-                      min: 0,
-                      max: 8,
-                      value: _toDouble(selected['fontWeightIndex'], 4),
-                      onChanged: (v) => _set2DLayerField(
-                        selectedKey!,
-                        'fontWeightIndex',
-                        v.round(),
-                      ),
-                    ),
-                    SwitchListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Italic'),
-                      value: selected['isItalic'] == true,
-                      onChanged: (v) =>
-                          _set2DLayerField(selectedKey!, 'isItalic', v),
-                    ),
-                    DropdownButtonFormField<String>(
-                      // ignore: deprecated_member_use
-                      value: (() {
-                        final String font =
-                            (selected['fontFamily'] ?? 'Poppins').toString();
-                        return _fontOptions.contains(font)
-                            ? font
-                            : _fontOptions.first;
-                      })(),
-                      items: _fontOptions
-                          .map((font) => DropdownMenuItem<String>(
-                                value: font,
-                                child: Text(font),
-                              ))
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        _set2DLayerField(selectedKey!, 'fontFamily', value);
-                      },
-                      decoration:
-                          const InputDecoration(labelText: 'Font Family'),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      initialValue:
-                          (selected['textColorHex'] ?? '#FFFFFF').toString(),
-                      onChanged: (value) => _set2DLayerField(
-                        selectedKey!,
-                        'textColorHex',
-                        value.trim(),
-                      ),
-                      decoration:
-                          const InputDecoration(labelText: 'Text Color (Hex)'),
-                    ),
-                    const SizedBox(height: 8),
-                    _composerSlider(
-                      label: 'Stroke Width',
-                      min: 0,
-                      max: 20,
-                      value: _toDouble(selected['strokeWidth'], 0),
-                      onChanged: (v) =>
-                          _set2DLayerField(selectedKey!, 'strokeWidth', v),
-                    ),
-                    TextFormField(
-                      initialValue:
-                          (selected['strokeColorHex'] ?? '#000000').toString(),
-                      onChanged: (value) => _set2DLayerField(
-                        selectedKey!,
-                        'strokeColorHex',
-                        value.trim(),
-                      ),
-                      decoration: const InputDecoration(
-                          labelText: 'Stroke Color (Hex)'),
-                    ),
-                    const SizedBox(height: 8),
-                    _composerSlider(
-                      label: 'Shadow Blur',
-                      min: 0,
-                      max: 40,
-                      value: _toDouble(selected['shadowBlur'], 0),
-                      onChanged: (v) =>
-                          _set2DLayerField(selectedKey!, 'shadowBlur', v),
-                    ),
-                    TextFormField(
-                      initialValue:
-                          (selected['shadowColorHex'] ?? '#000000').toString(),
-                      onChanged: (value) => _set2DLayerField(
-                        selectedKey!,
-                        'shadowColorHex',
-                        value.trim(),
-                      ),
-                      decoration: const InputDecoration(
-                          labelText: 'Shadow Color (Hex)'),
-                    ),
-                  ],
-                ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Can Shift'),
-                value: selected['canShift'] != false,
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'canShift', v),
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Can Zoom'),
-                value: selected['canZoom'] != false,
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'canZoom', v),
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Can Tilt'),
-                value: selected['canTilt'] != false,
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'canTilt', v),
-              ),
-              _composerSlider(
-                label: 'Shift Sensitivity Mult',
-                min: 0,
-                max: 3,
-                value: _toDouble(selected['shiftSensMult'], 1),
-                onChanged: (v) =>
-                    _set2DLayerField(selectedKey!, 'shiftSensMult', v),
-              ),
-              _composerSlider(
-                label: 'Zoom Sensitivity Mult',
-                min: 0,
-                max: 3,
-                value: _toDouble(selected['zoomSensMult'], 1),
-                onChanged: (v) =>
-                    _set2DLayerField(selectedKey!, 'zoomSensMult', v),
-              ),
-              _composerSlider(
-                label: 'Min Scale',
-                min: 0.01,
-                max: 5,
-                value: _toDouble(selected['minScale'], 0.1),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'minScale', v),
-              ),
-              _composerSlider(
-                label: 'Max Scale',
-                min: 0.05,
-                max: 10,
-                value: _toDouble(selected['maxScale'], 5),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'maxScale', v),
-              ),
-              _composerSlider(
-                label: 'Min X',
-                min: -3000,
-                max: 3000,
-                value: _toDouble(selected['minX'], -3000),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'minX', v),
-              ),
-              _composerSlider(
-                label: 'Max X',
-                min: -3000,
-                max: 3000,
-                value: _toDouble(selected['maxX'], 3000),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'maxX', v),
-              ),
-              _composerSlider(
-                label: 'Min Y',
-                min: -3000,
-                max: 3000,
-                value: _toDouble(selected['minY'], -3000),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'minY', v),
-              ),
-              _composerSlider(
-                label: 'Max Y',
-                min: -3000,
-                max: 3000,
-                value: _toDouble(selected['maxY'], 3000),
-                onChanged: (v) => _set2DLayerField(selectedKey!, 'maxY', v),
-              ),
-            ],
-            const SizedBox(height: 8),
-            Text(
-              'Scene Controls',
-              style: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 6),
-            _composerSlider(
-              label: 'Global Scale',
-              min: 0.5,
-              max: 2.5,
-              value: _toDouble(controls['scale'], 1.2),
-              onChanged: (v) => _set2DControlField('scale', v),
-            ),
-            _composerSlider(
-              label: 'Global Depth',
-              min: 0,
-              max: 1,
-              value: _toDouble(controls['depth'], 0.1),
-              onChanged: (v) => _set2DControlField('depth', v),
-            ),
-            _composerSlider(
-              label: 'Global Shift',
-              min: 0,
-              max: 1,
-              value: _toDouble(controls['shift'], 0.025),
-              onChanged: (v) => _set2DControlField('shift', v),
-            ),
-            _composerSlider(
-              label: 'Global Tilt',
-              min: 0,
-              max: 1,
-              value: _toDouble(controls['tilt'], 0),
-              onChanged: (v) => _set2DControlField('tilt', v),
-            ),
-            _composerSlider(
-              label: 'Tilt Sensitivity',
-              min: 0,
-              max: 2,
-              value: _toDouble(controls['tiltSensitivity'], 1),
-              onChanged: (v) => _set2DControlField('tiltSensitivity', v),
-            ),
-            _composerSlider(
-              label: 'Dead Zone X',
-              min: 0,
-              max: 0.1,
-              value: _toDouble(controls['deadZoneX'], 0),
-              onChanged: (v) => _set2DControlField('deadZoneX', v),
-            ),
-            _composerSlider(
-              label: 'Dead Zone Y',
-              min: 0,
-              max: 0.1,
-              value: _toDouble(controls['deadZoneY'], 0),
-              onChanged: (v) => _set2DControlField('deadZoneY', v),
-            ),
-            _composerSlider(
-              label: 'Dead Zone Z',
-              min: 0,
-              max: 0.1,
-              value: _toDouble(controls['deadZoneZ'], 0),
-              onChanged: (v) => _set2DControlField('deadZoneZ', v),
-            ),
-            _composerSlider(
-              label: 'Dead Zone Yaw',
-              min: 0,
-              max: 10,
-              value: _toDouble(controls['deadZoneYaw'], 0),
-              onChanged: (v) => _set2DControlField('deadZoneYaw', v),
-            ),
-            _composerSlider(
-              label: 'Dead Zone Pitch',
-              min: 0,
-              max: 10,
-              value: _toDouble(controls['deadZonePitch'], 0),
-              onChanged: (v) => _set2DControlField('deadZonePitch', v),
-            ),
-            _composerSlider(
-              label: 'Z Base',
-              min: 0.05,
-              max: 2.0,
-              value: _toDouble(controls['zBase'], 0.2),
-              onChanged: (v) => _set2DControlField('zBase', v),
-            ),
-            _composerSlider(
-              label: 'Anchor Head X',
-              min: -1,
-              max: 1,
-              value: _toDouble(controls['anchorHeadX'], 0),
-              onChanged: (v) => _set2DControlField('anchorHeadX', v),
-            ),
-            _composerSlider(
-              label: 'Anchor Head Y',
-              min: -1,
-              max: 1,
-              value: _toDouble(controls['anchorHeadY'], 0),
-              onChanged: (v) => _set2DControlField('anchorHeadY', v),
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Manual Mode'),
-              subtitle: const Text('Use sliders/manual camera values only'),
-              value: controls['manualMode'] == true,
-              onChanged: (v) => _set2DControlField('manualMode', v),
-            ),
-            if (controls['manualMode'] == true) ...[
-              _composerSlider(
-                label: 'Manual Head X',
-                min: -1,
-                max: 1,
-                value: _toDouble(controls['manualHeadX'], 0),
-                onChanged: (v) => _set2DControlField('manualHeadX', v),
-              ),
-              _composerSlider(
-                label: 'Manual Head Y',
-                min: -1,
-                max: 1,
-                value: _toDouble(controls['manualHeadY'], 0),
-                onChanged: (v) => _set2DControlField('manualHeadY', v),
-              ),
-              _composerSlider(
-                label: 'Manual Head Z',
-                min: 0.05,
-                max: 2.0,
-                value: _toDouble(controls['manualHeadZ'], 0.2),
-                onChanged: (v) => _set2DControlField('manualHeadZ', v),
-              ),
-              _composerSlider(
-                label: 'Manual Yaw',
-                min: -60,
-                max: 60,
-                value: _toDouble(controls['manualYaw'], 0),
-                onChanged: (v) => _set2DControlField('manualYaw', v),
-              ),
-              _composerSlider(
-                label: 'Manual Pitch',
-                min: -40,
-                max: 40,
-                value: _toDouble(controls['manualPitch'], 0),
-                onChanged: (v) => _set2DControlField('manualPitch', v),
-              ),
-            ],
-            DropdownButtonFormField<String>(
-              // ignore: deprecated_member_use
-              value: (() {
-                final String selectedAspect =
-                    (controls['selectedAspect'] ?? '').toString();
-                if (_aspectOptions.contains(selectedAspect)) {
-                  return selectedAspect;
-                }
-                return null;
-              })(),
-              items: _aspectOptions
-                  .map((ratio) => DropdownMenuItem<String>(
-                      value: ratio, child: Text(ratio)))
-                  .toList(),
-              onChanged: (value) {
-                _set2DControlField('selectedAspect', value);
-              },
-              decoration: const InputDecoration(
-                labelText: 'Aspect Ratio',
-              ),
-            ),
-            _composerSlider(
-              label: 'Turning Point Depth',
-              min: -200,
-              max: 200,
-              value: _toDouble(turningPoint['order'], 0),
-              onChanged: _setTurningPointOrder,
-            ),
-          ],
-          if (!selectedEditable)
-            Text(
-              'Select a layer to edit and drag directly in the card preview.',
-              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _composerSlider({
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required ValueChanged<double> onChanged,
-  }) {
-    final double clamped = value.clamp(min, max).toDouble();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$label: ${clamped.toStringAsFixed(3)}'),
-          Slider(
-            value: clamped,
-            min: min,
-            max: max,
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
+    return _singlePayload();
   }
 
   Future<void> _submit() async {
     if (_submitting) return;
+    final messenger = ScaffoldMessenger.of(context);
     final String title = _titleController.text.trim();
-    final String description = _descriptionController.text.trim();
     if (title.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Title is required.')),
-      );
+      messenger
+          .showSnackBar(const SnackBar(content: Text('Title is required.')));
       return;
     }
-    final int? priceCents =
-        _isPaidContent ? _priceInputToCents(_priceController.text) : null;
-    if (_isPaidContent && (priceCents == null || priceCents <= 0)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid paid amount.')),
-      );
-      return;
-    }
-    final String? accentColorHex = _normalizeAccentHex(
-          _accentHexController.text,
-        ) ??
-        _normalizeAccentHex(_accentColorHex);
-    if (accentColorHex == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Accent color must be a valid hex.')),
-      );
-      return;
-    }
-
     setState(() => _submitting = true);
     try {
-      final tags = _parseTags(_tagsController.text);
-      final mentions = _selectedMentionIds.toList();
-      _persistActiveCollectionItemSnapshot();
-      final Map<String, dynamic> canonicalPayload =
-          jsonDecode(jsonEncode(_thumbnailPayload)) as Map<String, dynamic>;
-
-      if (widget.kind == _ComposerKind.single) {
-        final String presetId;
-        if (widget.existingPreset != null) {
-          presetId = widget.existingPreset!.id;
-          if (_isDetailEditor) {
-            await _repository.updatePresetDetail(
-              presetId: presetId,
-              title: title,
-              description: description,
-              tags: tags,
-              mentionUserIds: mentions,
-              payload: canonicalPayload,
-              mode: _thumbnailMode,
-              visibility: _isPublic ? 'public' : 'private',
-              isPaid: _isPaidContent,
-              priceCents: priceCents,
-              accentColorHex: accentColorHex,
-            );
-          } else {
-            await _repository.updatePresetCard(
-              presetId: presetId,
-              title: title,
-              description: description,
-              tags: tags,
-              mentionUserIds: mentions,
-              thumbnailPayload: canonicalPayload,
-              thumbnailMode: _thumbnailMode,
-              visibility: _isPublic ? 'public' : 'private',
-              isPaid: _isPaidContent,
-              priceCents: priceCents,
-              accentColorHex: accentColorHex,
-            );
-          }
-        } else {
-          presetId = await _repository.publishPresetPost(
-            mode: _thumbnailMode,
-            name: widget.name.isEmpty ? title : widget.name,
-            payload: canonicalPayload,
-            title: title,
-            description: description,
-            tags: tags,
-            mentionUserIds: mentions,
-            visibility: _isPublic ? 'public' : 'private',
-            thumbnailPayload: canonicalPayload,
-            thumbnailMode: _thumbnailMode,
-            isPaid: _isPaidContent,
-            priceCents: priceCents,
-            accentColorHex: accentColorHex,
-          );
+      final List<String> tags = _tagsFromInput();
+      final List<String> mentions = _selectedMentionIds.toList();
+      final int? priceCents =
+          _isPaidContent ? _priceInputToCents(_priceController.text) : null;
+      final String visibility = _isPublic ? 'public' : 'private';
+      if (_isCollection) {
+        if (_items.isEmpty) {
+          throw Exception('Collection needs at least one image.');
         }
-        if (mentions.isNotEmpty) {
-          await _repository.createMentionNotifications(
-            mentionedUserIds: mentions,
-            presetId: presetId,
-            presetTitle: title,
-          );
-        }
+        final int thumbIndex = _thumbnailIndex.clamp(0, _items.length - 1);
+        await _repository.saveCollectionWithItems(
+          collectionId: widget.collectionId,
+          name: title,
+          description: _descriptionController.text.trim(),
+          tags: tags,
+          mentionUserIds: mentions,
+          thumbnailPayload: _items[thumbIndex].snapshot,
+          thumbnailMode: kImageRenderMode,
+          publish: _isPublic,
+          items: _items,
+          isPaid: _isPaidContent,
+          priceCents: priceCents,
+          accentColorHex: _accentColorHex,
+        );
       } else {
-        if (_editableCollectionItems.isEmpty) {
-          throw Exception('Collection is empty.');
+        final payload = _singlePayload();
+        if (imageUrlFromPayload(payload, fallbackMode: kImageRenderMode) ==
+            null) {
+          throw Exception('Post needs one image.');
         }
-        final String collectionId = widget.collectionId ?? '';
-        final String resolvedCollectionId;
-        if (collectionId.isEmpty) {
-          resolvedCollectionId = await _repository.saveCollectionWithItems(
-            collectionId: null,
-            name: title,
-            description: description,
+        final existing = widget.existingPreset;
+        if (existing != null) {
+          await _repository.updatePresetDetail(
+            presetId: existing.id,
+            title: title,
+            description: _descriptionController.text.trim(),
             tags: tags,
             mentionUserIds: mentions,
-            thumbnailPayload: canonicalPayload,
-            thumbnailMode: _thumbnailMode,
-            publish: _isPublic,
-            items: _editableCollectionItems,
+            payload: payload,
+            mode: kImageRenderMode,
+            visibility: visibility,
             isPaid: _isPaidContent,
             priceCents: priceCents,
-            accentColorHex: accentColorHex,
+            accentColorHex: _accentColorHex,
+          );
+          await _repository.updatePresetCard(
+            presetId: existing.id,
+            thumbnailPayload: payload,
+            thumbnailMode: kImageRenderMode,
+            title: title,
+            description: _descriptionController.text.trim(),
+            tags: tags,
+            mentionUserIds: mentions,
+            visibility: visibility,
+            isPaid: _isPaidContent,
+            priceCents: priceCents,
+            accentColorHex: _accentColorHex,
           );
         } else {
-          resolvedCollectionId = collectionId;
-          if (_isDetailEditor) {
-            await _repository.updateCollectionItemsDetail(
-              collectionId: collectionId,
-              name: title,
-              description: description,
-              tags: tags,
-              mentionUserIds: mentions,
-              publish: _isPublic,
-              items: _editableCollectionItems,
-              isPaid: _isPaidContent,
-              priceCents: priceCents,
-              accentColorHex: accentColorHex,
-            );
-          } else {
-            await _repository.updateCollectionCard(
-              collectionId: collectionId,
-              name: title,
-              description: description,
-              tags: tags,
-              mentionUserIds: mentions,
-              publish: _isPublic,
-              items: _editableCollectionItems,
-              thumbnailPayload: canonicalPayload,
-              thumbnailMode: _thumbnailMode,
-              isPaid: _isPaidContent,
-              priceCents: priceCents,
-              accentColorHex: accentColorHex,
-            );
-          }
-        }
-        if (mentions.isNotEmpty) {
-          await _repository.createMentionNotifications(
-            mentionedUserIds: mentions,
-            presetId: resolvedCollectionId,
-            presetTitle: title,
+          await _repository.publishPresetPost(
+            mode: kImageRenderMode,
+            name: widget.name.trim().isEmpty ? title : widget.name.trim(),
+            payload: payload,
+            title: title,
+            description: _descriptionController.text.trim(),
+            tags: tags,
+            mentionUserIds: mentions,
+            visibility: visibility,
+            thumbnailPayload: payload,
+            thumbnailMode: kImageRenderMode,
+            isPaid: _isPaidContent,
+            priceCents: priceCents,
+            accentColorHex: _accentColorHex,
           );
         }
       }
@@ -16979,654 +9779,271 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Publish failed: $e')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('Publish failed: $e')));
     } finally {
-      if (mounted) {
-        setState(() => _submitting = false);
-      }
+      if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Widget _buildPreview(ColorScheme cs) {
+    final payload = _previewPayload();
+    final int? previewPriceCents = _priceInputToCents(_priceController.text);
+    return AspectRatio(
+      aspectRatio: _kGridPreviewAspectRatio,
+      child: SvgCardShell(
+        baseColor: const Color(0xFFF0F0F0),
+        accentColor: _cardAccentColorFromHex(_accentColorHex),
+        title: _titleController.text.trim(),
+        metaText: '0 views • now',
+        verticalUsername: 'USER',
+        priceLabel: _cardPriceLabel(
+          isPaid: _isPaidContent,
+          priceCents: previewPriceCents,
+          viewerHasPaid: false,
+        ),
+        showCollectionCount: _isCollection,
+        collectionCountLabel: '${_items.length}',
+        child: _SharedPresetPreview(
+          mode: kImageRenderMode,
+          payload: payload,
+          clipper: const SvgCardClipper(),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-
-    final BorderRadius previewRadius = BorderRadius.circular(18);
-    final bool enable3dMousePreview =
-        !_showPublishStep && _thumbnailMode == '3d';
-    final bool isCardEditor = _isCardEditor;
-    final int? previewPriceCents = _priceInputToCents(_priceController.text);
-    final String previewPriceLabel = _cardPriceLabel(
-      isPaid: _isPaidContent,
-      priceCents: previewPriceCents,
-      viewerHasPaid: false,
-    );
-    Widget previewSurface = _SharedPresetPreview(
-      mode: _thumbnailMode,
-      payload: _thumbnailPayload,
-      borderRadius: previewRadius,
-      clipper: isCardEditor ? const SvgCardClipper() : null,
-      pointerPassthrough: !enable3dMousePreview,
-      allowOutsideOverflow: true,
-    );
-    if (_thumbnailMode == '360') {
-      previewSurface = _SharedPresetPreview(
-        mode: _thumbnailMode,
-        payload: _thumbnailPayload,
-        borderRadius: previewRadius,
-        clipper: isCardEditor ? const SvgCardClipper() : null,
-        pointerPassthrough: false,
-        allowOutsideOverflow: true,
-        panoramaController: _composer360PreviewController,
-        show360PlayerControls: true,
-        posterTimeMs: _mapInt(_thumbnail360Controls()['posterTimeMs'], 0),
-        muted: true,
-        loop: true,
-      );
-    }
-    if (!_showPublishStep && _thumbnailMode == '2d') {
-      previewSurface = Listener(
-        onPointerSignal: _handle2DPreviewPointerSignal,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onPanUpdate: _handle2DPreviewPanUpdate,
-          child: previewSurface,
-        ),
-      );
-    }
-    final Widget preview = AspectRatio(
-      aspectRatio: isCardEditor ? _kGridPreviewAspectRatio : 16 / 9,
-      child: isCardEditor
-          ? SvgCardShell(
-              baseColor: const Color(0xFFF0F0F0),
-              accentColor: _cardAccentColorFromHex(_accentColorHex),
-              title: _titleController.text.trim(),
-              metaText: '0 views • now',
-              verticalUsername: 'USER',
-              priceLabel: previewPriceLabel,
-              showCollectionCount: widget.kind == _ComposerKind.collection,
-              collectionCountLabel: '${_editableCollectionItems.length}',
-              child: previewSurface,
-            )
-          : previewSurface,
-    );
-
-    final String composerTitle = () {
-      if (_isDetailEditor) {
-        return widget.kind == _ComposerKind.single
-            ? (widget.isEdit ? 'Update Preset Detail' : 'Compose Preset')
-            : (widget.isEdit
-                ? 'Update Collection Detail'
-                : 'Compose Collection Detail');
-      }
-      return widget.kind == _ComposerKind.single
-          ? (widget.isEdit ? 'Update Feed Card' : 'Compose Card')
-          : (widget.isEdit
-              ? 'Update Collection Card'
-              : 'Compose Collection Card');
-    }();
-    const double headerHeight = 96;
-
-    Widget buildLeftHeader() {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.black.withValues(alpha: 0.66),
-              Colors.transparent,
-            ],
-          ),
-        ),
-        child: Text(
-          _isDetailEditor ? 'Detail Preview (16:9)' : 'Card Preview (1661:960)',
-          style: TextStyle(
-            color: cs.onSurface,
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-          ),
-        ),
-      );
-    }
-
-    Widget buildRightPanelHeader() {
-      return Positioned(
-        left: 16,
-        right: 16,
-        top: 12,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _showPublishStep ? 'Publish Setup' : 'Editor Controls',
-              style: TextStyle(
-                color: cs.onSurface,
-                fontWeight: FontWeight.w700,
-                fontSize: 18,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              _showPublishStep
-                  ? 'Finalize metadata and visibility before publishing.'
-                  : 'Adjust card/detail payload, then continue to metadata.',
-              style: TextStyle(
-                color: cs.onSurfaceVariant,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
+    final String composerTitle = _isCollection
+        ? (widget.isEdit ? 'Update Collection' : 'Publish Collection')
+        : (widget.isEdit ? 'Update Post' : 'Publish Post');
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
-      body: Stack(
+      body: Row(
         children: [
-          Positioned.fill(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        16, headerHeight + 10, 16, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        buildLeftHeader(),
-                        const SizedBox(height: 10),
-                        if (widget.kind == _ComposerKind.collection &&
-                            _editableCollectionItems.length > 1)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: List<Widget>.generate(
-                                _editableCollectionItems.length,
-                                (index) {
-                                  final bool active = index == _thumbnailIndex;
-                                  return ChoiceChip(
-                                    selected: active,
-                                    label: Text(
-                                      '${index + 1}. ${_editableCollectionItems[index].name}',
-                                      style: TextStyle(
-                                        color: active
-                                            ? Colors.black
-                                            : cs.onSurface,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    selectedColor: Colors.white,
-                                    checkmarkColor: Colors.black,
-                                    onSelected: (_) =>
-                                        _setThumbnailFromCollectionIndex(index),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        Expanded(
-                          child: Center(
-                            child: Container(
-                              constraints: const BoxConstraints(maxWidth: 1000),
-                              child: widget.kind == _ComposerKind.collection
-                                  ? Stack(
-                                      clipBehavior: Clip.none,
-                                      children: [
-                                        Positioned.fill(
-                                          top: 12,
-                                          left: 12,
-                                          right: 12,
-                                          bottom: -12,
-                                          child: DecoratedBox(
-                                            decoration: BoxDecoration(
-                                              borderRadius:
-                                                  BorderRadius.circular(18),
-                                              color: cs.surfaceContainerHighest
-                                                  .withValues(alpha: 0.32),
-                                            ),
-                                          ),
-                                        ),
-                                        Positioned.fill(
-                                          top: 6,
-                                          left: 6,
-                                          right: 6,
-                                          bottom: -6,
-                                          child: DecoratedBox(
-                                            decoration: BoxDecoration(
-                                              borderRadius:
-                                                  BorderRadius.circular(18),
-                                              color: cs.surfaceContainerHighest
-                                                  .withValues(alpha: 0.48),
-                                            ),
-                                          ),
-                                        ),
-                                        preview,
-                                      ],
-                                    )
-                                  : preview,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (!_showPublishStep)
-                                FilledButton.icon(
-                                  onPressed: () {
-                                    setState(() => _showPublishStep = true);
-                                  },
-                                  icon: const Icon(Icons.arrow_forward_rounded),
-                                  label: const Text('Save & Next'),
-                                )
-                              else
-                                OutlinedButton.icon(
-                                  onPressed: () {
-                                    setState(() => _showPublishStep = false);
-                                  },
-                                  icon: const Icon(Icons.arrow_back_rounded),
-                                  label: const Text('Back to Editing'),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  width: 430,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: cs.surface,
-                      border: Border(
-                        left: BorderSide(
-                            color: cs.outline.withValues(alpha: 0.2)),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      IconButton.filledTonal(
+                        onPressed: () => Navigator.pop(context, false),
+                        icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                            size: 18),
                       ),
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: ListView(
-                            padding: const EdgeInsets.fromLTRB(
-                                16, headerHeight + 16, 16, 16),
-                            children: [
-                              if (!_showPublishStep) ...[
-                                if (_isCardEditor &&
-                                    !widget.isEdit &&
-                                    _pullSourcePayload != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 10),
-                                    child: OutlinedButton.icon(
-                                      onPressed: _pullFromSourcePayload,
-                                      icon: const Icon(
-                                          Icons.download_for_offline_outlined),
-                                      label: Text(
-                                        widget.kind == _ComposerKind.single
-                                            ? 'Pull From Preset'
-                                            : 'Pull From Active Collection Item',
-                                      ),
-                                    ),
-                                  ),
-                                if (_thumbnailMode == '3d')
-                                  _build3DWindowLayerPanel(context)
-                                else if (_thumbnailMode == '360')
-                                  _build360CardEditorPanel(context)
-                                else
-                                  _build2DCardEditorPanel(context),
-                                const SizedBox(height: 14),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: OutlinedButton(
-                                        onPressed: () =>
-                                            Navigator.pop(context, false),
-                                        child: const Text('Cancel'),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: FilledButton.icon(
-                                        onPressed: () => setState(
-                                            () => _showPublishStep = true),
-                                        icon: const Icon(
-                                            Icons.arrow_forward_rounded),
-                                        label: const Text('Save & Next'),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ] else ...[
-                                TextField(
-                                  controller: _titleController,
-                                  onChanged: (_) {
-                                    if (mounted) setState(() {});
-                                  },
-                                  decoration: const InputDecoration(
-                                    labelText: 'Title',
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                TextField(
-                                  controller: _descriptionController,
-                                  maxLines: 4,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Description',
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                TextField(
-                                  controller: _tagsController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Tags',
-                                    hintText: '#parallax #fyp',
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                TextField(
-                                  controller: _mentionController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Mention',
-                                    hintText: '@username',
-                                  ),
-                                ),
-                                if (_mentionLoading)
-                                  const Padding(
-                                    padding: EdgeInsets.only(top: 8),
-                                    child: LinearProgressIndicator(
-                                        color: Colors.white),
-                                  ),
-                                if (_mentionResults.isNotEmpty)
-                                  Container(
-                                    margin: const EdgeInsets.only(top: 8),
-                                    decoration: BoxDecoration(
-                                      color: cs.surfaceContainerLow,
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color:
-                                            cs.outline.withValues(alpha: 0.2),
-                                      ),
-                                    ),
-                                    constraints:
-                                        const BoxConstraints(maxHeight: 220),
-                                    child: ListView.builder(
-                                      shrinkWrap: true,
-                                      itemCount: _mentionResults.length,
-                                      itemBuilder: (context, index) {
-                                        final user = _mentionResults[index];
-                                        return ListTile(
-                                          dense: true,
-                                          title: Text(user.displayName),
-                                          subtitle: Text(user.email),
-                                          onTap: () => _addMention(user),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                if (_selectedMentionIds.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 8),
-                                    child: Wrap(
-                                      spacing: 6,
-                                      runSpacing: 6,
-                                      children: _selectedMentionIds.map((id) {
-                                        final profile =
-                                            _selectedMentionProfiles[id];
-                                        final label = profile != null
-                                            ? '@${profile.username ?? profile.displayName}'
-                                            : '@${id.substring(0, math.min(8, id.length))}';
-                                        return InputChip(
-                                          label: Text(label),
-                                          onDeleted: () => _removeMention(id),
-                                        );
-                                      }).toList(),
-                                    ),
-                                  ),
-                                const SizedBox(height: 14),
-                                Text(
-                                  'Monetization',
-                                  style: TextStyle(
-                                    color: cs.onSurface,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                SegmentedButton<bool>(
-                                  segments: const <ButtonSegment<bool>>[
-                                    ButtonSegment<bool>(
-                                      value: false,
-                                      label: Text('Free'),
-                                    ),
-                                    ButtonSegment<bool>(
-                                      value: true,
-                                      label: Text('Paid'),
-                                    ),
-                                  ],
-                                  selected: <bool>{_isPaidContent},
-                                  onSelectionChanged: (values) {
-                                    setState(() {
-                                      _isPaidContent = values.first;
-                                      if (!_isPaidContent) {
-                                        _priceController.clear();
-                                      }
-                                    });
-                                  },
-                                ),
-                                if (_isPaidContent) ...[
-                                  const SizedBox(height: 8),
-                                  TextField(
-                                    controller: _priceController,
-                                    keyboardType: const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                    onChanged: (_) {
-                                      if (mounted) setState(() {});
-                                    },
-                                    decoration: const InputDecoration(
-                                      labelText: 'Price (USD)',
-                                      prefixText: '\$',
-                                      hintText: '4.99',
-                                    ),
-                                  ),
-                                ],
-                                const SizedBox(height: 14),
-                                Text(
-                                  'Accent Color',
-                                  style: TextStyle(
-                                    color: cs.onSurface,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                TextField(
-                                  controller: _accentHexController,
-                                  onChanged: _applyAccentText,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Accent Hex',
-                                    hintText: '#FD4687',
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: OutlinedButton.icon(
-                                        onPressed: _resolvingAccentColor
-                                            ? null
-                                            : _autoDetectAccentColor,
-                                        icon: _resolvingAccentColor
-                                            ? const SizedBox(
-                                                width: 14,
-                                                height: 14,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                ),
-                                              )
-                                            : const Icon(
-                                                Icons.auto_awesome_rounded,
-                                                size: 16,
-                                              ),
-                                        label: const Text(
-                                          'Auto From Thumbnail',
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    IconButton.filledTonal(
-                                      tooltip: 'Pick from screen',
-                                      onPressed: _pickAccentFromScreen,
-                                      icon: const Icon(Icons.edit_rounded),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      width: 28,
-                                      height: 28,
-                                      decoration: BoxDecoration(
-                                        color: _cardAccentColorFromHex(
-                                          _accentColorHex,
-                                        ),
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(
-                                          color: cs.outline.withValues(
-                                            alpha: 0.4,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 14),
-                                SegmentedButton<bool>(
-                                  segments: const [
-                                    ButtonSegment<bool>(
-                                      value: true,
-                                      label: Text('Public'),
-                                    ),
-                                    ButtonSegment<bool>(
-                                      value: false,
-                                      label: Text('Private'),
-                                    ),
-                                  ],
-                                  selected: <bool>{_isPublic},
-                                  onSelectionChanged: (values) {
-                                    setState(() => _isPublic = values.first);
-                                  },
-                                ),
-                                const SizedBox(height: 18),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: OutlinedButton(
-                                        onPressed: _submitting
-                                            ? null
-                                            : () =>
-                                                Navigator.pop(context, false),
-                                        child: const Text('Cancel'),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: FilledButton(
-                                        onPressed: _submitting ? null : _submit,
-                                        child: Text(
-                                          _submitting
-                                              ? 'Working...'
-                                              : widget.isEdit
-                                                  ? 'Update'
-                                                  : 'Publish',
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ],
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          composerTitle,
+                          style: TextStyle(
+                            color: cs.onSurface,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          top: 0,
-                          height: headerHeight,
-                          child: IgnorePointer(
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    Colors.black.withValues(alpha: 0.82),
-                                    Colors.transparent,
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        buildRightPanelHeader(),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            top: 0,
-            height: headerHeight,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black.withValues(alpha: 0.82),
-                      Colors.transparent,
+                      ),
                     ],
                   ),
-                ),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 980),
+                        child: _buildPreview(cs),
+                      ),
+                    ),
+                  ),
+                  if (_isCollection && _items.length > 1) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: List<Widget>.generate(_items.length, (index) {
+                        return ChoiceChip(
+                          selected: index == _thumbnailIndex,
+                          label: Text('${index + 1}. ${_items[index].name}'),
+                          onSelected: (_) =>
+                              setState(() => _thumbnailIndex = index),
+                        );
+                      }),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
-          Positioned(
-            left: 12,
-            right: 20,
-            top: 12,
-            child: Row(
-              children: [
-                IconButton.filledTonal(
-                  onPressed: () => Navigator.pop(context, false),
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+          SizedBox(
+            width: 430,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: cs.surface,
+                border: Border(
+                  left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    composerTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: cs.onSurface,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
+              ),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  TextField(
+                    controller: _titleController,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: _isCollection ? 'Collection Title' : 'Title',
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _descriptionController,
+                    maxLines: 4,
+                    decoration: const InputDecoration(labelText: 'Description'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _tagsController,
+                    decoration: const InputDecoration(
+                      labelText: 'Tags',
+                      hintText: '#image #fyp',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _mentionController,
+                    decoration: const InputDecoration(
+                      labelText: 'Mention',
+                      hintText: '@username',
+                    ),
+                  ),
+                  if (_mentionLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: LinearProgressIndicator(color: Colors.white),
+                    ),
+                  if (_mentionResults.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerLow,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: cs.outline.withValues(alpha: 0.2)),
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _mentionResults.length,
+                        itemBuilder: (context, index) {
+                          final user = _mentionResults[index];
+                          return ListTile(
+                            dense: true,
+                            title: Text(user.displayName),
+                            subtitle: Text(user.username == null
+                                ? user.email
+                                : '@${user.username}'),
+                            onTap: () => _addMention(user),
+                          );
+                        },
+                      ),
+                    ),
+                  if (_selectedMentionIds.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: _selectedMentionIds.map((id) {
+                          final profile = _selectedMentionProfiles[id];
+                          final label = profile == null
+                              ? '@${id.substring(0, math.min(8, id.length))}'
+                              : '@${profile.username ?? profile.displayName}';
+                          return InputChip(
+                            label: Text(label),
+                            onDeleted: () => _removeMention(id),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  const SizedBox(height: 14),
+                  Text('Monetization',
+                      style: TextStyle(
+                          color: cs.onSurface, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 6),
+                  SegmentedButton<bool>(
+                    segments: const <ButtonSegment<bool>>[
+                      ButtonSegment<bool>(value: false, label: Text('Free')),
+                      ButtonSegment<bool>(value: true, label: Text('Paid')),
+                    ],
+                    selected: <bool>{_isPaidContent},
+                    onSelectionChanged: (values) {
+                      setState(() {
+                        _isPaidContent = values.first;
+                        if (!_isPaidContent) _priceController.clear();
+                      });
+                    },
+                  ),
+                  if (_isPaidContent) ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _priceController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Price (USD)',
+                        prefixText: '\$',
+                        hintText: '4.99',
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _accentHexController,
+                    onChanged: _applyAccentText,
+                    decoration: const InputDecoration(
+                      labelText: 'Accent Hex',
+                      hintText: '#FD4687',
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SegmentedButton<bool>(
+                    segments: const <ButtonSegment<bool>>[
+                      ButtonSegment<bool>(value: true, label: Text('Public')),
+                      ButtonSegment<bool>(value: false, label: Text('Private')),
+                    ],
+                    selected: <bool>{_isPublic},
+                    onSelectionChanged: (values) =>
+                        setState(() => _isPublic = values.first),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _submitting
+                              ? null
+                              : () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: _submitting ? null : _submit,
+                          child: Text(_submitting
+                              ? 'Working...'
+                              : widget.isEdit
+                                  ? 'Update'
+                                  : 'Publish'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -17649,7 +10066,6 @@ class _SettingsTab extends StatefulWidget {
 }
 
 enum _SettingsSection {
-  tracker,
   appearance,
   profile,
   notifications,
@@ -17662,23 +10078,16 @@ class _SettingsTabState extends State<_SettingsTab> {
   final AppRepository _repository = AppRepository.instance;
 
   late String _themeMode;
-  bool _trackerEnabled = true;
-  bool _trackerUiVisible = false;
-  bool _cursorEnabled = false;
-  bool _prefsLoading = true;
-  String? _prefsError;
-  TrackerRuntimeConfig _trackerConfig = TrackerRuntimeConfig.defaults;
-  _SettingsSection _selectedSection = _SettingsSection.tracker;
+  _SettingsSection _selectedSection = _SettingsSection.appearance;
   AppUserProfile? _profile;
   bool _profileLoading = true;
   String? _profileError;
+  bool _wallpaperUploading = false;
 
   @override
   void initState() {
     super.initState();
     _themeMode = widget.currentThemeMode;
-    _cursorEnabled = TrackingService.instance.dartCursorEnabled;
-    _loadTrackerPrefs();
     _loadProfileSummary();
   }
 
@@ -17696,45 +10105,6 @@ class _SettingsTabState extends State<_SettingsTab> {
     widget.onThemeModeChanged?.call(mode);
   }
 
-  Future<void> _loadTrackerPrefs() async {
-    if (mounted) {
-      setState(() {
-        _prefsLoading = true;
-        _prefsError = null;
-      });
-    }
-    try {
-      final prefs = await QueryGuard.run(
-        () => _repository.fetchTrackerPreferencesForCurrentUser(),
-      );
-      var config = await QueryGuard.run(
-        () => _repository.fetchTrackerRuntimeConfigForCurrentUser(),
-      );
-      final normalized = _normalizeInputModeForDevice(config);
-      if (normalized.inputMode != config.inputMode) {
-        config = normalized;
-        await _repository.updateTrackerRuntimeConfigForCurrentUser(config);
-      }
-      if (!mounted) return;
-      setState(() {
-        _trackerEnabled = prefs['trackerEnabled'] ?? true;
-        _trackerUiVisible = prefs['trackerUiVisible'] ?? false;
-        _trackerConfig = config;
-        _cursorEnabled = config.dartCursorEnabled;
-        _prefsLoading = false;
-        _prefsError = null;
-      });
-      TrackingService.instance.setRuntimeConfig(config);
-    } catch (e) {
-      final failure = QueryGuard.classify(e);
-      if (!mounted) return;
-      setState(() {
-        _prefsLoading = false;
-        _prefsError = failure.message;
-      });
-    }
-  }
-
   Future<void> _loadProfileSummary() async {
     final user = _repository.currentUser;
     if (user == null) {
@@ -17745,12 +10115,10 @@ class _SettingsTabState extends State<_SettingsTab> {
       });
       return;
     }
-    if (mounted) {
-      setState(() {
-        _profileLoading = true;
-        _profileError = null;
-      });
-    }
+    setState(() {
+      _profileLoading = true;
+      _profileError = null;
+    });
     try {
       final profile = await QueryGuard.run(
         () => _repository.fetchCurrentUserProfile(),
@@ -17770,68 +10138,27 @@ class _SettingsTabState extends State<_SettingsTab> {
     }
   }
 
-  TrackerRuntimeConfig _normalizeInputModeForDevice(
-    TrackerRuntimeConfig config,
-  ) {
-    final tracking = TrackingService.instance;
-    final String mode = config.inputMode;
-    if (mode == 'mouse_hover' && !tracking.supportsMouseHover) {
-      return config.copyWith(inputMode: 'mediapipe');
+  Future<void> _uploadWallpaper() async {
+    if (_wallpaperUploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _wallpaperUploading = true);
+    try {
+      final file = await pickDeviceFile(accept: 'image/*');
+      if (file == null) return;
+      final publicUrl = await _repository.uploadAssetBytes(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: 'wallpapers',
+      );
+      AppearanceSettingsService.instance.updateWallpaperImageUrl(publicUrl);
+    } catch (e) {
+      if (!mounted) return;
+      messenger
+          .showSnackBar(SnackBar(content: Text('Wallpaper upload failed: $e')));
+    } finally {
+      if (mounted) setState(() => _wallpaperUploading = false);
     }
-    if (mode == 'accelerometer' && !tracking.supportsAccelerometer) {
-      return config.copyWith(inputMode: 'mediapipe');
-    }
-    if (mode == 'gyro' && !tracking.supportsGyro) {
-      return config.copyWith(inputMode: 'mediapipe');
-    }
-    return config;
-  }
-
-  Future<void> _setTrackerEnabled(bool value) async {
-    setState(() => _trackerEnabled = value);
-    await TrackingService.instance.setTrackerEnabled(value);
-  }
-
-  Future<void> _setTrackerUiVisible(bool value) async {
-    setState(() => _trackerUiVisible = value);
-    await TrackingService.instance.setTrackerUiVisible(value);
-  }
-
-  void _setCursorEnabled(bool value) {
-    setState(() => _cursorEnabled = value);
-    unawaited(
-      _updateTrackerConfig(
-        _trackerConfig.copyWith(dartCursorEnabled: value),
-      ),
-    );
-  }
-
-  Future<void> _updateTrackerConfig(TrackerRuntimeConfig next) async {
-    setState(() {
-      _trackerConfig = next;
-      _cursorEnabled = next.dartCursorEnabled;
-      if (next.inputMode != 'mediapipe') {
-        _trackerUiVisible = false;
-      }
-    });
-    TrackingService.instance.setRuntimeConfig(next);
-    if (next.inputMode != 'mediapipe') {
-      await TrackingService.instance.setTrackerUiVisible(false);
-    }
-    await _repository.updateTrackerRuntimeConfigForCurrentUser(next);
-  }
-
-  Future<void> _resetTrackerDefaults() async {
-    await _updateTrackerConfig(TrackerRuntimeConfig.defaults);
-  }
-
-  Future<void> _setInputMode(String mode) async {
-    if (!_trackerEnabled) return;
-    final resolvedConfig = _normalizeInputModeForDevice(
-      _trackerConfig.copyWith(inputMode: mode),
-    );
-    final String resolved = resolvedConfig.inputMode;
-    await _updateTrackerConfig(_trackerConfig.copyWith(inputMode: resolved));
   }
 
   Future<void> _confirmSignOut() async {
@@ -17864,9 +10191,7 @@ class _SettingsTabState extends State<_SettingsTab> {
     if (profile == null) return;
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => _EditProfilePage(profile: profile),
-      ),
+      MaterialPageRoute(builder: (_) => _EditProfilePage(profile: profile)),
     );
     await _loadProfileSummary();
   }
@@ -17886,23 +10211,19 @@ class _SettingsTabState extends State<_SettingsTab> {
         borderRadius: BorderRadius.circular(14),
         child: ListTile(
           selected: selected,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           selectedTileColor: Colors.transparent,
-          leading: Icon(
-            icon,
-            color: selected ? Colors.black : cs.onSurfaceVariant,
-          ),
-          title: Text(
-            label,
-            style: TextStyle(color: selected ? Colors.black : cs.onSurface),
-          ),
+          leading:
+              Icon(icon, color: selected ? Colors.black : cs.onSurfaceVariant),
+          title: Text(label,
+              style: TextStyle(color: selected ? Colors.black : cs.onSurface)),
           subtitle: subtitle == null
               ? null
               : Text(
                   subtitle,
                   style: TextStyle(
-                    color: selected ? Colors.black54 : cs.onSurfaceVariant,
-                  ),
+                      color: selected ? Colors.black54 : cs.onSurfaceVariant),
                 ),
           onTap: () => setState(() => _selectedSection = section),
         ),
@@ -17925,26 +10246,18 @@ class _SettingsTabState extends State<_SettingsTab> {
             child: Text(
               'Settings',
               style: TextStyle(
-                color: cs.onSurface,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
+                  color: cs.onSurface,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700),
             ),
           ),
           Divider(height: 1, color: cs.outline.withValues(alpha: 0.2)),
           _settingsNavItem(
             cs: cs,
-            section: _SettingsSection.tracker,
-            icon: Icons.track_changes_rounded,
-            label: 'Tracker',
-            subtitle: 'Tracking & cursor',
-          ),
-          _settingsNavItem(
-            cs: cs,
             section: _SettingsSection.appearance,
             icon: Icons.palette_rounded,
             label: 'Appearance',
-            subtitle: 'Theme & blur',
+            subtitle: 'Theme, blur, wallpaper',
           ),
           _settingsNavItem(
             cs: cs,
@@ -17986,626 +10299,6 @@ class _SettingsTabState extends State<_SettingsTab> {
     );
   }
 
-  Widget _buildTrackerSection(ColorScheme cs) {
-    final tracking = TrackingService.instance;
-    final bool mouseHoverSupported = tracking.supportsMouseHover;
-    final bool accelerometerSupported = tracking.supportsAccelerometer;
-    final bool gyroSupported = tracking.supportsGyro;
-    final String cursorModeValue =
-        _trackerConfig.cursorMode == 'iris' ? 'iris' : 'head';
-
-    return ListView(
-      padding: const EdgeInsets.all(14),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Tracker Runtime',
-                style: TextStyle(
-                  color: cs.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Control app-wide tracking, UI visibility, and Dart-side cursor interactions.',
-                style: TextStyle(color: cs.onSurfaceVariant),
-              ),
-              const SizedBox(height: 12),
-              if (_prefsLoading)
-                const SizedBox(
-                  height: 60,
-                  child:
-                      _TopEdgeLoadingPane(label: 'Loading tracker config...'),
-                )
-              else if (_prefsError != null)
-                SizedBox(
-                  height: 160,
-                  child: QueryRetryPane(
-                    title: _prefsError,
-                    offline: _isOfflineErrorText(_prefsError!),
-                    onRetry: _loadTrackerPrefs,
-                  ),
-                )
-              else ...[
-                SwitchListTile(
-                  value: _trackerEnabled,
-                  title: const Text('Enable Tracking'),
-                  subtitle: const Text(
-                    'Keeps head tracking active app-wide for parallax and interactions.',
-                  ),
-                  onChanged: _setTrackerEnabled,
-                ),
-                SwitchListTile(
-                  value: _trackerUiVisible,
-                  title: const Text('Show Tracker UI'),
-                  subtitle: const Text(
-                    'Display tracker panel, mesh, and camera preview overlay.',
-                  ),
-                  onChanged: _trackerEnabled ? _setTrackerUiVisible : null,
-                ),
-                SwitchListTile(
-                  value: _cursorEnabled,
-                  title: const Text('Dart Cursor Overlay'),
-                  subtitle: const Text(
-                    'Render a global cursor and bridge wink/pinch interactions.',
-                  ),
-                  onChanged: _trackerEnabled ? _setCursorEnabled : null,
-                ),
-                const SizedBox(height: 4),
-                _settingsSectionTitle('Parallax Input Mode'),
-                Opacity(
-                  opacity: mouseHoverSupported ? 1 : 0.45,
-                  child: SwitchListTile(
-                    value: _trackerConfig.inputMode == 'mouse_hover',
-                    title: const Text('Use mouse hover'),
-                    subtitle: Text(
-                      mouseHoverSupported
-                          ? 'Uses real mouse movement for parallax.'
-                          : 'Mouse hover input is unavailable on this device.',
-                    ),
-                    onChanged: (_trackerEnabled && mouseHoverSupported)
-                        ? (value) =>
-                            _setInputMode(value ? 'mouse_hover' : 'mediapipe')
-                        : null,
-                  ),
-                ),
-                Opacity(
-                  opacity: accelerometerSupported ? 1 : 0.45,
-                  child: SwitchListTile(
-                    value: _trackerConfig.inputMode == 'accelerometer',
-                    title: const Text('Use accelerometer'),
-                    subtitle: Text(
-                      accelerometerSupported
-                          ? 'Uses device accelerometer when supported.'
-                          : 'Accelerometer is unavailable on this device.',
-                    ),
-                    onChanged: (_trackerEnabled && accelerometerSupported)
-                        ? (value) => _setInputMode(
-                              value ? 'accelerometer' : 'mediapipe',
-                            )
-                        : null,
-                  ),
-                ),
-                Opacity(
-                  opacity: gyroSupported ? 1 : 0.45,
-                  child: SwitchListTile(
-                    value: _trackerConfig.inputMode == 'gyro',
-                    title: const Text('Use gyro'),
-                    subtitle: Text(
-                      gyroSupported
-                          ? 'Uses device gyroscope when supported.'
-                          : 'Gyroscope is unavailable on this device.',
-                    ),
-                    onChanged: (_trackerEnabled && gyroSupported)
-                        ? (value) => _setInputMode(value ? 'gyro' : 'mediapipe')
-                        : null,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: cursorModeValue,
-                  decoration: const InputDecoration(
-                    labelText: 'Cursor Mode',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'head',
-                      child: Text('Auto (Head + Hand)'),
-                    ),
-                    DropdownMenuItem(value: 'iris', child: Text('Iris')),
-                  ],
-                  onChanged: _trackerEnabled
-                      ? (value) {
-                          if (value == null) return;
-                          _updateTrackerConfig(
-                            _trackerConfig.copyWith(cursorMode: value),
-                          );
-                        }
-                      : null,
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: _trackerConfig.perfMode,
-                  decoration: const InputDecoration(
-                    labelText: 'Performance Mode',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'low', child: Text('Low')),
-                    DropdownMenuItem(value: 'medium', child: Text('Medium')),
-                    DropdownMenuItem(value: 'high', child: Text('High')),
-                  ],
-                  onChanged: _trackerEnabled
-                      ? (value) {
-                          if (value == null) return;
-                          _updateTrackerConfig(
-                            _trackerConfig.copyWith(perfMode: value),
-                          );
-                        }
-                      : null,
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: _trackerConfig.inputSource,
-                  decoration: const InputDecoration(
-                    labelText: 'Input Source',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'local', child: Text('Local')),
-                    DropdownMenuItem(value: 'remote', child: Text('Remote')),
-                  ],
-                  onChanged: _trackerEnabled
-                      ? (value) {
-                          if (value == null) return;
-                          _updateTrackerConfig(
-                            _trackerConfig.copyWith(inputSource: value),
-                          );
-                        }
-                      : null,
-                ),
-                const SizedBox(height: 10),
-                SwitchListTile(
-                  value: _trackerConfig.showCursor,
-                  title: const Text('Tracker Internal Cursor'),
-                  subtitle: const Text(
-                    'Used inside tracker UI; global app cursor remains Dart-side.',
-                  ),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(showCursor: value),
-                          )
-                      : null,
-                ),
-                SwitchListTile(
-                  value: _trackerConfig.mouseTracking,
-                  title: const Text('Mouse Tracking'),
-                  subtitle: const Text(
-                    'Enable cursor steering from real mouse deltas for diagnostics.',
-                  ),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(mouseTracking: value),
-                          )
-                      : null,
-                ),
-                const SizedBox(height: 4),
-                _settingsSectionTitle('Core Motion'),
-                _settingsSlider(
-                  label: 'Sensitivity X',
-                  value: _trackerConfig.sensitivityX,
-                  min: 1,
-                  max: 1000,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sensitivityX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Sensitivity Y',
-                  value: _trackerConfig.sensitivityY,
-                  min: 1,
-                  max: 1000,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sensitivityY: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Smoothing',
-                  value: _trackerConfig.smoothing,
-                  min: 0,
-                  max: 98,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(smoothing: v),
-                          )
-                      : null,
-                ),
-                const SizedBox(height: 8),
-                FilledButton.icon(
-                  onPressed: _trackerEnabled ? _resetTrackerDefaults : null,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Reset Tracker Defaults'),
-                ),
-                _settingsSectionTitle('Dead Zones'),
-                _settingsSlider(
-                  label: 'Iris Dead Zone X',
-                  value: _trackerConfig.deadZoneIrisX,
-                  min: 0.001,
-                  max: 0.1,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(deadZoneIrisX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Iris Dead Zone Y',
-                  value: _trackerConfig.deadZoneIrisY,
-                  min: 0.001,
-                  max: 0.1,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(deadZoneIrisY: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Head Dead Zone Yaw',
-                  value: _trackerConfig.deadZoneHeadYaw,
-                  min: 0,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(deadZoneHeadYaw: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Head Dead Zone Pitch',
-                  value: _trackerConfig.deadZoneHeadPitch,
-                  min: 0,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(deadZoneHeadPitch: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Dead Zone X',
-                  value: _trackerConfig.deadZoneHandX,
-                  min: 0.001,
-                  max: 0.5,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(deadZoneHandX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Dead Zone Y',
-                  value: _trackerConfig.deadZoneHandY,
-                  min: 0.001,
-                  max: 0.5,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(deadZoneHandY: v),
-                          )
-                      : null,
-                ),
-                _settingsSectionTitle('Wink + Pinch'),
-                _settingsSlider(
-                  label: 'Left Closed Threshold',
-                  value: _trackerConfig.leftClosedThresh,
-                  min: 0.0,
-                  max: 1.0,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(leftClosedThresh: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Left Open Threshold',
-                  value: _trackerConfig.leftOpenThresh,
-                  min: 0.0,
-                  max: 1.0,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(leftOpenThresh: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Right Closed Threshold',
-                  value: _trackerConfig.rightClosedThresh,
-                  min: 0.0,
-                  max: 1.0,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(rightClosedThresh: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Right Open Threshold',
-                  value: _trackerConfig.rightOpenThresh,
-                  min: 0.0,
-                  max: 1.0,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(rightOpenThresh: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Pinch Threshold',
-                  value: _trackerConfig.pinchThresh,
-                  min: 0.01,
-                  max: 0.2,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(pinchThresh: v),
-                          )
-                      : null,
-                ),
-                _settingsSectionTitle('Head Acceleration'),
-                _settingsSlider(
-                  label: 'Head Slow X',
-                  value: _trackerConfig.headSlowX,
-                  min: 0.001,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(headSlowX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Head Fast X',
-                  value: _trackerConfig.headFastX,
-                  min: 0.001,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(headFastX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Head Transition X',
-                  value: _trackerConfig.headTransX,
-                  min: 0.001,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(headTransX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Head Slow Y',
-                  value: _trackerConfig.headSlowY,
-                  min: 0.001,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(headSlowY: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Head Fast Y',
-                  value: _trackerConfig.headFastY,
-                  min: 0.001,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(headFastY: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Head Transition Y',
-                  value: _trackerConfig.headTransY,
-                  min: 0.001,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(headTransY: v),
-                          )
-                      : null,
-                ),
-                _settingsSectionTitle('Hand Acceleration'),
-                _settingsSlider(
-                  label: 'Hand Slow X',
-                  value: _trackerConfig.handSlowX,
-                  min: 0.001,
-                  max: 15,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(handSlowX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Fast X',
-                  value: _trackerConfig.handFastX,
-                  min: 0.001,
-                  max: 20,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(handFastX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Transition X',
-                  value: _trackerConfig.handTransX,
-                  min: 0.001,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(handTransX: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Slow Y',
-                  value: _trackerConfig.handSlowY,
-                  min: 0.001,
-                  max: 15,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(handSlowY: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Fast Y',
-                  value: _trackerConfig.handFastY,
-                  min: 0.001,
-                  max: 20,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(handFastY: v),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Transition Y',
-                  value: _trackerConfig.handTransY,
-                  min: 0.001,
-                  max: 10,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(handTransY: v),
-                          )
-                      : null,
-                ),
-                _settingsSectionTitle('Hand Detection'),
-                _settingsSlider(
-                  label: 'Hand Detection Confidence',
-                  value: _trackerConfig.handDetectionConfidence,
-                  min: 0.3,
-                  max: 0.99,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(
-                              handDetectionConfidence: v,
-                            ),
-                          )
-                      : null,
-                ),
-                _settingsSlider(
-                  label: 'Hand Tracking Confidence',
-                  value: _trackerConfig.handTrackingConfidence,
-                  min: 0.3,
-                  max: 0.99,
-                  onChanged: _trackerEnabled
-                      ? (v) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(
-                              handTrackingConfidence: v,
-                            ),
-                          )
-                      : null,
-                ),
-                _settingsSectionTitle('Remote Stream Flags'),
-                SwitchListTile(
-                  value: _trackerConfig.sendIris,
-                  title: const Text('Send Iris'),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sendIris: value),
-                          )
-                      : null,
-                ),
-                SwitchListTile(
-                  value: _trackerConfig.sendNose,
-                  title: const Text('Send Nose'),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sendNose: value),
-                          )
-                      : null,
-                ),
-                SwitchListTile(
-                  value: _trackerConfig.sendYawPitch,
-                  title: const Text('Send Yaw/Pitch'),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sendYawPitch: value),
-                          )
-                      : null,
-                ),
-                SwitchListTile(
-                  value: _trackerConfig.sendFingertips,
-                  title: const Text('Send Fingertips'),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sendFingertips: value),
-                          )
-                      : null,
-                ),
-                SwitchListTile(
-                  value: _trackerConfig.sendFullFace,
-                  title: const Text('Send Full Face'),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sendFullFace: value),
-                          )
-                      : null,
-                ),
-                SwitchListTile(
-                  value: _trackerConfig.sendFullHand,
-                  title: const Text('Send Full Hand'),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sendFullHand: value),
-                          )
-                      : null,
-                ),
-                SwitchListTile(
-                  value: _trackerConfig.sendAll,
-                  title: const Text('Send All'),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sendAll: value),
-                          )
-                      : null,
-                ),
-                SwitchListTile(
-                  value: _trackerConfig.sendNone,
-                  title: const Text('Send None'),
-                  onChanged: _trackerEnabled
-                      ? (value) => _updateTrackerConfig(
-                            _trackerConfig.copyWith(sendNone: value),
-                          )
-                      : null,
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildAppearanceSection(ColorScheme cs) {
     return ListView(
       padding: const EdgeInsets.all(14),
@@ -18620,19 +10313,14 @@ class _SettingsTabState extends State<_SettingsTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Theme',
-                style: TextStyle(
-                  color: cs.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              Text('Theme',
+                  style: TextStyle(
+                      color: cs.onSurface,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
-              Text(
-                'Choose how DeepX looks.',
-                style: TextStyle(color: cs.onSurfaceVariant),
-              ),
+              Text('Choose how DeepX looks.',
+                  style: TextStyle(color: cs.onSurfaceVariant)),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
                 initialValue: _themeMode,
@@ -18666,17 +10354,137 @@ class _SettingsTabState extends State<_SettingsTab> {
           child: ValueListenableBuilder<AppearanceSettings>(
             valueListenable: AppearanceSettingsService.instance.settings,
             builder: (context, settings, _) {
+              final Color overlayColor = Color(settings.wallpaperOverlayColor);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Text('Grid Wallpaper',
+                      style: TextStyle(
+                          color: cs.onSurface,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
                   Text(
-                    'Ambient Blur',
-                    style: TextStyle(
-                      color: cs.onSurface,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
+                    'Set the image behind home and collection grids, then tint it with an overlay.',
+                    style: TextStyle(color: cs.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 12),
+                  AspectRatio(
+                    aspectRatio: 16 / 7,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (settings.wallpaperImageUrl.trim().isNotEmpty)
+                            Image.network(
+                              settings.wallpaperImageUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  ColoredBox(color: cs.surfaceContainerHighest),
+                            )
+                          else
+                            ColoredBox(color: cs.surfaceContainerHighest),
+                          ColoredBox(
+                            color: overlayColor.withValues(
+                                alpha: settings.wallpaperOverlayOpacity),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed:
+                              _wallpaperUploading ? null : _uploadWallpaper,
+                          icon: _wallpaperUploading
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.upload_file_rounded),
+                          label: Text(_wallpaperUploading
+                              ? 'Uploading...'
+                              : 'Upload Wallpaper'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        tooltip: 'Clear wallpaper',
+                        onPressed: AppearanceSettingsService
+                            .instance.clearWallpaperImage,
+                        icon: const Icon(Icons.delete_outline_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Text('Overlay Color'),
+                      const Spacer(),
+                      for (final color in const <Color>[
+                        Colors.black,
+                        Color(0xFF101213),
+                        Color(0xFFFD4687),
+                        Color(0xFF2845E1),
+                        Colors.white,
+                      ])
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: InkWell(
+                            onTap: () => AppearanceSettingsService.instance
+                                .updateWallpaperOverlayColor(color.toARGB32()),
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                color: color,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: cs.outline),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _appearanceSlider(
+                    label: 'Overlay Opacity',
+                    value: settings.wallpaperOverlayOpacity,
+                    min: 0,
+                    max: 1,
+                    onChanged: AppearanceSettingsService
+                        .instance.updateWallpaperOverlayOpacity,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+          ),
+          child: ValueListenableBuilder<AppearanceSettings>(
+            valueListenable: AppearanceSettingsService.instance.settings,
+            builder: (context, settings, _) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Ambient Blur',
+                      style: TextStyle(
+                          color: cs.onSurface,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
                   Text(
                     'Adjust blur strength for post and collection detail backgrounds.',
@@ -18686,11 +10494,15 @@ class _SettingsTabState extends State<_SettingsTab> {
                   _appearanceSlider(
                     label: 'Blur Sigma X',
                     value: settings.ambientBlurSigmaX,
+                    min: 0,
+                    max: 100,
                     onChanged: AppearanceSettingsService.instance.updateSigmaX,
                   ),
                   _appearanceSlider(
                     label: 'Blur Sigma Y',
                     value: settings.ambientBlurSigmaY,
+                    min: 0,
+                    max: 100,
                     onChanged: AppearanceSettingsService.instance.updateSigmaY,
                   ),
                 ],
@@ -18717,20 +10529,16 @@ class _SettingsTabState extends State<_SettingsTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Profile Settings',
-                style: TextStyle(
-                  color: cs.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              Text('Profile Settings',
+                  style: TextStyle(
+                      color: cs.onSurface,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
               if (_profileLoading)
                 const SizedBox(
-                  height: 60,
-                  child: _TopEdgeLoadingPane(label: 'Loading profile...'),
-                )
+                    height: 60,
+                    child: _TopEdgeLoadingPane(label: 'Loading profile...'))
               else if (_profileError != null)
                 SizedBox(
                   height: 160,
@@ -18741,10 +10549,8 @@ class _SettingsTabState extends State<_SettingsTab> {
                   ),
                 )
               else if (profile == null)
-                Text(
-                  'Sign in to manage profile settings.',
-                  style: TextStyle(color: cs.onSurfaceVariant),
-                )
+                Text('Sign in to manage profile settings.',
+                    style: TextStyle(color: cs.onSurfaceVariant))
               else ...[
                 Row(
                   children: [
@@ -18755,14 +10561,9 @@ class _SettingsTabState extends State<_SettingsTab> {
                               ? NetworkImage(profile.avatarUrl!.trim())
                               : null,
                       child: (profile.avatarUrl ?? '').trim().isEmpty
-                          ? Text(
-                              profile.displayName.isNotEmpty
-                                  ? profile.displayName[0].toUpperCase()
-                                  : 'U',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            )
+                          ? Text(profile.displayName.isNotEmpty
+                              ? profile.displayName[0].toUpperCase()
+                              : 'U')
                           : null,
                     ),
                     const SizedBox(width: 12),
@@ -18770,23 +10571,16 @@ class _SettingsTabState extends State<_SettingsTab> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Text(profile.displayName,
+                              style: TextStyle(
+                                  color: cs.onSurface,
+                                  fontWeight: FontWeight.w700)),
                           Text(
-                            profile.displayName,
-                            style: TextStyle(
-                              color: cs.onSurface,
-                              fontWeight: FontWeight.w700,
-                            ),
+                            (profile.username ?? '').trim().isNotEmpty
+                                ? '@${profile.username}'
+                                : profile.email,
+                            style: TextStyle(color: cs.onSurfaceVariant),
                           ),
-                          if ((profile.username ?? '').trim().isNotEmpty)
-                            Text(
-                              '@${profile.username}',
-                              style: TextStyle(color: cs.onSurfaceVariant),
-                            )
-                          else
-                            Text(
-                              profile.email,
-                              style: TextStyle(color: cs.onSurfaceVariant),
-                            ),
                         ],
                       ),
                     ),
@@ -18796,9 +10590,8 @@ class _SettingsTabState extends State<_SettingsTab> {
                 Row(
                   children: [
                     FilledButton(
-                      onPressed: _openEditProfile,
-                      child: const Text('Edit Profile'),
-                    ),
+                        onPressed: _openEditProfile,
+                        child: const Text('Edit Profile')),
                     const SizedBox(width: 10),
                     FilledButton.tonalIcon(
                       onPressed: _confirmSignOut,
@@ -18833,27 +10626,17 @@ class _SettingsTabState extends State<_SettingsTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                title,
-                style: TextStyle(
-                  color: cs.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              Text(title,
+                  style: TextStyle(
+                      color: cs.onSurface,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
-              Text(
-                description,
-                style: TextStyle(color: cs.onSurfaceVariant),
-              ),
+              Text(description, style: TextStyle(color: cs.onSurfaceVariant)),
               const SizedBox(height: 12),
-              Text(
-                'Coming soon',
-                style: TextStyle(
-                  color: cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              Text('Coming soon',
+                  style: TextStyle(
+                      color: cs.onSurfaceVariant, fontWeight: FontWeight.w600)),
             ],
           ),
         ),
@@ -18867,58 +10650,30 @@ class _SettingsTabState extends State<_SettingsTab> {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color panelColor = isDark ? const Color(0xFF1E1E1E) : cs.surface;
 
-    Widget sectionBody;
-    switch (_selectedSection) {
-      case _SettingsSection.tracker:
-        sectionBody = _buildTrackerSection(cs);
-        break;
-      case _SettingsSection.appearance:
-        sectionBody = _buildAppearanceSection(cs);
-        break;
-      case _SettingsSection.profile:
-        sectionBody = _buildProfileSection(cs);
-        break;
-      case _SettingsSection.notifications:
-        sectionBody = _buildPlaceholderSection(
+    final Widget sectionBody = switch (_selectedSection) {
+      _SettingsSection.appearance => _buildAppearanceSection(cs),
+      _SettingsSection.profile => _buildProfileSection(cs),
+      _SettingsSection.notifications => _buildPlaceholderSection(
           cs: cs,
           title: 'Notifications',
           description: 'Manage push and email notifications.',
-        );
-        break;
-      case _SettingsSection.privacy:
-        sectionBody = _buildPlaceholderSection(
+        ),
+      _SettingsSection.privacy => _buildPlaceholderSection(
           cs: cs,
           title: 'Privacy & Safety',
           description: 'Control visibility, moderation, and safety tools.',
-        );
-        break;
-      case _SettingsSection.playback:
-        sectionBody = _buildPlaceholderSection(
+        ),
+      _SettingsSection.playback => _buildPlaceholderSection(
           cs: cs,
           title: 'Playback & Data',
           description: 'Adjust quality preferences and data usage.',
-        );
-        break;
-      case _SettingsSection.about:
-        sectionBody = _buildPlaceholderSection(
+        ),
+      _SettingsSection.about => _buildPlaceholderSection(
           cs: cs,
           title: 'About',
           description: 'Version details, policies, and support.',
-        );
-        break;
-    }
-
-    final Widget rightPanel = DecoratedBox(
-      decoration: BoxDecoration(
-        color: panelColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: sectionBody,
-      ),
-    );
+        ),
+    };
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 14, 10, 10),
@@ -18926,30 +10681,18 @@ class _SettingsTabState extends State<_SettingsTab> {
         children: [
           SizedBox(width: 320, child: _buildSettingsNav(cs, panelColor)),
           const SizedBox(width: 10),
-          Expanded(child: rightPanel),
-        ],
-      ),
-    );
-  }
-
-  Widget _settingsSlider({
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required ValueChanged<double>? onChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$label: ${value.toStringAsFixed(3)}'),
-          Slider(
-            value: value.clamp(min, max),
-            min: min,
-            max: max,
-            onChanged: onChanged,
+          Expanded(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: panelColor,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: sectionBody,
+              ),
+            ),
           ),
         ],
       ),
@@ -18959,37 +10702,22 @@ class _SettingsTabState extends State<_SettingsTab> {
   Widget _appearanceSlider({
     required String label,
     required double value,
+    double min = 0,
+    double max = 100,
     required ValueChanged<double> onChanged,
   }) {
-    final double clamped = value.clamp(0, 100);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$label: ${clamped.toStringAsFixed(0)}'),
-          Slider(
-            value: clamped,
-            min: 0,
-            max: 100,
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _settingsSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 10, bottom: 6),
-      child: Text(
-        title,
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onSurface,
-          fontWeight: FontWeight.w700,
-          fontSize: 13,
+    final double clamped = value.clamp(min, max).toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('$label: ${clamped.toStringAsFixed(max <= 1 ? 2 : 0)}'),
+        Slider(
+          value: clamped,
+          min: min,
+          max: max,
+          onChanged: onChanged,
         ),
-      ),
+      ],
     );
   }
 }
@@ -19110,4 +10838,3 @@ String _friendlyCount(int value) {
   final double b = value / 1000000000;
   return b >= 10 ? '${b.toStringAsFixed(0)}B' : '${b.toStringAsFixed(1)}B';
 }
-

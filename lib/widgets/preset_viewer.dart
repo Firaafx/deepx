@@ -1,81 +1,56 @@
 import 'package:flutter/material.dart';
 
-import '../engine3d.dart';
-import '../layer_mode.dart';
-import '../models/preset_payload_v2.dart';
-import 'panorama_viewer_360.dart';
+import '../rendering_support.dart';
 
 class PresetViewer extends StatelessWidget {
   const PresetViewer({
     super.key,
     required this.mode,
     required this.payload,
-    this.cleanView = false,
-    this.embedded = false,
-    this.disableAudio = true,
-    this.embeddedStudio = false,
-    this.useGlobalTracking = true,
-    this.headPose,
-    this.pointerPassthrough = false,
-    this.reanchorToken = 0,
-    this.studioSurface = false,
+    this.fit = BoxFit.cover,
   });
 
   final String mode;
   final Map<String, dynamic> payload;
-  final bool cleanView;
-  final bool embedded;
-  final bool disableAudio;
-  final bool embeddedStudio;
-  final bool useGlobalTracking;
-  final Map<String, double>? headPose;
-  final bool pointerPassthrough;
-  final int reanchorToken;
-  final bool studioSurface;
+  final BoxFit fit;
 
   @override
   Widget build(BuildContext context) {
-    final adapted = PresetPayloadV2.fromMap(
-      payload,
-      fallbackMode: mode,
-    );
-    if (adapted.mode == '2d') {
-      return LayerMode(
-        cleanView: cleanView,
-        embedded: embedded,
-        embeddedStudio: embeddedStudio,
-        initialPresetPayload: adapted.toMap(),
-        externalHeadPose: headPose,
-        useGlobalTracking: useGlobalTracking,
-        pointerPassthrough: pointerPassthrough,
-        reanchorToken: reanchorToken,
-        studioSurface: studioSurface,
+    final String imageUrl =
+        imageUrlFromPayload(payload, fallbackMode: mode)?.trim() ?? '';
+    if (imageUrl.isEmpty) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+        ),
+        child: Center(
+          child: Icon(
+            Icons.image_outlined,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            size: 32,
+          ),
+        ),
       );
     }
-    if (adapted.mode == '360') {
-      return PanoramaViewer360(
-        cleanView: cleanView,
-        embedded: embedded,
-        embeddedStudio: embeddedStudio,
-        initialPresetPayload: adapted.toMap(),
-        externalHeadPose: headPose,
-        useGlobalTracking: useGlobalTracking,
-        pointerPassthrough: pointerPassthrough,
-        reanchorToken: reanchorToken,
-        studioSurface: studioSurface,
-      );
-    }
-    return Engine3DPage(
-      cleanView: cleanView,
-      embedded: embedded,
-      embeddedStudio: embeddedStudio,
-      disableAudio: disableAudio,
-      initialPresetPayload: adapted.toMap(),
-      externalHeadPose: headPose,
-      useGlobalTracking: useGlobalTracking,
-      pointerPassthrough: pointerPassthrough,
-      reanchorToken: reanchorToken,
-      studioSurface: studioSurface,
+    return Image.network(
+      imageUrl,
+      fit: fit,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (context, error, stackTrace) {
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+          ),
+          child: Center(
+            child: Icon(
+              Icons.broken_image_outlined,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              size: 32,
+            ),
+          ),
+        );
+      },
     );
   }
 }

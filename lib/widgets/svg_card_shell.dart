@@ -5,7 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 const double _svgCardBaseWidth = 1852;
 const double _svgCardBaseHeight = 1413;
-const double _kTwoLineTitleExpansion = 64;
+const double _kTwoLineTitleExpansion = 102;
 
 const Color _kShellColor = Color(0x992A2A2A);
 const Color _kInnerColor = Color(0xFF151515);
@@ -49,18 +49,18 @@ class SvgCardClipper extends CustomClipper<Path> {
     final double sy = size.height / _svgCardBaseHeight;
 
     final int usernameCount = usernameCharCount.clamp(1, 6);
-    final double collapse = (6 - usernameCount) / 5;
-    final double metaFactor = metaWidthFactor.clamp(0, 1);
+    final double metaFactor = metaWidthFactor.clamp(0.0, 1.0).toDouble();
 
     final double topShelfShift = lerpDouble(0, -208, metaFactor)!;
     final double topShelfStart = 1113.25 + topShelfShift;
     final double topTabStart = 1227.5 + topShelfShift;
 
-    final double leftTailBottom = lerpDouble(844.164, 556, collapse)!;
-    final double leftTailTop = leftTailBottom - lerpDouble(40, 18, collapse)!;
+    final double usernameHeight = usernameCount * 65;
+    const double leftTailBottom = 858.164;
+    final double leftTailTop =
+        (904 - usernameHeight).clamp(514, 839).toDouble();
 
-    final double titleExpansion = twoLineTitle ? _kTwoLineTitleExpansion : 0;
-    final double titleSpaceBottom = 1037.5 + titleExpansion;
+    const double titleSpaceBottom = 1037.5;
 
     final Path p = Path()
       ..moveTo(447.921 * sx, 127.698 * sy)
@@ -283,7 +283,7 @@ class SvgCardShadowPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final double sx = size.width / _svgCardBaseWidth;
     final double sy = size.height / _svgCardBaseHeight;
-    final double scale = ((sx + sy) / 2).clamp(0.05, 4.0);
+    final double scale = ((sx + sy) / 2).clamp(0.05, 4.0).toDouble();
 
     final Path outer = _buildOuterPath(size);
     final Path inner = SvgCardClipper(
@@ -495,6 +495,7 @@ class SvgCardShadowPainter extends CustomPainter {
   ) {
     final double sx = size.width / _svgCardBaseWidth;
     final double sy = size.height / _svgCardBaseHeight;
+    final double yOffset = (twoLineTitle ? _kTwoLineTitleExpansion : 0) * sy;
 
     final Path badge = Path()
       ..moveTo(213.906 * sx, 1260.91 * sy)
@@ -535,8 +536,10 @@ class SvgCardShadowPainter extends CustomPainter {
         1260.91 * sy,
       )
       ..close();
+    final Path shiftedBadge =
+        yOffset == 0 ? badge : badge.shift(Offset(0, yOffset));
 
-    final Rect bounds = badge.getBounds();
+    final Rect bounds = shiftedBadge.getBounds();
     final Paint fill = Paint()
       ..shader = LinearGradient(
         colors: <Color>[accent, _deriveAccentGradientEnd(accent)],
@@ -546,8 +549,8 @@ class SvgCardShadowPainter extends CustomPainter {
       ..color = accent.withValues(alpha: 0.45)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, 24 * scale);
 
-    canvas.drawPath(badge, glow);
-    canvas.drawPath(badge, fill);
+    canvas.drawPath(shiftedBadge, glow);
+    canvas.drawPath(shiftedBadge, fill);
   }
 
   @override
@@ -617,16 +620,15 @@ class SvgCardShell extends StatelessWidget {
         final Size size = constraints.biggest;
         final double sx = size.width / _svgCardBaseWidth;
         final double sy = size.height / _svgCardBaseHeight;
-        final double scale = ((sx + sy) / 2).clamp(0.05, 4.0);
+        final double scale = ((sx + sy) / 2).clamp(0.05, 4.0).toDouble();
 
         final double metaWidthBase = _resolveMetaWidthBase(
           context,
           resolvedMeta,
           scale,
         );
-        final double metaFactor = ((metaWidthBase - 410) / (700 - 410))
-            .clamp(0.0, 1.0)
-            .toDouble();
+        final double metaFactor =
+            ((metaWidthBase - 410) / (700 - 410)).clamp(0.0, 1.0).toDouble();
         final bool twoLineTitle = _isTwoLineTitle(
           context,
           resolvedTitle,
@@ -679,6 +681,7 @@ class SvgCardShell extends StatelessWidget {
                 priceLabel: (priceLabel ?? '').trim(),
                 collectionCountLabel: (collectionCountLabel ?? '').trim(),
                 showCollectionCount: showCollectionCount,
+                metaWidthFactor: metaFactor,
                 twoLineTitle: twoLineTitle,
               ),
             ),
@@ -687,6 +690,7 @@ class SvgCardShell extends StatelessWidget {
                 avatarImage: avatarImage,
                 avatarFallbackColor: avatarFallbackColor,
                 isVerified: isVerified,
+                twoLineTitle: twoLineTitle,
                 onAvatarTap: onAvatarTap,
                 onMenuTap: onMenuTap,
                 menuItems: menuItems,
@@ -756,6 +760,7 @@ class _CardTextOverlay extends StatelessWidget {
     required this.priceLabel,
     required this.collectionCountLabel,
     required this.showCollectionCount,
+    required this.metaWidthFactor,
     required this.twoLineTitle,
   });
 
@@ -765,6 +770,7 @@ class _CardTextOverlay extends StatelessWidget {
   final String priceLabel;
   final String collectionCountLabel;
   final bool showCollectionCount;
+  final double metaWidthFactor;
   final bool twoLineTitle;
 
   @override
@@ -774,16 +780,17 @@ class _CardTextOverlay extends StatelessWidget {
         final Size size = constraints.biggest;
         final double sx = size.width / _svgCardBaseWidth;
         final double sy = size.height / _svgCardBaseHeight;
-        final double scale = ((sx + sy) / 2).clamp(0.05, 4.0);
+        final double scale = ((sx + sy) / 2).clamp(0.05, 4.0).toDouble();
+        final double titleShift = twoLineTitle ? _kTwoLineTitleExpansion : 0;
+        final double metaFactor = metaWidthFactor.clamp(0.0, 1.0).toDouble();
+        final double metaLeftBase = 1222 + lerpDouble(0, -123, metaFactor)!;
 
-        final List<String> chars = verticalUsername
-            .trim()
-            .toUpperCase()
-            .split('')
-            .take(6)
-            .toList();
+        final List<String> chars =
+            verticalUsername.trim().toUpperCase().split('').take(6).toList();
         final int charCount = chars.isEmpty ? 1 : chars.length;
         final double blueHeight = (charCount * 65).toDouble();
+        final double usernameTop =
+            (904 - blueHeight).clamp(514, 853).toDouble();
 
         return Stack(
           clipBehavior: Clip.none,
@@ -809,7 +816,7 @@ class _CardTextOverlay extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: 1222 * sx,
+              left: metaLeftBase * sx,
               top: 148 * sy,
               width: 535 * sx,
               height: 55 * sy,
@@ -830,11 +837,11 @@ class _CardTextOverlay extends StatelessWidget {
             ),
             Positioned(
               left: 121 * sx,
-              top: 514 * sy,
+              top: usernameTop * sy,
               width: 55 * sx,
               height: blueHeight * sy,
               child: Align(
-                alignment: Alignment.topCenter,
+                alignment: Alignment.bottomCenter,
                 child: Text(
                   chars.isEmpty ? '' : chars.join('\n'),
                   textAlign: TextAlign.center,
@@ -849,7 +856,7 @@ class _CardTextOverlay extends StatelessWidget {
             ),
             Positioned(
               left: 202 * sx,
-              top: 1179 * sy,
+              top: (1179 + titleShift) * sy,
               width: 246 * sx,
               height: 96 * sy,
               child: Align(
@@ -901,6 +908,7 @@ class _AvatarAndMenuOverlay extends StatelessWidget {
     required this.avatarImage,
     required this.avatarFallbackColor,
     required this.isVerified,
+    required this.twoLineTitle,
     required this.onAvatarTap,
     required this.onMenuTap,
     required this.menuItems,
@@ -910,6 +918,7 @@ class _AvatarAndMenuOverlay extends StatelessWidget {
   final ImageProvider? avatarImage;
   final Color avatarFallbackColor;
   final bool isVerified;
+  final bool twoLineTitle;
   final VoidCallback? onAvatarTap;
   final VoidCallback? onMenuTap;
   final List<SvgCardMenuAction> menuItems;
@@ -921,42 +930,46 @@ class _AvatarAndMenuOverlay extends StatelessWidget {
       builder: (context, constraints) {
         final double sx = constraints.maxWidth / _svgCardBaseWidth;
         final double sy = constraints.maxHeight / _svgCardBaseHeight;
+        final double titleShift = twoLineTitle ? _kTwoLineTitleExpansion : 0;
 
         return Stack(
           clipBehavior: Clip.none,
           children: [
             Positioned(
-              left: 120 * sx,
-              top: 900 * sy,
-              width: 150 * sx,
-              height: 150 * sy,
+              left: 127 * sx,
+              top: 916 * sy,
+              width: 134 * sx,
+              height: 134 * sy,
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
                   onTap: onAvatarTap,
                   customBorder: _AvatarBorder(isVerified: isVerified),
-                  child: ClipPath(
-                    clipper: _AvatarClipper(isVerified: isVerified),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: avatarFallbackColor,
-                        image: avatarImage == null
-                            ? null
-                            : DecorationImage(
-                                image: avatarImage!,
-                                fit: BoxFit.cover,
-                              ),
-                        border: Border.all(color: _kStrokeColor, width: 2.2),
+                  child: CustomPaint(
+                    foregroundPainter:
+                        _AvatarStrokePainter(isVerified: isVerified),
+                    child: ClipPath(
+                      clipper: _AvatarClipper(isVerified: isVerified),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: avatarFallbackColor,
+                          image: avatarImage == null
+                              ? null
+                              : DecorationImage(
+                                  image: avatarImage!,
+                                  fit: BoxFit.cover,
+                                ),
+                        ),
+                        child: avatarImage == null
+                            ? const Center(
+                                child: Icon(
+                                  Icons.person,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                              )
+                            : null,
                       ),
-                      child: avatarImage == null
-                          ? const Center(
-                              child: Icon(
-                                Icons.person,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                            )
-                          : null,
                     ),
                   ),
                 ),
@@ -964,25 +977,17 @@ class _AvatarAndMenuOverlay extends StatelessWidget {
             ),
             if (isVerified)
               Positioned(
-                left: 218 * sx,
-                top: 1008 * sy,
-                width: 40 * sx,
-                height: 40 * sy,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: 0.88),
-                  ),
-                  child: Icon(
-                    Icons.check,
-                    color: Colors.black,
-                    size: 20 * ((sx + sy) / 2),
-                  ),
-                ),
+                left: 220 * sx,
+                top: 1026 * sy,
+                width: 39 * sx,
+                height: 39 * sy,
+                child: CustomPaint(painter: _VerifiedBadgePainter()),
               ),
             Positioned(
-              right: 90 * sx,
-              bottom: 120 * sy,
+              left: 1653 * sx,
+              top: (1018 + titleShift) * sy,
+              width: 82 * sx,
+              height: 72 * sy,
               child: _DiagonalMenuButton(
                 onTap: () {
                   onMenuTap?.call();
@@ -1045,8 +1050,8 @@ class _DiagonalMenuButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(28),
         child: SizedBox(
-          width: 80,
-          height: 80,
+          width: 82,
+          height: 72,
           child: CustomPaint(
             painter: _DiagonalDotsPainter(),
           ),
@@ -1063,14 +1068,15 @@ class _DiagonalDotsPainter extends CustomPainter {
     final Paint dim = Paint()..color = const Color(0x80EFEFEF);
 
     final List<Offset> points = <Offset>[
-      Offset(size.width * 0.32, size.height * 0.66),
-      Offset(size.width * 0.70, size.height * 0.30),
-      Offset(size.width * 0.52, size.height * 0.48),
+      Offset(size.width * 0.125, size.height * 0.836),
+      Offset(size.width * 0.734, size.height * 0.142),
+      Offset(size.width * 0.430, size.height * 0.489),
     ];
+    final double radius = size.shortestSide * 0.14;
 
-    canvas.drawCircle(points[0], size.width * 0.09, bright);
-    canvas.drawCircle(points[1], size.width * 0.09, bright);
-    canvas.drawCircle(points[2], size.width * 0.09, dim);
+    canvas.drawCircle(points[0], radius, bright);
+    canvas.drawCircle(points[1], radius, bright);
+    canvas.drawCircle(points[2], radius, dim);
   }
 
   @override
@@ -1084,33 +1090,300 @@ class _AvatarClipper extends CustomClipper<Path> {
 
   @override
   Path getClip(Size size) {
-    final Path path = Path();
+    double vx(double x) => (x - 127) / 134 * size.width;
+    double vy(double y) => (y - 916) / 134 * size.height;
+    double ux(double x) => (x - 1919) / 134 * size.width;
+    double uy(double y) => (y - 917) / 134 * size.height;
+
     if (isVerified) {
-      path
-        ..moveTo(size.width * 0.22, size.height * 0.08)
-        ..lineTo(size.width * 0.64, size.height * 0.08)
-        ..lineTo(size.width * 0.90, size.height * 0.34)
-        ..lineTo(size.width * 0.78, size.height * 0.83)
-        ..lineTo(size.width * 0.34, size.height * 0.94)
-        ..lineTo(size.width * 0.08, size.height * 0.58)
-        ..close();
-    } else {
-      path
-        ..moveTo(size.width * 0.2, size.height * 0.1)
-        ..lineTo(size.width * 0.8, size.height * 0.1)
-        ..lineTo(size.width * 0.92, size.height * 0.5)
-        ..lineTo(size.width * 0.64, size.height * 0.92)
-        ..lineTo(size.width * 0.22, size.height * 0.9)
-        ..lineTo(size.width * 0.06, size.height * 0.5)
+      return Path()
+        ..moveTo(vx(166.291), vy(928.629))
+        ..cubicTo(
+          vx(182.589),
+          vy(916.788),
+          vx(204.657),
+          vy(916.788),
+          vx(220.955),
+          vy(928.629),
+        )
+        ..lineTo(vx(239.384), vy(942.018))
+        ..cubicTo(
+          vx(255.681),
+          vy(953.859),
+          vx(262.501),
+          vy(974.848),
+          vx(256.275),
+          vy(994.007),
+        )
+        ..lineTo(vx(252.728), vy(1004.92))
+        ..cubicTo(
+          vx(249.876),
+          vy(1012.25),
+          vx(243.019),
+          vy(1017.24),
+          vx(235.171),
+          vy(1017.71),
+        )
+        ..lineTo(vx(227.633), vy(1018.16))
+        ..cubicTo(
+          vx(220.223),
+          vy(1018.6),
+          vx(214.188),
+          vy(1024.28),
+          vx(213.292),
+          vy(1031.65),
+        )
+        ..cubicTo(
+          vx(212.171),
+          vy(1040.87),
+          vx(204.344),
+          vy(1047.8),
+          vx(195.057),
+          vy(1047.8),
+        )
+        ..lineTo(vx(182.233), vy(1047.8))
+        ..cubicTo(
+          vx(164.089),
+          vy(1047.8),
+          vx(146.235),
+          vy(1034.83),
+          vx(140.01),
+          vy(1015.67),
+        )
+        ..lineTo(vx(132.971), vy(994.007))
+        ..cubicTo(
+          vx(126.746),
+          vy(974.848),
+          vx(133.565),
+          vy(953.859),
+          vx(149.862),
+          vy(942.018),
+        )
+        ..lineTo(vx(166.291), vy(928.629))
         ..close();
     }
-    return path;
+
+    return Path()
+      ..moveTo(ux(1958.29), uy(929.629))
+      ..cubicTo(
+        ux(1974.59),
+        uy(917.788),
+        ux(1996.66),
+        uy(917.788),
+        ux(2012.96),
+        uy(929.629),
+      )
+      ..lineTo(ux(2030.87), uy(942.646))
+      ..cubicTo(
+        ux(2047.42),
+        uy(954.671),
+        ux(2054.17),
+        uy(976.103),
+        ux(2047.49),
+        uy(995.441),
+      )
+      ..lineTo(ux(2039.88), uy(1017.48))
+      ..cubicTo(
+        ux(2033.41),
+        uy(1036.22),
+        ux(2015.76),
+        uy(1048.8),
+        ux(1995.93),
+        uy(1048.8),
+      )
+      ..lineTo(ux(1974.23), uy(1048.8))
+      ..cubicTo(
+        ux(1954.09),
+        uy(1048.8),
+        ux(1936.23),
+        uy(1035.83),
+        ux(1930.01),
+        uy(1016.67),
+      )
+      ..lineTo(ux(1922.97), uy(995.007))
+      ..cubicTo(
+        ux(1916.75),
+        uy(975.848),
+        ux(1923.56),
+        uy(954.859),
+        ux(1939.86),
+        uy(943.018),
+      )
+      ..lineTo(ux(1958.29), uy(929.629))
+      ..close();
   }
 
   @override
   bool shouldReclip(covariant _AvatarClipper oldClipper) {
     return oldClipper.isVerified != isVerified;
   }
+}
+
+class _AvatarStrokePainter extends CustomPainter {
+  const _AvatarStrokePainter({required this.isVerified});
+
+  final bool isVerified;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double scale = ((size.width / 134) + (size.height / 134)) / 2;
+    final Paint stroke = Paint()
+      ..color = _kStrokeColor
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = 3 * scale.clamp(0.2, 8.0).toDouble();
+    canvas.drawPath(
+        _AvatarClipper(isVerified: isVerified).getClip(size), stroke);
+  }
+
+  @override
+  bool shouldRepaint(covariant _AvatarStrokePainter oldDelegate) {
+    return oldDelegate.isVerified != isVerified;
+  }
+}
+
+class _VerifiedBadgePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    double x(double value) => (value - 220) / 39 * size.width;
+    double y(double value) => (value - 1026) / 39 * size.height;
+    final double scale = ((size.width / 39) + (size.height / 39)) / 2;
+
+    final Path badge = Path()
+      ..moveTo(x(234.805), y(1028.34))
+      ..cubicTo(x(235.998), y(1027.33), x(236.595), y(1026.82), x(237.217),
+          y(1026.52))
+      ..cubicTo(
+          x(237.929), y(1026.18), x(238.709), y(1026), x(239.499), y(1026))
+      ..cubicTo(
+          x(240.289), y(1026), x(241.069), y(1026.18), x(241.781), y(1026.52))
+      ..cubicTo(x(242.405), y(1026.82), x(243.002), y(1027.32), x(244.193),
+          y(1028.34))
+      ..cubicTo(
+          x(244.669), y(1028.75), x(244.906), y(1028.95), x(245.16), y(1029.12))
+      ..cubicTo(x(245.742), y(1029.51), x(246.395), y(1029.78), x(247.082),
+          y(1029.91))
+      ..cubicTo(
+          x(247.38), y(1029.97), x(247.691), y(1030), x(248.313), y(1030.05))
+      ..cubicTo(x(249.877), y(1030.17), x(250.658), y(1030.24), x(251.309),
+          y(1030.47))
+      ..cubicTo(
+          x(252.054), y(1030.73), x(252.73), y(1031.15), x(253.288), y(1031.71))
+      ..cubicTo(x(253.847), y(1032.27), x(254.273), y(1032.95), x(254.536),
+          y(1033.69))
+      ..cubicTo(x(254.767), y(1034.34), x(254.828), y(1035.13), x(254.953),
+          y(1036.69))
+      ..cubicTo(x(255.002), y(1037.31), x(255.027), y(1037.62), x(255.086),
+          y(1037.92))
+      ..cubicTo(x(255.222), y(1038.61), x(255.493), y(1039.26), x(255.882),
+          y(1039.84))
+      ..cubicTo(x(256.051), y(1040.09), x(256.254), y(1040.33), x(256.658),
+          y(1040.81))
+      ..cubicTo(
+          x(257.674), y(1042), x(258.184), y(1042.6), x(258.482), y(1043.22))
+      ..cubicTo(x(258.823), y(1043.93), x(259), y(1044.71), x(259), y(1045.5))
+      ..cubicTo(
+          x(259), y(1046.29), x(258.823), y(1047.07), x(258.482), y(1047.78))
+      ..cubicTo(
+          x(258.186), y(1048.41), x(257.676), y(1049), x(256.658), y(1050.2))
+      ..cubicTo(
+          x(256.381), y(1050.5), x(256.122), y(1050.82), x(255.882), y(1051.16))
+      ..cubicTo(
+          x(255.492), y(1051.74), x(255.222), y(1052.4), x(255.086), y(1053.08))
+      ..cubicTo(x(255.027), y(1053.38), x(255.002), y(1053.69), x(254.953),
+          y(1054.32))
+      ..cubicTo(x(254.828), y(1055.88), x(254.767), y(1056.66), x(254.536),
+          y(1057.31))
+      ..cubicTo(x(254.273), y(1058.06), x(253.847), y(1058.73), x(253.288),
+          y(1059.29))
+      ..cubicTo(
+          x(252.73), y(1059.85), x(252.054), y(1060.27), x(251.309), y(1060.54))
+      ..cubicTo(x(250.658), y(1060.77), x(249.877), y(1060.83), x(248.313),
+          y(1060.95))
+      ..cubicTo(
+          x(247.691), y(1061), x(247.382), y(1061.03), x(247.082), y(1061.09))
+      ..cubicTo(
+          x(246.395), y(1061.22), x(245.742), y(1061.49), x(245.16), y(1061.88))
+      ..cubicTo(x(244.824), y(1062.12), x(244.502), y(1062.38), x(244.195),
+          y(1062.66))
+      ..cubicTo(x(243.002), y(1063.68), x(242.405), y(1064.18), x(241.783),
+          y(1064.48))
+      ..cubicTo(
+          x(241.071), y(1064.82), x(240.291), y(1065), x(239.501), y(1065))
+      ..cubicTo(
+          x(238.711), y(1065), x(237.931), y(1064.82), x(237.219), y(1064.48))
+      ..cubicTo(x(236.595), y(1064.19), x(235.998), y(1063.68), x(234.807),
+          y(1062.66))
+      ..cubicTo(
+          x(234.5), y(1062.38), x(234.177), y(1062.12), x(233.84), y(1061.88))
+      ..cubicTo(x(233.258), y(1061.49), x(232.605), y(1061.22), x(231.918),
+          y(1061.09))
+      ..cubicTo(
+          x(231.511), y(1061.02), x(231.1), y(1060.97), x(230.687), y(1060.95))
+      ..cubicTo(x(229.123), y(1060.83), x(228.342), y(1060.77), x(227.691),
+          y(1060.54))
+      ..cubicTo(
+          x(226.946), y(1060.27), x(226.27), y(1059.85), x(225.712), y(1059.29))
+      ..cubicTo(x(225.153), y(1058.73), x(224.727), y(1058.06), x(224.464),
+          y(1057.31))
+      ..cubicTo(x(224.233), y(1056.66), x(224.172), y(1055.88), x(224.047),
+          y(1054.32))
+      ..cubicTo(
+          x(224.027), y(1053.9), x(223.982), y(1053.49), x(223.914), y(1053.08))
+      ..cubicTo(
+          x(223.778), y(1052.4), x(223.508), y(1051.74), x(223.118), y(1051.16))
+      ..cubicTo(
+          x(222.949), y(1050.91), x(222.746), y(1050.67), x(222.342), y(1050.2))
+      ..cubicTo(
+          x(221.326), y(1049), x(220.816), y(1048.41), x(220.518), y(1047.78))
+      ..cubicTo(x(220.177), y(1047.07), x(220), y(1046.29), x(220), y(1045.5))
+      ..cubicTo(
+          x(220), y(1044.71), x(220.177), y(1043.93), x(220.518), y(1043.22))
+      ..cubicTo(
+          x(220.816), y(1042.6), x(221.324), y(1042), x(222.342), y(1040.81))
+      ..cubicTo(x(222.746), y(1040.33), x(222.949), y(1040.09), x(223.118),
+          y(1039.84))
+      ..cubicTo(x(223.508), y(1039.26), x(223.778), y(1038.61), x(223.914),
+          y(1037.92))
+      ..cubicTo(x(223.973), y(1037.62), x(223.998), y(1037.31), x(224.047),
+          y(1036.69))
+      ..cubicTo(x(224.172), y(1035.13), x(224.233), y(1034.34), x(224.464),
+          y(1033.69))
+      ..cubicTo(x(224.727), y(1032.95), x(225.154), y(1032.27), x(225.713),
+          y(1031.71))
+      ..cubicTo(x(226.271), y(1031.15), x(226.948), y(1030.73), x(227.693),
+          y(1030.47))
+      ..cubicTo(x(228.345), y(1030.24), x(229.125), y(1030.17), x(230.689),
+          y(1030.05))
+      ..cubicTo(
+          x(231.311), y(1030), x(231.62), y(1029.97), x(231.921), y(1029.91))
+      ..cubicTo(
+          x(232.607), y(1029.78), x(233.26), y(1029.51), x(233.842), y(1029.12))
+      ..cubicTo(x(234.096), y(1028.95), x(234.331), y(1028.75), x(234.805),
+          y(1028.34))
+      ..close();
+
+    final Paint badgeStroke = Paint()
+      ..color = Colors.white.withValues(alpha: 0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3 * scale;
+    final Paint checkStroke = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = 3 * scale;
+
+    canvas.drawPath(badge, badgeStroke);
+    canvas.drawLine(Offset(x(232.095), y(1046.56)),
+        Offset(x(236.327), y(1050.79)), checkStroke);
+    canvas.drawLine(Offset(x(236.327), y(1050.79)),
+        Offset(x(246.907), y(1040.21)), checkStroke);
+  }
+
+  @override
+  bool shouldRepaint(covariant _VerifiedBadgePainter oldDelegate) => false;
 }
 
 class _AvatarBorder extends ShapeBorder {
@@ -1126,7 +1399,8 @@ class _AvatarBorder extends ShapeBorder {
 
   @override
   Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
-    final Path local = _AvatarClipper(isVerified: isVerified).getClip(rect.size);
+    final Path local =
+        _AvatarClipper(isVerified: isVerified).getClip(rect.size);
     return local.shift(rect.topLeft);
   }
 
@@ -1154,6 +1428,7 @@ Color _deriveAccentGradientEnd(Color accent) {
     return Color(exactMatch);
   }
   final HSLColor hsl = HSLColor.fromColor(accent);
-  final double nextLightness = (hsl.lightness * 0.46).clamp(0.0, 1.0);
+  final double nextLightness =
+      (hsl.lightness * 0.46).clamp(0.0, 1.0).toDouble();
   return hsl.withLightness(nextLightness).toColor();
 }

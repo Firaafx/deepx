@@ -4,13 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'auth.dart';
-import 'engine3d.dart';
-import 'layer_mode.dart';
 import 'services/app_repository.dart';
 import 'services/appearance_settings_service.dart';
 import 'services/cache_service.dart';
 import 'services/realtime_cache_invalidator.dart';
-import 'services/tracking_service.dart';
 import 'show_feed.dart';
 import 'supabase_config.dart';
 
@@ -36,22 +33,17 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   final AppRepository _repository = AppRepository.instance;
-  final _TrackingRouteObserver _trackingRouteObserver =
-      _TrackingRouteObserver();
 
   String _themeMode = 'dark';
   StreamSubscription<AuthState>? _authSub;
-  bool _trackerReady = false;
 
   @override
   void initState() {
     super.initState();
-    _initTracking();
     if (SupabaseConfig.isConfigured) {
       _loadThemeMode();
       _authSub = _repository.authChanges.listen((_) {
         _loadThemeMode();
-        TrackingService.instance.refreshPreferences();
         RealtimeCacheInvalidator.instance.start();
       });
       RealtimeCacheInvalidator.instance.start();
@@ -74,12 +66,6 @@ class _MyAppState extends State<MyApp> {
   void _onThemeModeChanged(String mode) {
     if (mode == _themeMode) return;
     setState(() => _themeMode = mode);
-  }
-
-  Future<void> _initTracking() async {
-    await TrackingService.instance.initialize();
-    if (!mounted) return;
-    setState(() => _trackerReady = true);
   }
 
   ThemeMode get _resolvedTheme {
@@ -195,12 +181,7 @@ class _MyAppState extends State<MyApp> {
         ),
       ),
       initialRoute: SupabaseConfig.isConfigured ? '/feed/home' : '/config',
-      navigatorObservers: <NavigatorObserver>[_trackingRouteObserver],
-      builder: (context, child) {
-        final safeChild = child ?? const SizedBox.shrink();
-        if (!_trackerReady) return safeChild;
-        return TrackingService.instance.buildGlobalOverlay(child: safeChild);
-      },
+      builder: (context, child) => child ?? const SizedBox.shrink(),
       onGenerateRoute: (settings) {
         final String name = settings.name ?? '/';
         final Uri uri = Uri.parse(name);
@@ -210,18 +191,6 @@ class _MyAppState extends State<MyApp> {
           return MaterialPageRoute<void>(
             settings: settings,
             builder: (_) => const AuthPage(),
-          );
-        }
-        if (name == '/2d') {
-          return MaterialPageRoute<void>(
-            settings: settings,
-            builder: (_) => const LayerMode(),
-          );
-        }
-        if (name == '/3d') {
-          return MaterialPageRoute<void>(
-            settings: settings,
-            builder: (_) => const Engine3DPage(),
           );
         }
         if (name == '/config') {
@@ -299,62 +268,5 @@ class _SupabaseConfigMissingPage extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _TrackingRouteObserver extends NavigatorObserver {
-  bool _isTrackingActiveRoute(String name) {
-    final String trimmed = name.trim().toLowerCase();
-    if (trimmed.isEmpty) return false;
-    if (trimmed == '/config') return false;
-    if (trimmed == '/auth') return true;
-    if (trimmed == '/feed' || trimmed == '/app') return true;
-    if (trimmed == '/2d' || trimmed == '/3d') return true;
-    if (trimmed.startsWith('/feed/')) return true;
-    if (trimmed.startsWith('/post/')) return true;
-    if (trimmed.startsWith('/collection/')) return true;
-    if (trimmed.startsWith('/@')) return true;
-    return false;
-  }
-
-  void _sync(
-    Route<dynamic>? route, {
-    Route<dynamic>? fallbackRoute,
-  }) {
-    final String primaryName = route?.settings.name?.toString().trim() ?? '';
-    if (primaryName.isNotEmpty) {
-      TrackingService.instance.setRouteActive(
-        _isTrackingActiveRoute(primaryName),
-      );
-      return;
-    }
-
-    final String fallbackName =
-        fallbackRoute?.settings.name?.toString().trim() ?? '';
-    if (fallbackName.isNotEmpty && _isTrackingActiveRoute(fallbackName)) {
-      // Preserve tracking for unnamed overlays pushed from tracked routes.
-      TrackingService.instance.setRouteActive(true);
-      return;
-    }
-
-    TrackingService.instance.setRouteActive(false);
-  }
-
-  @override
-  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    super.didPush(route, previousRoute);
-    _sync(route, fallbackRoute: previousRoute);
-  }
-
-  @override
-  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
-    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
-    _sync(newRoute, fallbackRoute: oldRoute);
-  }
-
-  @override
-  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    super.didPop(route, previousRoute);
-    _sync(previousRoute, fallbackRoute: route);
   }
 }

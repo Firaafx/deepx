@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'services/app_repository.dart';
-import 'services/tracking_service.dart';
 
 enum _AuthStep {
   signIn,
@@ -187,7 +186,6 @@ class _AuthPageState extends State<AuthPage> {
       await Future<void>.delayed(const Duration(milliseconds: 320));
       if (!mounted) return;
       setState(() => _step = _AuthStep.fillProfile);
-      TrackingService.instance.setTrackerUiVisible(false);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -202,7 +200,8 @@ class _AuthPageState extends State<AuthPage> {
   void _onOtpChanged(int index, String value) {
     if (value.length > 1) {
       _otpControllers[index].text = value.substring(value.length - 1);
-      _otpControllers[index].selection = const TextSelection.collapsed(offset: 1);
+      _otpControllers[index].selection =
+          const TextSelection.collapsed(offset: 1);
     }
 
     if (value.isNotEmpty && index < _otpNodes.length - 1) {
@@ -566,7 +565,8 @@ class _AuthPageState extends State<AuthPage> {
             DropdownMenuItem(value: 'female', child: Text('Female')),
             DropdownMenuItem(value: 'male', child: Text('Male')),
             DropdownMenuItem(value: 'non_binary', child: Text('Non-binary')),
-            DropdownMenuItem(value: 'prefer_not_to_say', child: Text('Prefer not to say')),
+            DropdownMenuItem(
+                value: 'prefer_not_to_say', child: Text('Prefer not to say')),
           ],
           onChanged: (value) {
             if (value == null) return;
@@ -583,8 +583,9 @@ class _AuthPageState extends State<AuthPage> {
           height: 150,
           child: CupertinoTheme(
             data: CupertinoThemeData(
-              brightness:
-                  theme.brightness == Brightness.dark ? Brightness.dark : Brightness.light,
+              brightness: theme.brightness == Brightness.dark
+                  ? Brightness.dark
+                  : Brightness.light,
             ),
             child: CupertinoDatePicker(
               mode: CupertinoDatePickerMode.date,
