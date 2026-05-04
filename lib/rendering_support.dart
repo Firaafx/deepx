@@ -1,92 +1,201 @@
-import 'models/preset_payload_v2.dart';
+import 'models/image_payload.dart';
 
-const String kImageRenderMode = '2d';
-const List<String> kSupportedRenderModes = <String>[kImageRenderMode];
+ImagePayloadData imagePayloadFromMap(Map<String, dynamic> payload) {
+  if (payload['schemaVersion'] == ImagePayloadData.schemaVersion &&
+      payload['image'] is Map) {
+    final Map<String, dynamic> image =
+        Map<String, dynamic>.from(payload['image'] as Map);
+    final Map<String, dynamic> source = payload['source'] is Map
+        ? Map<String, dynamic>.from(payload['source'] as Map)
+        : const <String, dynamic>{};
+    final Map<String, dynamic> meta = payload['meta'] is Map
+        ? Map<String, dynamic>.from(payload['meta'] as Map)
+        : const <String, dynamic>{};
+    return ImagePayloadData(
+      imageUrl: _stringValue(
+        image['url'] ?? image['imageUrl'] ?? image['image_url'],
+      ),
+      offsetX: _safeDouble(image['offsetX'], 0),
+      offsetY: _safeDouble(image['offsetY'], 0),
+      scale: _safeDouble(image['scale'], 1).clamp(0.2, 8.0).toDouble(),
+      rotationDegrees: _safeDouble(image['rotationDegrees'], 0),
+      flipX: image['flipX'] == true,
+      flipY: image['flipY'] == true,
+      sourceKind: _stringValue(source['kind']).isEmpty
+          ? 'upload'
+          : _stringValue(source['kind']),
+      linkedItemPosition: _safeInt(source['linkedItemPosition'], 0),
+      meta: meta,
+    );
+  }
 
-String renderModeForIndex(int _) => kImageRenderMode;
-
-int renderModeIndex(String? _) => 0;
+  final String url = _extractLegacyImageUrl(payload);
+  final Map<String, dynamic> meta = payload['meta'] is Map
+      ? Map<String, dynamic>.from(payload['meta'] as Map)
+      : const <String, dynamic>{};
+  return ImagePayloadData(
+    imageUrl: url,
+    sourceKind: _stringValue(meta['sourceKind']).isEmpty
+        ? 'upload'
+        : _stringValue(meta['sourceKind']),
+    linkedItemPosition: _safeInt(meta['linkedItemPosition'], 0),
+    meta: <String, dynamic>{
+      ...meta,
+      if (!meta.containsKey('upgradedFromLegacy')) 'upgradedFromLegacy': true,
+    },
+  );
+}
 
 Map<String, dynamic> simpleImagePayload({
   required String imageUrl,
   String editor = 'image_studio',
+  double offsetX = 0,
+  double offsetY = 0,
+  double scale = 1,
+  double rotationDegrees = 0,
+  bool flipX = false,
+  bool flipY = false,
+  String sourceKind = 'upload',
+  int linkedItemPosition = 0,
   Map<String, dynamic> meta = const <String, dynamic>{},
 }) {
-  final String normalizedUrl = imageUrl.trim();
-  return PresetPayloadV2(
-    mode: kImageRenderMode,
-    scene: <String, dynamic>{
-      'imageUrl': normalizedUrl,
-    },
-    controls: const <String, dynamic>{},
-    meta: <String, dynamic>{
-      'editor': editor,
-      ...meta,
-    },
+  return ImagePayloadData(
+    imageUrl: imageUrl.trim(),
+    offsetX: offsetX,
+    offsetY: offsetY,
+    scale: scale,
+    rotationDegrees: rotationDegrees,
+    flipX: flipX,
+    flipY: flipY,
+    sourceKind: sourceKind,
+    linkedItemPosition: linkedItemPosition,
+    meta: <String, dynamic>{'editor': editor, ...meta},
   ).toMap();
 }
 
 Map<String, dynamic> normalizeImagePayload(
   Map<String, dynamic> payload, {
-  required String fallbackMode,
   String editor = 'image_normalizer',
+  String sourceKind = 'upload',
 }) {
-  final String url =
-      imageUrlFromPayload(payload, fallbackMode: fallbackMode) ?? '';
-  return simpleImagePayload(
-    imageUrl: url,
-    editor: editor,
-    meta: <String, dynamic>{
-      'sourceMode': fallbackMode,
-    },
-  );
+  final ImagePayloadData adapted = imagePayloadFromMap(payload);
+  return adapted.copyWith(
+    imageUrl: adapted.imageUrl.trim(),
+    sourceKind: adapted.sourceKind.isEmpty ? sourceKind : adapted.sourceKind,
+    meta: <String, dynamic>{'editor': editor, ...adapted.meta},
+  ).toMap();
 }
 
-String? imageUrlFromPayload(
-  Map<String, dynamic> payload, {
-  required String fallbackMode,
+Map<String, dynamic> payloadWithImageUrl(
+  Map<String, dynamic> payload,
+  String imageUrl, {
+  String? sourceKind,
+  int? linkedItemPosition,
+  String editor = 'image_sync',
 }) {
-  try {
-    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-      payload,
-      fallbackMode: fallbackMode,
-    );
-    final String canonical =
-        _stringValue(adapted.scene['imageUrl'] ?? adapted.scene['image_url']);
-    if (canonical.isNotEmpty) return canonical;
-
-    final String assetUrl = _stringValue(adapted.scene['assetUrl']);
-    if (assetUrl.isNotEmpty) return assetUrl;
-
-    final String sceneUrl = _firstImageUrlFromScene(adapted.scene);
-    if (sceneUrl.isNotEmpty) return sceneUrl;
-
-    final String recursive = _firstLikelyImageUrl(payload);
-    return recursive.isEmpty ? null : recursive;
-  } catch (_) {
-    final String recursive = _firstLikelyImageUrl(payload);
-    return recursive.isEmpty ? null : recursive;
-  }
+  final ImagePayloadData adapted = imagePayloadFromMap(payload);
+  return adapted.copyWith(
+    imageUrl: imageUrl.trim(),
+    sourceKind: sourceKind ?? adapted.sourceKind,
+    linkedItemPosition: linkedItemPosition ?? adapted.linkedItemPosition,
+    meta: <String, dynamic>{'editor': editor, ...adapted.meta},
+  ).toMap();
 }
 
-String? ambientImageUrlFromPayload(
+Map<String, dynamic> payloadWithTransform(
   Map<String, dynamic> payload, {
-  required String fallbackMode,
+  double? offsetX,
+  double? offsetY,
+  double? scale,
+  double? rotationDegrees,
+  bool? flipX,
+  bool? flipY,
+  String editor = 'image_transform',
 }) {
-  return imageUrlFromPayload(payload, fallbackMode: fallbackMode);
+  final ImagePayloadData adapted = imagePayloadFromMap(payload);
+  return adapted.copyWith(
+    offsetX: offsetX,
+    offsetY: offsetY,
+    scale: scale,
+    rotationDegrees: rotationDegrees,
+    flipX: flipX,
+    flipY: flipY,
+    meta: <String, dynamic>{'editor': editor, ...adapted.meta},
+  ).toMap();
+}
+
+String? imageUrlFromPayload(Map<String, dynamic> payload) {
+  final String value = imagePayloadFromMap(payload).imageUrl.trim();
+  return value.isEmpty ? null : value;
+}
+
+double imageScaleFromPayload(Map<String, dynamic> payload) {
+  return imagePayloadFromMap(payload).scale;
+}
+
+double imageOffsetXFromPayload(Map<String, dynamic> payload) {
+  return imagePayloadFromMap(payload).offsetX;
+}
+
+double imageOffsetYFromPayload(Map<String, dynamic> payload) {
+  return imagePayloadFromMap(payload).offsetY;
+}
+
+double imageRotationFromPayload(Map<String, dynamic> payload) {
+  return imagePayloadFromMap(payload).rotationDegrees;
+}
+
+bool imageFlipXFromPayload(Map<String, dynamic> payload) {
+  return imagePayloadFromMap(payload).flipX;
+}
+
+bool imageFlipYFromPayload(Map<String, dynamic> payload) {
+  return imagePayloadFromMap(payload).flipY;
+}
+
+String sourceKindFromPayload(Map<String, dynamic> payload) {
+  return imagePayloadFromMap(payload).sourceKind;
+}
+
+int linkedItemPositionFromPayload(Map<String, dynamic> payload) {
+  return imagePayloadFromMap(payload).linkedItemPosition;
+}
+
+String? ambientImageUrlFromPayload(Map<String, dynamic> payload) {
+  return imageUrlFromPayload(payload);
 }
 
 Map<String, dynamic>? ambientBackgroundPayloadFromPayload(
-  Map<String, dynamic> payload, {
-  required String fallbackMode,
-}) {
-  final String? url = imageUrlFromPayload(payload, fallbackMode: fallbackMode);
-  if (url == null || url.trim().isEmpty) return null;
-  return simpleImagePayload(
-    imageUrl: url,
-    editor: 'ambient_background',
-    meta: <String, dynamic>{'sourceMode': fallbackMode},
+  Map<String, dynamic> payload,
+) {
+  final ImagePayloadData adapted = imagePayloadFromMap(payload);
+  if (adapted.imageUrl.trim().isEmpty) return null;
+  return adapted.copyWith(
+    meta: <String, dynamic>{'editor': 'ambient_background', ...adapted.meta},
+  ).toMap();
+}
+
+String _extractLegacyImageUrl(Map<String, dynamic> payload) {
+  final Map<String, dynamic> scene = payload['scene'] is Map
+      ? Map<String, dynamic>.from(payload['scene'] as Map)
+      : payload;
+
+  final String direct = _stringValue(
+    scene['imageUrl'] ??
+        scene['image_url'] ??
+        scene['assetUrl'] ??
+        scene['asset_url'] ??
+        payload['imageUrl'] ??
+        payload['image_url'] ??
+        payload['assetUrl'] ??
+        payload['asset_url'],
   );
+  if (direct.isNotEmpty) return direct;
+
+  final String layered = _firstImageUrlFromScene(scene);
+  if (layered.isNotEmpty) return layered;
+
+  return _firstLikelyImageUrl(payload);
 }
 
 String _firstImageUrlFromScene(Map<String, dynamic> scene) {
@@ -96,7 +205,7 @@ String _firstImageUrlFromScene(Map<String, dynamic> scene) {
     final dynamic raw = entry.value;
     if (raw is! Map) continue;
     final Map<String, dynamic> layer = Map<String, dynamic>.from(raw);
-    if (layer['isVisible'] == false) continue;
+    if (_stringValue(layer['isVisible']).toLowerCase() == 'false') continue;
     final String url = _stringValue(layer['url'] ?? layer['imageUrl']);
     if (url.isEmpty) continue;
     layers.add(<String, dynamic>{
@@ -177,4 +286,10 @@ String _stringValue(dynamic value) {
 double _safeDouble(dynamic value, double fallback) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+int _safeInt(dynamic value, int fallback) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? fallback;
 }

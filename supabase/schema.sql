@@ -3,14 +3,6 @@
 
 create extension if not exists pgcrypto;
 
--- enum for mode-scoped records
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'render_mode') THEN
-    CREATE TYPE public.render_mode AS ENUM ('2d', '3d', '360', 'post_studio_draft');
-  END IF;
-END $$;
-
 -- ==========================================
 -- DeepX completion: watch later + collection engagement + view stats
 -- ==========================================
@@ -430,7 +422,7 @@ $$;
 grant execute on function public.record_collection_view(uuid) to authenticated;
 
 -- ==========================================
--- DeepX v1.0.021 publish/tracker/guest schema sync
+-- DeepX publish/guest schema sync
 -- ==========================================
 
 alter table if exists public.presets
@@ -439,8 +431,7 @@ alter table if exists public.presets
   add column if not exists tags text[] not null default '{}'::text[],
   add column if not exists mention_user_ids uuid[] not null default '{}'::uuid[],
   add column if not exists visibility text not null default 'public',
-  add column if not exists thumbnail_payload jsonb not null default '{}'::jsonb,
-  add column if not exists thumbnail_mode public.render_mode;
+  add column if not exists thumbnail_payload jsonb not null default '{}'::jsonb;
 
 update public.presets
 set title = coalesce(nullif(trim(name), ''), 'Untitled')
@@ -465,7 +456,10 @@ alter table if exists public.presets
     check (jsonb_typeof(thumbnail_payload) = 'object');
 
 alter table if exists public.presets
-  drop constraint if exists presets_user_mode_name_unique;
+  drop constraint if exists presets_user_name_unique;
+
+alter table if exists public.presets
+  add constraint presets_user_name_unique unique (user_id, name);
 
 create index if not exists idx_presets_visibility_updated
   on public.presets(visibility, updated_at desc);
@@ -479,8 +473,7 @@ create index if not exists idx_presets_mentions_gin
 alter table if exists public.collections
   add column if not exists tags text[] not null default '{}'::text[],
   add column if not exists mention_user_ids uuid[] not null default '{}'::uuid[],
-  add column if not exists thumbnail_payload jsonb not null default '{}'::jsonb,
-  add column if not exists thumbnail_mode public.render_mode;
+  add column if not exists thumbnail_payload jsonb not null default '{}'::jsonb;
 
 alter table if exists public.collections
   drop constraint if exists collections_thumbnail_payload_object_check;
@@ -544,26 +537,6 @@ create policy notifications_delete_own
   for delete
   to authenticated
   using (auth.uid() = user_id);
-
-alter table if exists public.user_settings
-  add column if not exists tracker_config jsonb not null default '{}'::jsonb;
-
-update public.user_settings
-set tracker_config = '{}'::jsonb
-where tracker_config is null;
-
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'user_settings_tracker_config_object'
-  ) then
-    alter table public.user_settings
-      add constraint user_settings_tracker_config_object
-      check (jsonb_typeof(tracker_config) = 'object');
-  end if;
-end $$;
 
 drop policy if exists presets_select_feed on public.presets;
 create policy presets_select_feed
@@ -652,24 +625,6 @@ update public.profiles
 set onboarding_completed = false
 where onboarding_completed is null;
 
-alter table if exists public.user_settings
-  add column if not exists tracker_enabled boolean,
-  add column if not exists tracker_ui_visible boolean;
-
-update public.user_settings
-set tracker_enabled = true
-where tracker_enabled is null;
-
-update public.user_settings
-set tracker_ui_visible = false
-where tracker_ui_visible is null;
-
-alter table if exists public.user_settings
-  alter column tracker_enabled set default true,
-  alter column tracker_enabled set not null,
-  alter column tracker_ui_visible set default false,
-  alter column tracker_ui_visible set not null;
-
 -- Collections + ordered immutable item snapshots
 create table if not exists public.collections (
   id uuid primary key default gen_random_uuid(),
@@ -685,7 +640,6 @@ create table if not exists public.collection_items (
   id uuid primary key default gen_random_uuid(),
   collection_id uuid not null references public.collections(id) on delete cascade,
   position integer not null check (position >= 0),
-  mode public.render_mode not null,
   preset_name text not null check (char_length(trim(preset_name)) > 0),
   preset_snapshot jsonb not null check (jsonb_typeof(preset_snapshot) = 'object'),
   created_at timestamptz not null default timezone('utc', now()),
@@ -961,33 +915,16 @@ create policy chat_messages_delete_sender
   to authenticated
   using (auth.uid() = sender_id);
 
--- per-user persisted editor/session state
-create table if not exists public.mode_states (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  mode public.render_mode not null,
-  state jsonb not null default '{}'::jsonb
-    check (jsonb_typeof(state) = 'object'),
-  created_at timestamptz not null default timezone('utc', now()),
-  updated_at timestamptz not null default timezone('utc', now()),
-  constraint mode_states_user_mode_unique unique (user_id, mode)
-);
-
 -- named presets saved by users
 create table if not exists public.presets (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  mode public.render_mode not null,
   name text not null check (char_length(trim(name)) > 0),
   payload jsonb not null check (jsonb_typeof(payload) = 'object'),
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
-  constraint presets_user_mode_name_unique unique (user_id, mode, name)
+  constraint presets_user_name_unique unique (user_id, name)
 );
-
-create index if not exists idx_mode_states_user_mode on public.mode_states(user_id, mode);
-create index if not exists idx_presets_mode_updated on public.presets(mode, updated_at desc);
-create index if not exists idx_presets_user_mode on public.presets(user_id, mode);
 
 create or replace function public.generate_base62_id(p_len integer default 8)
 returns text
@@ -1175,12 +1112,6 @@ begin
 end;
 $$;
 
-drop trigger if exists trg_mode_states_updated_at on public.mode_states;
-create trigger trg_mode_states_updated_at
-before update on public.mode_states
-for each row
-execute function public.set_updated_at();
-
 drop trigger if exists trg_presets_updated_at on public.presets;
 create trigger trg_presets_updated_at
 before update on public.presets
@@ -1188,65 +1119,7 @@ for each row
 execute function public.set_updated_at();
 
 -- RLS
-alter table public.mode_states enable row level security;
 alter table public.presets enable row level security;
-
--- mode_states policies: users can only manage their own state
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename = 'mode_states'
-      AND policyname = 'mode_states_select_own'
-  ) THEN
-    CREATE POLICY mode_states_select_own
-      ON public.mode_states
-      FOR SELECT
-      TO authenticated
-      USING (auth.uid() = user_id);
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename = 'mode_states'
-      AND policyname = 'mode_states_insert_own'
-  ) THEN
-    CREATE POLICY mode_states_insert_own
-      ON public.mode_states
-      FOR INSERT
-      TO authenticated
-      WITH CHECK (auth.uid() = user_id);
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename = 'mode_states'
-      AND policyname = 'mode_states_update_own'
-  ) THEN
-    CREATE POLICY mode_states_update_own
-      ON public.mode_states
-      FOR UPDATE
-      TO authenticated
-      USING (auth.uid() = user_id)
-      WITH CHECK (auth.uid() = user_id);
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename = 'mode_states'
-      AND policyname = 'mode_states_delete_own'
-  ) THEN
-    CREATE POLICY mode_states_delete_own
-      ON public.mode_states
-      FOR DELETE
-      TO authenticated
-      USING (auth.uid() = user_id);
-  END IF;
-END $$;
 
 -- presets policies:
 -- authenticated users can view feed presets from everyone,

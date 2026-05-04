@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:ui';
 
-import 'package:deepx/models/preset_payload_v2.dart';
+import 'package:deepx/models/image_payload.dart';
 import 'package:deepx/rendering_support.dart';
 import 'package:deepx/services/appearance_settings_service.dart';
 import 'package:deepx/widgets/svg_card_shell.dart';
@@ -9,38 +9,35 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  test('render mode helpers expose only storage-compatible image mode', () {
-    expect(renderModeForIndex(0), kImageRenderMode);
-    expect(renderModeForIndex(99), kImageRenderMode);
-    expect(renderModeIndex('2d'), 0);
-    expect(renderModeIndex('3' 'd'), 0);
-    expect(renderModeIndex('3' '60'), 0);
-  });
-
-  test('simpleImagePayload keeps one canonical image URL', () {
+  test('simple image payload stores one editable image contract', () {
     final Map<String, dynamic> payload = simpleImagePayload(
       imageUrl: ' https://example.com/image.webp ',
       editor: 'test',
-      meta: const <String, dynamic>{'sourceMode': '3' 'd'},
+      offsetX: 0.12,
+      offsetY: -0.08,
+      scale: 1.6,
+      rotationDegrees: 12,
+      flipX: true,
+      sourceKind: 'custom',
+      meta: const <String, dynamic>{'sourceName': 'image.webp'},
     );
-    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-      payload,
-      fallbackMode: '2d',
-    );
+    final ImagePayloadData adapted = imagePayloadFromMap(payload);
 
-    expect(adapted.mode, '2d');
-    expect(adapted.scene, <String, dynamic>{
-      'imageUrl': 'https://example.com/image.webp',
-    });
-    expect(adapted.controls, isEmpty);
+    expect(payload['schemaVersion'], ImagePayloadData.schemaVersion);
+    expect(adapted.imageUrl, 'https://example.com/image.webp');
+    expect(adapted.offsetX, 0.12);
+    expect(adapted.offsetY, -0.08);
+    expect(adapted.scale, 1.6);
+    expect(adapted.rotationDegrees, 12);
+    expect(adapted.flipX, isTrue);
+    expect(adapted.flipY, isFalse);
+    expect(adapted.sourceKind, 'custom');
     expect(adapted.meta['editor'], 'test');
-    expect(adapted.meta['sourceMode'], '3' 'd');
   });
 
   test('legacy payload normalization chooses one primary uploaded image', () {
     final Map<String, dynamic> payload = <String, dynamic>{
-      'schemaVersion': PresetPayloadV2.schemaVersion,
-      'mode': '2d',
+      'schemaVersion': 2,
       'scene': <String, dynamic>{
         'turning_point': <String, dynamic>{'order': 0},
         'hidden': <String, dynamic>{
@@ -63,20 +60,13 @@ void main() {
       'meta': <String, dynamic>{'editor': 'legacy'},
     };
 
-    final Map<String, dynamic> normalized = normalizeImagePayload(
-      payload,
-      fallbackMode: '2d',
-    );
-    final PresetPayloadV2 adapted = PresetPayloadV2.fromMap(
-      normalized,
-      fallbackMode: '2d',
-    );
+    final Map<String, dynamic> normalized = normalizeImagePayload(payload);
+    final ImagePayloadData adapted = imagePayloadFromMap(normalized);
 
-    expect(adapted.scene, <String, dynamic>{
-      'imageUrl': 'https://example.com/background.png',
-    });
-    expect(adapted.controls, isEmpty);
-    expect(adapted.meta['sourceMode'], '2d');
+    expect(adapted.imageUrl, 'https://example.com/background.png');
+    expect(adapted.sourceKind, 'upload');
+    expect(adapted.meta['editor'], 'legacy');
+    expect(adapted.meta['upgradedFromLegacy'], isTrue);
   });
 
   test('ambient payload extraction depends on the canonical image', () {
@@ -85,17 +75,13 @@ void main() {
     );
 
     expect(
-      ambientImageUrlFromPayload(payload, fallbackMode: '2d'),
-      'https://example.com/ambient.jpg',
-    );
+        ambientImageUrlFromPayload(payload), 'https://example.com/ambient.jpg');
 
     final Map<String, dynamic>? ambientPayload =
-        ambientBackgroundPayloadFromPayload(payload, fallbackMode: '2d');
+        ambientBackgroundPayloadFromPayload(payload);
     expect(ambientPayload, isNotNull);
-    expect(
-      imageUrlFromPayload(ambientPayload!, fallbackMode: '2d'),
-      'https://example.com/ambient.jpg',
-    );
+    expect(imageUrlFromPayload(ambientPayload!),
+        'https://example.com/ambient.jpg');
   });
 
   test('svg card two-line title does not extend thumbnail clip downward', () {
@@ -114,20 +100,36 @@ void main() {
     expect(twoLineBounds.bottom, oneLineBounds.bottom);
   });
 
-  test('svg card username cutout grows upward while bottom remains anchored',
-      () {
-    const Size cardSize = Size(1852, 1413);
-    final Path longNameClip = const SvgCardClipper(
-      usernameCharCount: 6,
-    ).getClip(cardSize);
-    final Path shortNameClip = const SvgCardClipper(
-      usernameCharCount: 1,
-    ).getClip(cardSize);
+  test('svg card username cutout follows username length from the bottom', () {
+    final Rect shortNameNotch = svgCardUsernameNotchBoundsForTesting(
+      usernameCharCount: 3,
+    );
+    final Rect longNameNotch = svgCardUsernameNotchBoundsForTesting(
+      usernameCharCount: 5,
+    );
 
-    expect(longNameClip.contains(const Offset(185, 600)), isTrue);
-    expect(shortNameClip.contains(const Offset(185, 600)), isFalse);
-    expect(longNameClip.contains(const Offset(185, 850)), isTrue);
-    expect(shortNameClip.contains(const Offset(185, 850)), isTrue);
+    expect(shortNameNotch.top, closeTo(690, 1));
+    expect(shortNameNotch.bottom, closeTo(879, 1));
+    expect(longNameNotch.top, closeTo(576, 1));
+    expect(longNameNotch.bottom, closeTo(900, 1));
+    expect(longNameNotch.top, lessThan(shortNameNotch.top));
+    expect(longNameNotch.height, greaterThan(shortNameNotch.height));
+  });
+
+  test('svg card metadata cutout grows for longer metadata text', () {
+    final Rect shortMetaNotch = svgCardMetaNotchBoundsForTesting(
+      metaWidthFactor: 0,
+    );
+    final Rect longMetaNotch = svgCardMetaNotchBoundsForTesting(
+      metaWidthFactor: 1,
+    );
+
+    expect(shortMetaNotch.left, closeTo(1222, 1));
+    expect(shortMetaNotch.width, closeTo(410, 1));
+    expect(longMetaNotch.left, closeTo(908, 1));
+    expect(longMetaNotch.width, closeTo(723, 1));
+    expect(longMetaNotch.left, lessThan(shortMetaNotch.left));
+    expect(longMetaNotch.width, greaterThan(shortMetaNotch.width));
   });
 
   test('wallpaper and overlay settings persist locally', () async {
@@ -146,29 +148,32 @@ void main() {
     expect(settings.wallpaperOverlayOpacity, 0.42);
   });
 
-  test('legacy runtime implementations are no longer referenced by app code',
-      () {
-    final List<File> files = Directory('lib')
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where((file) => file.path.endsWith('.dart'))
+  test('active runtime no longer references retired renderer paths', () {
+    final List<File> files = <String>['lib', 'web']
+        .expand((root) => Directory(root).existsSync()
+            ? Directory(root).listSync(recursive: true).whereType<File>()
+            : const Iterable<File>.empty())
+        .where((file) =>
+            file.path.endsWith('.dart') || file.path.endsWith('.html'))
         .toList();
     final String contents =
         files.map((file) => file.readAsStringSync()).join('\n');
 
-    for (final String forbidden in <String>[
+    final List<String> forbidden = <String>[
       'Tracking' 'Service',
       'Tracker' 'RuntimeConfig',
       'tr' 'ackingFrameFromHeadPose',
-      'Engine' '3' 'DPage',
+      'Engine' '${3}' 'DPage',
       'Layer' 'Mode(',
-      'Window' 'Effect2DPreview',
-      'Panorama' 'Viewer3' '60',
-      'blank' '3' '60Payload',
-      'infer' '3' '60AssetKind',
+      'Window' 'Effect' '${2}' 'DPreview',
+      'Panorama' 'Viewer' '${3}${6}${0}',
+      'blank' '${3}${6}${0}' 'Payload',
+      'infer' '${3}${6}${0}' 'AssetKind',
       'assets/' 'tr' 'acker.html',
-    ]) {
-      expect(contents.contains(forbidden), isFalse, reason: forbidden);
+    ];
+
+    for (final String value in forbidden) {
+      expect(contents.contains(value), isFalse, reason: value);
     }
   });
 }

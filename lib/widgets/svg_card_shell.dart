@@ -1,4 +1,4 @@
-import 'dart:ui' show lerpDouble;
+import 'dart:ui' show ImageFilter, lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -11,6 +11,148 @@ const Color _kShellColor = Color(0x992A2A2A);
 const Color _kInnerColor = Color(0xFF151515);
 const Color _kStrokeColor = Color(0xFFCACACA);
 const Color _kMetaColor = Color(0xFFB4B4B4);
+
+Rect svgCardUsernameNotchBoundsForTesting({
+  required int usernameCharCount,
+  Size size = const Size(_svgCardBaseWidth, _svgCardBaseHeight),
+}) {
+  final double sx = size.width / _svgCardBaseWidth;
+  final double sy = size.height / _svgCardBaseHeight;
+  final int usernameCount = usernameCharCount.clamp(1, 6);
+  final double top =
+      (861 - (usernameCount * 57)).clamp(500.0, 804.0).toDouble();
+  final double bottom =
+      (847.5 + (usernameCount * 10.5)).clamp(858.0, 904.0).toDouble();
+  return Rect.fromLTRB(120 * sx, top * sy, 175 * sx, bottom * sy);
+}
+
+Rect svgCardMetaNotchBoundsForTesting({
+  required double metaWidthFactor,
+  Size size = const Size(_svgCardBaseWidth, _svgCardBaseHeight),
+}) {
+  final double sx = size.width / _svgCardBaseWidth;
+  final double sy = size.height / _svgCardBaseHeight;
+  final double metaFactor = metaWidthFactor.clamp(0.0, 1.0).toDouble();
+  final double left = 1222 + lerpDouble(0, -314, metaFactor)!;
+  final double width = 410 + lerpDouble(0, 313, metaFactor)!;
+  return Rect.fromLTWH(left * sx, 134 * sy, width * sx, 55 * sy);
+}
+
+Path _buildOuterCardPath(Size size, {required bool twoLineTitle}) {
+  final double sx = size.width / _svgCardBaseWidth;
+  final double sy = size.height / _svgCardBaseHeight;
+  final double titleExpansion = twoLineTitle ? _kTwoLineTitleExpansion : 0;
+
+  return Path()
+    ..moveTo(200.355 * sx, 110.645 * sy)
+    ..lineTo(114.645 * sx, 196.355 * sy)
+    ..cubicTo(
+      105.268 * sx,
+      205.732 * sy,
+      100 * sx,
+      218.45 * sy,
+      100 * sx,
+      231.711 * sy,
+    )
+    ..lineTo(100 * sx, (1175.29 + titleExpansion) * sy)
+    ..cubicTo(
+      100 * sx,
+      (1188.55 + titleExpansion) * sy,
+      105.268 * sx,
+      (1201.27 + titleExpansion) * sy,
+      114.645 * sx,
+      (1210.65 + titleExpansion) * sy,
+    )
+    ..lineTo(197.628 * sx, (1293.63 + titleExpansion) * sy)
+    ..cubicTo(
+      208.584 * sx,
+      (1304.59 + titleExpansion) * sy,
+      224 * sx,
+      (1309.84 + titleExpansion) * sy,
+      239.367 * sx,
+      (1307.87 + titleExpansion) * sy,
+    )
+    ..lineTo(520.328 * sx, (1271.7 + titleExpansion) * sy)
+    ..cubicTo(
+      528.96 * sx,
+      (1270.59 + titleExpansion) * sy,
+      537.152 * sx,
+      (1267.24 + titleExpansion) * sy,
+      544.095 * sx,
+      (1261.99 + titleExpansion) * sy,
+    )
+    ..lineTo(584.846 * sx, (1231.19 + titleExpansion) * sy)
+    ..cubicTo(
+      592.769 * sx,
+      (1225.2 + titleExpansion) * sy,
+      602.296 * sx,
+      (1221.71 + titleExpansion) * sy,
+      612.212 * sx,
+      (1221.15 + titleExpansion) * sy,
+    )
+    ..lineTo(1617.93 * sx, (1165.07 + titleExpansion) * sy)
+    ..cubicTo(
+      1630.21 * sx,
+      (1164.38 + titleExpansion) * sy,
+      1641.81 * sx,
+      (1159.19 + titleExpansion) * sy,
+      1650.5 * sx,
+      (1150.5 + titleExpansion) * sy,
+    )
+    ..lineTo(1737.36 * sx, (1063.65 + titleExpansion) * sy)
+    ..cubicTo(
+      1746.73 * sx,
+      (1054.27 + titleExpansion) * sy,
+      1752 * sx,
+      (1041.55 + titleExpansion) * sy,
+      1752 * sx,
+      (1028.29 + titleExpansion) * sy,
+    )
+    ..lineTo(1752 * sx, 231.711 * sy)
+    ..cubicTo(
+      1752 * sx,
+      218.45 * sy,
+      1746.73 * sx,
+      205.732 * sy,
+      1737.36 * sx,
+      196.355 * sy,
+    )
+    ..lineTo(1651.64 * sx, 110.645 * sy)
+    ..cubicTo(
+      1642.27 * sx,
+      101.268 * sy,
+      1629.55 * sx,
+      96 * sy,
+      1616.29 * sx,
+      96 * sy,
+    )
+    ..lineTo(235.711 * sx, 96 * sy)
+    ..cubicTo(
+      222.45 * sx,
+      96 * sy,
+      209.732 * sx,
+      101.268 * sy,
+      200.355 * sx,
+      110.645 * sy,
+    )
+    ..close();
+}
+
+class _SvgOuterClipper extends CustomClipper<Path> {
+  const _SvgOuterClipper({required this.twoLineTitle});
+
+  final bool twoLineTitle;
+
+  @override
+  Path getClip(Size size) {
+    return _buildOuterCardPath(size, twoLineTitle: twoLineTitle);
+  }
+
+  @override
+  bool shouldReclip(covariant _SvgOuterClipper oldClipper) {
+    return oldClipper.twoLineTitle != twoLineTitle;
+  }
+}
 
 class SvgCardMenuAction {
   const SvgCardMenuAction({
@@ -51,14 +193,13 @@ class SvgCardClipper extends CustomClipper<Path> {
     final int usernameCount = usernameCharCount.clamp(1, 6);
     final double metaFactor = metaWidthFactor.clamp(0.0, 1.0).toDouble();
 
-    final double topShelfShift = lerpDouble(0, -208, metaFactor)!;
-    final double topShelfStart = 1113.25 + topShelfShift;
-    final double topTabStart = 1227.5 + topShelfShift;
+    final double topShelfStart = 1113.25 + lerpDouble(0, -302, metaFactor)!;
+    final double topTabStart = 1227.5 + lerpDouble(0, -319.5, metaFactor)!;
 
-    final double usernameHeight = usernameCount * 65;
-    const double leftTailBottom = 858.164;
+    final double leftTailBottom =
+        (847.5 + (usernameCount * 10.5)).clamp(858.0, 904.0).toDouble();
     final double leftTailTop =
-        (904 - usernameHeight).clamp(514, 839).toDouble();
+        (861 - (usernameCount * 57)).clamp(500.0, 804.0).toDouble();
 
     const double titleSpaceBottom = 1037.5;
 
@@ -628,7 +769,7 @@ class SvgCardShell extends StatelessWidget {
           scale,
         );
         final double metaFactor =
-            ((metaWidthBase - 410) / (700 - 410)).clamp(0.0, 1.0).toDouble();
+            ((metaWidthBase - 410) / (723 - 410)).clamp(0.0, 1.0).toDouble();
         final bool twoLineTitle = _isTwoLineTitle(
           context,
           resolvedTitle,
@@ -655,6 +796,17 @@ class SvgCardShell extends StatelessWidget {
                   usernameCharCount: usernameChars,
                   metaWidthFactor: metaFactor,
                   twoLineTitle: twoLineTitle,
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: ClipPath(
+                clipper: _SvgOuterClipper(twoLineTitle: twoLineTitle),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 75, sigmaY: 75),
+                  child: const ColoredBox(
+                    color: Color(0x012A2A2A),
+                  ),
                 ),
               ),
             ),
@@ -723,8 +875,8 @@ class SvgCardShell extends StatelessWidget {
       maxLines: 1,
       textDirection: Directionality.of(context),
     )..layout(maxWidth: 9999);
-    final double measuredBase = (painter.width / scale) + 48;
-    return measuredBase.clamp(260, 700).toDouble();
+    final double measuredBase = (painter.width / scale) + 52;
+    return measuredBase.clamp(410, 723).toDouble();
   }
 
   bool _isTwoLineTitle(
@@ -783,14 +935,17 @@ class _CardTextOverlay extends StatelessWidget {
         final double scale = ((sx + sy) / 2).clamp(0.05, 4.0).toDouble();
         final double titleShift = twoLineTitle ? _kTwoLineTitleExpansion : 0;
         final double metaFactor = metaWidthFactor.clamp(0.0, 1.0).toDouble();
-        final double metaLeftBase = 1222 + lerpDouble(0, -123, metaFactor)!;
+        final double metaLeftBase = 1222 + lerpDouble(0, -314, metaFactor)!;
+        final double metaWidthBase = 410 + lerpDouble(0, 313, metaFactor)!;
 
         final List<String> chars =
             verticalUsername.trim().toUpperCase().split('').take(6).toList();
         final int charCount = chars.isEmpty ? 1 : chars.length;
-        final double blueHeight = (charCount * 65).toDouble();
+        final double usernameBottom =
+            (847.5 + (charCount * 10.5)).clamp(858.0, 904.0).toDouble();
         final double usernameTop =
-            (904 - blueHeight).clamp(514, 853).toDouble();
+            (861 - (charCount * 57)).clamp(500.0, 804.0).toDouble();
+        final double blueHeight = usernameBottom - usernameTop;
 
         return Stack(
           clipBehavior: Clip.none,
@@ -818,19 +973,23 @@ class _CardTextOverlay extends StatelessWidget {
             Positioned(
               left: metaLeftBase * sx,
               top: 148 * sy,
-              width: 535 * sx,
+              width: metaWidthBase * sx,
               height: 55 * sy,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text(
-                  metaText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.inter(
-                    color: _kMetaColor,
-                    fontWeight: FontWeight.w400,
-                    fontSize: 55 * scale,
-                    height: 1.0,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    metaText,
+                    maxLines: 1,
+                    overflow: TextOverflow.visible,
+                    style: GoogleFonts.inter(
+                      color: _kMetaColor,
+                      fontWeight: FontWeight.w400,
+                      fontSize: 55 * scale,
+                      height: 1.0,
+                    ),
                   ),
                 ),
               ),
@@ -1072,7 +1231,7 @@ class _DiagonalDotsPainter extends CustomPainter {
       Offset(size.width * 0.734, size.height * 0.142),
       Offset(size.width * 0.430, size.height * 0.489),
     ];
-    final double radius = size.shortestSide * 0.14;
+    final double radius = size.shortestSide * 0.115;
 
     canvas.drawCircle(points[0], radius, bright);
     canvas.drawCircle(points[1], radius, bright);

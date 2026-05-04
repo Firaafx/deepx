@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -15,6 +14,7 @@ import 'models/app_user_profile.dart';
 import 'models/chat_models.dart';
 import 'models/collection_models.dart';
 import 'models/feed_post.dart';
+import 'models/image_payload.dart';
 import 'models/notification_item.dart';
 import 'models/preset_comment.dart';
 import 'models/profile_stats.dart';
@@ -25,8 +25,11 @@ import 'services/app_repository.dart';
 import 'services/appearance_settings_service.dart';
 import 'services/browser_fullscreen.dart';
 import 'services/cache_service.dart';
+import 'services/eyedropper_service.dart';
+import 'services/image_color_service.dart';
 import 'services/query_guard.dart';
 import 'services/web_file_upload.dart';
+import 'widgets/editable_image_stage.dart';
 import 'widgets/preset_viewer.dart';
 import 'widgets/query_feedback.dart';
 import 'widgets/svg_card_shell.dart';
@@ -46,6 +49,11 @@ enum _ComposerKind {
 }
 
 enum _ComposerEditTarget {
+  card,
+}
+
+enum _ComposerImagePane {
+  post,
   card,
 }
 
@@ -504,7 +512,6 @@ class _GridWallpaperBackdrop extends StatelessWidget {
 class _GridCardPreviewSurface extends StatefulWidget {
   const _GridCardPreviewSurface({
     required this.heroTag,
-    required this.mode,
     required this.payload,
     required this.title,
     required this.verticalUsername,
@@ -522,7 +529,6 @@ class _GridCardPreviewSurface extends StatefulWidget {
   });
 
   final String heroTag;
-  final String mode;
   final Map<String, dynamic> payload;
   final String title;
   final String verticalUsername;
@@ -598,7 +604,6 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
           menuItems: menuActions,
           onMenuSelected: widget.onMenuSelected,
           child: _SharedPresetPreview(
-            mode: widget.mode,
             payload: widget.payload,
             clipper: clipper,
             emptyChild: widget.emptyChild,
@@ -669,7 +674,6 @@ double _detailSidePanelWidth({
 
 class _CardScopedAmbientBackdrop extends StatelessWidget {
   const _CardScopedAmbientBackdrop({
-    required this.mode,
     required this.payload,
     required this.previewWidth,
     required this.leftPadding,
@@ -677,7 +681,6 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
     required this.desktop,
   });
 
-  final String mode;
   final Map<String, dynamic> payload;
   final double previewWidth;
   final double leftPadding;
@@ -694,12 +697,8 @@ class _CardScopedAmbientBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String normalizedUrl = (ambientImageUrlFromPayload(
-              payload,
-              fallbackMode: mode,
-            ) ??
-            '')
-        .trim();
+    final String normalizedUrl =
+        (ambientImageUrlFromPayload(payload) ?? '').trim();
     final bool hasAmbient = previewWidth > 0 && normalizedUrl.isNotEmpty;
     final double previewHeight = previewWidth / _kDetailPreviewAspectRatio;
     return ValueListenableBuilder<AppearanceSettings>(
@@ -1230,9 +1229,7 @@ class _StandalonePublicProfileRoutePageState
           'kind': 'post',
           'id': post.id,
           'title': post.title.isNotEmpty ? post.title : post.name,
-          'meta':
-              '${post.mode.toUpperCase()} • ${_friendlyTime(post.createdAt)}',
-          'mode': post.thumbnailMode ?? post.mode,
+          'meta': _friendlyTime(post.createdAt),
           'payload': post.thumbnailPayload.isNotEmpty
               ? post.thumbnailPayload
               : post.payload,
@@ -1258,8 +1255,6 @@ class _StandalonePublicProfileRoutePageState
           'title': collection.name.isNotEmpty ? collection.name : 'Collection',
           'meta':
               '${collection.itemsCount} items • ${_friendlyTime(collection.createdAt)}',
-          'mode':
-              collection.thumbnailMode ?? collection.firstItem?.mode ?? '2d',
           'payload': collection.thumbnailPayload.isNotEmpty
               ? collection.thumbnailPayload
               : (collection.firstItem?.snapshot ?? const <String, dynamic>{}),
@@ -1479,7 +1474,6 @@ class _StandalonePublicProfileRoutePageState
                           final String meta = entry['meta']?.toString() ?? '';
                           final String path =
                               entry['tapPath']?.toString() ?? '/';
-                          final String mode = entry['mode']?.toString() ?? '2d';
                           final Map<String, dynamic> payload =
                               (entry['payload'] as Map?)
                                       ?.cast<String, dynamic>() ??
@@ -1496,7 +1490,6 @@ class _StandalonePublicProfileRoutePageState
                               onTap: () => Navigator.pushNamed(context, path),
                               child: _GridCardPreviewSurface(
                                 heroTag: heroTag,
-                                mode: mode,
                                 payload: payload,
                                 title: title,
                                 verticalUsername: _verticalUsernameForCard(
@@ -2492,7 +2485,6 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
         settings: const RouteSettings(name: '/post/editor/card-update'),
         builder: (_) => _PostCardComposerPage.single(
           name: post.preset.name,
-          mode: post.preset.mode,
           payload: post.preset.payload,
           existingPreset: post.preset,
           initialIsPaid: post.preset.isPaid,
@@ -3154,13 +3146,13 @@ class _CollectionTabState extends State<_CollectionTab> {
           initialPriceCents: summary.priceCents,
           initialAccentColorHex: summary.accentColorHex,
           initialCardPayload: summary.thumbnailPayload,
-          initialCardMode: summary.thumbnailMode,
+          initialLinkedItemPosition:
+              linkedItemPositionFromPayload(summary.thumbnailPayload),
           editTarget: _ComposerEditTarget.card,
           startBlankCard: false,
           items: resolvedDetail.items
               .map(
                 (item) => CollectionDraftItem(
-                  mode: item.mode,
                   name: item.name,
                   snapshot: item.snapshot,
                 ),
@@ -3208,7 +3200,6 @@ class _CollectionTabState extends State<_CollectionTab> {
         mentionUserIds: current.mentionUserIds,
         published: current.published,
         thumbnailPayload: current.thumbnailPayload,
-        thumbnailMode: current.thumbnailMode,
         itemsCount: current.itemsCount,
         createdAt: current.createdAt,
         updatedAt: current.updatedAt,
@@ -3622,7 +3613,6 @@ class _CollectionFeedTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final item = summary.firstItem;
-    final String previewMode = summary.thumbnailMode ?? item?.mode ?? '2d';
     final Map<String, dynamic> previewPayload =
         summary.thumbnailPayload.isNotEmpty
             ? summary.thumbnailPayload
@@ -3670,7 +3660,6 @@ class _CollectionFeedTile extends StatelessWidget {
           aspectRatio: _kGridPreviewAspectRatio,
           child: _GridCardPreviewSurface(
             heroTag: heroTag,
-            mode: previewMode,
             payload: previewPayload,
             title:
                 summary.name.isNotEmpty ? summary.name : 'Untitled collection',
@@ -3718,7 +3707,6 @@ class _CollectionFeedTile extends StatelessWidget {
 class _SuggestionGridCard extends StatelessWidget {
   const _SuggestionGridCard({
     required this.heroTag,
-    required this.mode,
     required this.payload,
     required this.title,
     required this.author,
@@ -3734,7 +3722,6 @@ class _SuggestionGridCard extends StatelessWidget {
   });
 
   final String heroTag;
-  final String mode;
   final Map<String, dynamic> payload;
   final String title;
   final String author;
@@ -3756,7 +3743,6 @@ class _SuggestionGridCard extends StatelessWidget {
         aspectRatio: _kGridPreviewAspectRatio,
         child: _GridCardPreviewSurface(
           heroTag: heroTag,
-          mode: mode,
           payload: payload,
           title: title,
           verticalUsername: author.replaceAll('@', '').replaceAll(' ', ''),
@@ -3807,7 +3793,6 @@ class _FeedTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String previewMode = post.preset.thumbnailMode ?? post.preset.mode;
     final Map<String, dynamic> previewPayload =
         post.preset.thumbnailPayload.isNotEmpty
             ? post.preset.thumbnailPayload
@@ -3857,7 +3842,6 @@ class _FeedTile extends StatelessWidget {
           aspectRatio: _kGridPreviewAspectRatio,
           child: _GridCardPreviewSurface(
             heroTag: heroTag,
-            mode: previewMode,
             payload: previewPayload,
             title: post.preset.title.isNotEmpty
                 ? post.preset.title
@@ -3895,7 +3879,6 @@ class _FeedTile extends StatelessWidget {
 
 class _SharedPresetPreview extends StatelessWidget {
   const _SharedPresetPreview({
-    required this.mode,
     required this.payload,
     this.borderRadius = const BorderRadius.all(Radius.circular(16)),
     this.clipper,
@@ -3903,7 +3886,6 @@ class _SharedPresetPreview extends StatelessWidget {
     this.fit = BoxFit.cover,
   });
 
-  final String mode;
   final Map<String, dynamic> payload;
   final BorderRadius borderRadius;
   final CustomClipper<Path>? clipper;
@@ -3912,8 +3894,7 @@ class _SharedPresetPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String imageUrl =
-        imageUrlFromPayload(payload, fallbackMode: mode)?.trim() ?? '';
+    final String imageUrl = imageUrlFromPayload(payload)?.trim() ?? '';
     final Widget base = imageUrl.isEmpty
         ? (emptyChild != null
             ? SizedBox.expand(child: emptyChild!)
@@ -3930,7 +3911,6 @@ class _SharedPresetPreview extends StatelessWidget {
                 ),
               ))
         : PresetViewer(
-            mode: mode,
             payload: payload,
             fit: fit,
           );
@@ -3948,7 +3928,6 @@ class _SharedPresetPreview extends StatelessWidget {
 Future<void> _openDetailFullscreenViewer(
   BuildContext context, {
   required String heroTag,
-  required String mode,
   required Map<String, dynamic> payload,
 }) async {
   await Navigator.of(context).push<void>(
@@ -3960,7 +3939,6 @@ Future<void> _openDetailFullscreenViewer(
       pageBuilder: (context, animation, secondaryAnimation) {
         return _DetailFullscreenViewerPage(
           heroTag: heroTag,
-          mode: mode,
           payload: payload,
         );
       },
@@ -3974,12 +3952,10 @@ Future<void> _openDetailFullscreenViewer(
 class _DetailFullscreenViewerPage extends StatelessWidget {
   const _DetailFullscreenViewerPage({
     required this.heroTag,
-    required this.mode,
     required this.payload,
   });
 
   final String heroTag;
-  final String mode;
   final Map<String, dynamic> payload;
 
   @override
@@ -4008,7 +3984,6 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                     createRectTween: (begin, end) =>
                         _EaseInOutRectTween(begin: begin, end: end),
                     child: _SharedPresetPreview(
-                      mode: mode,
                       payload: payload,
                       borderRadius: BorderRadius.zero,
                       fit: BoxFit.contain,
@@ -4111,7 +4086,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     await _openDetailFullscreenViewer(
       context,
       heroTag: _detailHeroTag,
-      mode: _post.preset.mode,
       payload: _post.preset.payload,
     );
   }
@@ -4528,7 +4502,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final String heroTag = _detailHeroTag;
-    final String previewMode = _post.preset.mode;
     final Map<String, dynamic> previewPayload = _post.preset.payload;
     final List<FeedPost> suggestions = _filteredSuggestions();
     final String title =
@@ -4814,7 +4787,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
             children: [
               Positioned.fill(
                 child: _SharedPresetPreview(
-                  mode: previewMode,
                   payload: previewPayload,
                   borderRadius: BorderRadius.circular(16),
                   fit: BoxFit.contain,
@@ -5019,18 +4991,18 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       : ListView.builder(
                           controller: _rightPaneScrollController,
                           padding: EdgeInsets.zero,
-                          itemCount: suggestions.length.clamp(0, 24),
+                          itemCount: suggestions.length.clamp(0, 24) + 1,
                           itemBuilder: (context, index) {
-                            final item = suggestions[index];
-                            final String mode =
-                                item.preset.thumbnailMode ?? item.preset.mode;
+                            if (index == 0) {
+                              return const SizedBox(height: 54);
+                            }
+                            final item = suggestions[index - 1];
                             final Map<String, dynamic> payload =
                                 item.preset.thumbnailPayload.isNotEmpty
                                     ? item.preset.thumbnailPayload
                                     : item.preset.payload;
                             return _SuggestionGridCard(
                               heroTag: 'post-detail-hero-${item.preset.id}',
-                              mode: mode,
                               payload: payload,
                               title: item.preset.title.isNotEmpty
                                   ? item.preset.title
@@ -5138,7 +5110,6 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
               children: [
                 Positioned.fill(
                   child: _CardScopedAmbientBackdrop(
-                    mode: previewMode,
                     payload: previewPayload,
                     previewWidth: previewWidth,
                     leftPadding: _kDetailContentPadding,
@@ -5283,7 +5254,6 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           _singlePayload = payload;
         } else {
           final item = CollectionDraftItem(
-            mode: kImageRenderMode,
             name: file.name.trim().isEmpty
                 ? 'Image ${_draftItems.length + 1}'
                 : file.name.trim(),
@@ -5304,8 +5274,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
 
   Future<void> _openSingleComposer() async {
     final payload = _singlePayload;
-    if (payload == null ||
-        imageUrlFromPayload(payload, fallbackMode: kImageRenderMode) == null) {
+    if (payload == null || imageUrlFromPayload(payload) == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Upload one image first.')),
       );
@@ -5321,7 +5290,6 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         builder: (_) => _PostCardComposerPage.single(
           name:
               'Image ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}',
-          mode: kImageRenderMode,
           payload: payload,
         ),
       ),
@@ -5407,7 +5375,6 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: _SharedPresetPreview(
-        mode: kImageRenderMode,
         payload: payload,
         borderRadius: BorderRadius.circular(16),
         fit: BoxFit.contain,
@@ -5601,7 +5568,6 @@ class _CollectionPreviewPageState extends State<_CollectionPreviewPage> {
       children: [
         IgnorePointer(
           child: PresetViewer(
-            mode: item.mode,
             payload: item.snapshot,
             fit: BoxFit.contain,
           ),
@@ -5831,7 +5797,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
       mentionUserIds: summary.mentionUserIds,
       published: summary.published,
       thumbnailPayload: summary.thumbnailPayload,
-      thumbnailMode: summary.thumbnailMode,
       itemsCount: summary.itemsCount,
       createdAt: summary.createdAt,
       updatedAt: summary.updatedAt,
@@ -6398,7 +6363,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     await _openDetailFullscreenViewer(
       context,
       heroTag: _collectionHeroTag(index),
-      mode: item.mode,
       payload: item.snapshot,
     );
   }
@@ -6415,7 +6379,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           child: ColoredBox(color: Colors.transparent),
         ),
         _SharedPresetPreview(
-          mode: item.mode,
           payload: item.snapshot,
           borderRadius: BorderRadius.circular(16),
           fit: BoxFit.contain,
@@ -7027,12 +6990,12 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                       : ListView.builder(
                           controller: _rightPaneScrollController,
                           padding: EdgeInsets.zero,
-                          itemCount: suggestions.length.clamp(0, 24),
+                          itemCount: suggestions.length.clamp(0, 24) + 1,
                           itemBuilder: (context, index) {
-                            final item = suggestions[index];
-                            final String mode = item.thumbnailMode ??
-                                item.firstItem?.mode ??
-                                '2d';
+                            if (index == 0) {
+                              return const SizedBox(height: 54);
+                            }
+                            final item = suggestions[index - 1];
                             final Map<String, dynamic> payload =
                                 item.thumbnailPayload.isNotEmpty
                                     ? item.thumbnailPayload
@@ -7040,7 +7003,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                                         const <String, dynamic>{});
                             return _SuggestionGridCard(
                               heroTag: 'collection-detail-hero-${item.id}-0',
-                              mode: mode,
                               payload: payload,
                               title: item.name,
                               author:
@@ -7235,7 +7197,6 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               children: [
                 Positioned.fill(
                   child: _CardScopedAmbientBackdrop(
-                    mode: activeItem?.mode ?? '2d',
                     payload: activeItem?.snapshot ?? const <String, dynamic>{},
                     previewWidth: previewWidth,
                     leftPadding: _kDetailContentPadding,
@@ -7519,7 +7480,6 @@ class _ProfileTabState extends State<_ProfileTab> {
         settings: const RouteSettings(name: '/post/editor/card-update'),
         builder: (_) => _PostCardComposerPage.single(
           name: preset.name,
-          mode: preset.mode,
           payload: preset.payload,
           existingPreset: preset,
           initialIsPaid: preset.isPaid,
@@ -7808,7 +7768,6 @@ class _ProfileTabState extends State<_ProfileTab> {
             final String title = preset.title.trim().isNotEmpty
                 ? preset.title.trim()
                 : preset.name;
-            final String mode = preset.thumbnailMode ?? preset.mode;
             final Map<String, dynamic> payload =
                 preset.thumbnailPayload.isNotEmpty
                     ? preset.thumbnailPayload
@@ -7848,7 +7807,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                 aspectRatio: _kGridPreviewAspectRatio,
                 child: _GridCardPreviewSurface(
                   heroTag: heroTag,
-                  mode: mode,
                   payload: payload,
                   title: title,
                   verticalUsername: authorName,
@@ -8009,11 +7967,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                             : ((preset?.title.trim().isNotEmpty == true)
                                 ? preset!.title.trim()
                                 : (preset?.name ?? 'Post'));
-                        final String mode = isCollection
-                            ? (collection.thumbnailMode ??
-                                collection.firstItem?.mode ??
-                                '2d')
-                            : (preset?.thumbnailMode ?? preset?.mode ?? '2d');
                         final Map<String, dynamic> payload = isCollection
                             ? (collection.thumbnailPayload.isNotEmpty
                                 ? collection.thumbnailPayload
@@ -8076,7 +8029,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                             aspectRatio: _kGridPreviewAspectRatio,
                             child: _GridCardPreviewSurface(
                               heroTag: heroTag,
-                              mode: mode,
                               payload: payload,
                               title: title,
                               verticalUsername: authorName,
@@ -9448,7 +9400,6 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
 class _PostCardComposerPage extends StatefulWidget {
   const _PostCardComposerPage.single({
     required this.name,
-    required this.mode,
     required this.payload,
     this.existingPreset,
     this.initialIsPaid = false,
@@ -9465,7 +9416,7 @@ class _PostCardComposerPage extends StatefulWidget {
         tags = const <String>[],
         mentionUserIds = const <String>[],
         initialCardPayload = const <String, dynamic>{},
-        initialCardMode = null;
+        initialLinkedItemPosition = 0;
 
   const _PostCardComposerPage.collection({
     this.collectionId,
@@ -9479,18 +9430,16 @@ class _PostCardComposerPage extends StatefulWidget {
     this.initialPriceCents,
     this.initialAccentColorHex,
     this.initialCardPayload = const <String, dynamic>{},
-    this.initialCardMode,
+    this.initialLinkedItemPosition = 0,
     this.editTarget = _ComposerEditTarget.card,
     this.startBlankCard = true,
   })  : kind = _ComposerKind.collection,
         existingPreset = null,
         name = '',
-        mode = kImageRenderMode,
         payload = const <String, dynamic>{};
 
   final _ComposerKind kind;
   final String name;
-  final String mode;
   final Map<String, dynamic> payload;
   final RenderPreset? existingPreset;
   final bool initialIsPaid;
@@ -9504,7 +9453,7 @@ class _PostCardComposerPage extends StatefulWidget {
   final bool published;
   final List<CollectionDraftItem> items;
   final Map<String, dynamic> initialCardPayload;
-  final String? initialCardMode;
+  final int initialLinkedItemPosition;
   final _ComposerEditTarget editTarget;
   final bool startBlankCard;
 
@@ -9538,6 +9487,12 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   bool _isPaidContent = false;
   String _accentColorHex = '#FD4687';
   int _thumbnailIndex = 0;
+  bool _assetUploading = false;
+  bool _autoAccentLoading = false;
+  _ComposerImagePane _imagePane = _ComposerImagePane.card;
+  late Map<String, dynamic> _postPayload;
+  late Map<String, dynamic> _cardPayload;
+  String _cardSourceKind = 'post';
   late final List<CollectionDraftItem> _items;
 
   bool get _isCollection => widget.kind == _ComposerKind.collection;
@@ -9549,16 +9504,36 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     _items = widget.items
         .map(
           (item) => CollectionDraftItem(
-            mode: kImageRenderMode,
             name: item.name,
             snapshot: normalizeImagePayload(
               item.snapshot,
-              fallbackMode: item.mode,
               editor: 'collection_item_normalizer',
             ),
           ),
         )
         .toList();
+    _postPayload = normalizeImagePayload(
+      widget.payload,
+      editor: 'composer_post',
+    );
+    if (_isCollection && _items.isNotEmpty) {
+      _thumbnailIndex =
+          widget.initialLinkedItemPosition.clamp(0, _items.length - 1).toInt();
+    }
+    final Map<String, dynamic> initialCard =
+        widget.initialCardPayload.isNotEmpty
+            ? widget.initialCardPayload
+            : (existing?.thumbnailPayload.isNotEmpty == true
+                ? existing!.thumbnailPayload
+                : const <String, dynamic>{});
+    _cardPayload = initialCard.isNotEmpty
+        ? normalizeImagePayload(initialCard, editor: 'composer_card')
+        : _linkedCardPayload();
+    _cardSourceKind = sourceKindFromPayload(_cardPayload);
+    if (_cardSourceKind != 'custom') {
+      _cardSourceKind = _isCollection ? 'collection_item' : 'post';
+      _syncCardFromLinkedSource();
+    }
     _titleController = TextEditingController(
       text: _isCollection
           ? widget.collectionName
@@ -9671,21 +9646,67 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     }
   }
 
-  Map<String, dynamic> _singlePayload() {
-    return normalizeImagePayload(
-      widget.payload,
-      fallbackMode: widget.mode,
-      editor: 'composer_single',
+  String _hexFromColor(Color color) {
+    final int value = color.toARGB32() & 0xFFFFFF;
+    return '#${value.toRadixString(16).padLeft(6, '0').toUpperCase()}';
+  }
+
+  void _setAccentColor(Color color) {
+    final String hex = _hexFromColor(color);
+    setState(() {
+      _accentColorHex = hex;
+      _accentHexController.text = hex;
+    });
+  }
+
+  Map<String, dynamic> _linkedCardPayload() {
+    if (_isCollection) {
+      if (_items.isEmpty) {
+        return simpleImagePayload(
+          imageUrl: '',
+          editor: 'composer_card_link',
+          sourceKind: 'collection_item',
+          linkedItemPosition: _thumbnailIndex,
+        );
+      }
+      final int index = _thumbnailIndex.clamp(0, _items.length - 1).toInt();
+      final String url = imageUrlFromPayload(_items[index].snapshot) ?? '';
+      return payloadWithImageUrl(
+        _cardPayloadOrEmpty(),
+        url,
+        sourceKind: 'collection_item',
+        linkedItemPosition: index,
+        editor: 'composer_card_link',
+      );
+    }
+    return payloadWithImageUrl(
+      _cardPayloadOrEmpty(),
+      imageUrlFromPayload(_postPayload) ?? '',
+      sourceKind: 'post',
+      linkedItemPosition: 0,
+      editor: 'composer_card_link',
     );
   }
 
-  Map<String, dynamic> _previewPayload() {
-    if (_isCollection) {
-      if (_items.isEmpty) return simpleImagePayload(imageUrl: '');
-      final int index = _thumbnailIndex.clamp(0, _items.length - 1);
-      return _items[index].snapshot;
+  Map<String, dynamic> _cardPayloadOrEmpty() {
+    try {
+      return _cardPayload;
+    } catch (_) {
+      return simpleImagePayload(imageUrl: '', editor: 'composer_card_seed');
     }
-    return _singlePayload();
+  }
+
+  void _syncCardFromLinkedSource() {
+    if (_cardSourceKind == 'custom') return;
+    _cardPayload = _linkedCardPayload();
+  }
+
+  Map<String, dynamic> _singlePayload() {
+    return normalizeImagePayload(_postPayload, editor: 'composer_single');
+  }
+
+  Map<String, dynamic> _previewPayload() {
+    return _cardPayload;
   }
 
   Future<void> _submit() async {
@@ -9704,19 +9725,18 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       final int? priceCents =
           _isPaidContent ? _priceInputToCents(_priceController.text) : null;
       final String visibility = _isPublic ? 'public' : 'private';
+      _syncCardFromLinkedSource();
       if (_isCollection) {
         if (_items.isEmpty) {
           throw Exception('Collection needs at least one image.');
         }
-        final int thumbIndex = _thumbnailIndex.clamp(0, _items.length - 1);
         await _repository.saveCollectionWithItems(
           collectionId: widget.collectionId,
           name: title,
           description: _descriptionController.text.trim(),
           tags: tags,
           mentionUserIds: mentions,
-          thumbnailPayload: _items[thumbIndex].snapshot,
-          thumbnailMode: kImageRenderMode,
+          thumbnailPayload: _cardPayload,
           publish: _isPublic,
           items: _items,
           isPaid: _isPaidContent,
@@ -9725,33 +9745,19 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         );
       } else {
         final payload = _singlePayload();
-        if (imageUrlFromPayload(payload, fallbackMode: kImageRenderMode) ==
-            null) {
+        if (imageUrlFromPayload(payload) == null) {
           throw Exception('Post needs one image.');
         }
         final existing = widget.existingPreset;
         if (existing != null) {
-          await _repository.updatePresetDetail(
+          await _repository.updatePresetPost(
             presetId: existing.id,
             title: title,
             description: _descriptionController.text.trim(),
             tags: tags,
             mentionUserIds: mentions,
             payload: payload,
-            mode: kImageRenderMode,
-            visibility: visibility,
-            isPaid: _isPaidContent,
-            priceCents: priceCents,
-            accentColorHex: _accentColorHex,
-          );
-          await _repository.updatePresetCard(
-            presetId: existing.id,
-            thumbnailPayload: payload,
-            thumbnailMode: kImageRenderMode,
-            title: title,
-            description: _descriptionController.text.trim(),
-            tags: tags,
-            mentionUserIds: mentions,
+            thumbnailPayload: _cardPayload,
             visibility: visibility,
             isPaid: _isPaidContent,
             priceCents: priceCents,
@@ -9759,7 +9765,6 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           );
         } else {
           await _repository.publishPresetPost(
-            mode: kImageRenderMode,
             name: widget.name.trim().isEmpty ? title : widget.name.trim(),
             payload: payload,
             title: title,
@@ -9767,8 +9772,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             tags: tags,
             mentionUserIds: mentions,
             visibility: visibility,
-            thumbnailPayload: payload,
-            thumbnailMode: kImageRenderMode,
+            thumbnailPayload: _cardPayload,
             isPaid: _isPaidContent,
             priceCents: priceCents,
             accentColorHex: _accentColorHex,
@@ -9783,6 +9787,438 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Map<String, dynamic> _activeEditPayload() {
+    if (_imagePane == _ComposerImagePane.card) return _cardPayload;
+    if (_isCollection) {
+      if (_items.isEmpty) return simpleImagePayload(imageUrl: '');
+      final int index = _thumbnailIndex.clamp(0, _items.length - 1).toInt();
+      return _items[index].snapshot;
+    }
+    return _postPayload;
+  }
+
+  void _setActiveEditPayload(Map<String, dynamic> payload) {
+    final Map<String, dynamic> normalized =
+        normalizeImagePayload(payload, editor: 'composer_edit');
+    setState(() {
+      if (_imagePane == _ComposerImagePane.card) {
+        _cardPayload = normalized;
+        _cardSourceKind = sourceKindFromPayload(normalized);
+      } else if (_isCollection) {
+        if (_items.isEmpty) return;
+        final int index = _thumbnailIndex.clamp(0, _items.length - 1).toInt();
+        _items[index] = _items[index].copyWith(snapshot: normalized);
+        if (_cardSourceKind != 'custom') _syncCardFromLinkedSource();
+      } else {
+        _postPayload = normalized;
+        if (_cardSourceKind != 'custom') _syncCardFromLinkedSource();
+      }
+    });
+  }
+
+  void _setCardSource(String sourceKind) {
+    setState(() {
+      _cardSourceKind = sourceKind;
+      if (_cardSourceKind != 'custom') {
+        _syncCardFromLinkedSource();
+      } else {
+        _cardPayload = imagePayloadFromMap(_cardPayload)
+            .copyWith(sourceKind: 'custom')
+            .toMap();
+      }
+    });
+  }
+
+  Future<void> _uploadImageForActivePane() async {
+    if (_assetUploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _assetUploading = true);
+    try {
+      final file = await pickDeviceFile(accept: 'image/*');
+      if (file == null) return;
+      final publicUrl = await _repository.uploadAssetBytes(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: _imagePane == _ComposerImagePane.card
+            ? 'card-images'
+            : 'post-images',
+      );
+      final String sourceKind = _imagePane == _ComposerImagePane.card
+          ? 'custom'
+          : (_isCollection ? 'collection_item' : 'upload');
+      final payload = simpleImagePayload(
+        imageUrl: publicUrl,
+        editor: 'composer_upload',
+        sourceKind: sourceKind,
+        linkedItemPosition: _thumbnailIndex,
+        meta: <String, dynamic>{'sourceName': file.name},
+      );
+      _setActiveEditPayload(payload);
+      if (_imagePane == _ComposerImagePane.card) {
+        setState(() => _cardSourceKind = 'custom');
+      }
+      final Color? color =
+          await ImageColorService.instance.extractAccentFromBytes(file.bytes);
+      if (color != null && mounted) _setAccentColor(color);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+    } finally {
+      if (mounted) setState(() => _assetUploading = false);
+    }
+  }
+
+  Future<void> _autoAccentFromCardImage() async {
+    if (_autoAccentLoading) return;
+    final String? url = imageUrlFromPayload(_cardPayload);
+    if (url == null) return;
+    setState(() => _autoAccentLoading = true);
+    try {
+      final Color? color =
+          await ImageColorService.instance.extractAccentFromUrl(url);
+      if (color != null && mounted) {
+        _setAccentColor(color);
+      }
+    } finally {
+      if (mounted) setState(() => _autoAccentLoading = false);
+    }
+  }
+
+  Future<void> _sampleAccentWithEyedropper() async {
+    final Color? color = await pickScreenColor();
+    if (color != null) {
+      _setAccentColor(color);
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Screen color picker is not available.')),
+    );
+  }
+
+  Future<void> _openManualColorPicker() async {
+    Color selected = _cardAccentColorFromHex(_accentColorHex);
+    int red(Color color) => (color.toARGB32() >> 16) & 0xFF;
+    int green(Color color) => (color.toARGB32() >> 8) & 0xFF;
+    int blue(Color color) => color.toARGB32() & 0xFF;
+    final Color? result = await showDialog<Color>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            void update(Color color) => setDialogState(() => selected = color);
+            return AlertDialog(
+              title: const Text('Accent color'),
+              content: SizedBox(
+                width: 320,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      height: 54,
+                      decoration: BoxDecoration(
+                        color: selected,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _RgbSlider(
+                      label: 'R',
+                      value: red(selected),
+                      color: Colors.red,
+                      onChanged: (value) => update(
+                        Color.fromARGB(
+                          255,
+                          value,
+                          green(selected),
+                          blue(selected),
+                        ),
+                      ),
+                    ),
+                    _RgbSlider(
+                      label: 'G',
+                      value: green(selected),
+                      color: Colors.green,
+                      onChanged: (value) => update(
+                        Color.fromARGB(
+                          255,
+                          red(selected),
+                          value,
+                          blue(selected),
+                        ),
+                      ),
+                    ),
+                    _RgbSlider(
+                      label: 'B',
+                      value: blue(selected),
+                      color: Colors.blue,
+                      onChanged: (value) => update(
+                        Color.fromARGB(
+                          255,
+                          red(selected),
+                          green(selected),
+                          value,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: const <Color>[
+                        Color(0xFFFD4687),
+                        Color(0xFFEDB506),
+                        Color(0xFF6DBA65),
+                        Color(0xFF2845E1),
+                        Color(0xFFDC1D27),
+                        Color(0xFFD9D1D9),
+                      ]
+                          .map(
+                            (color) => _ColorSwatchButton(
+                              color: color,
+                              selected: color.toARGB32() == selected.toARGB32(),
+                              onTap: () => update(color),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, selected),
+                  child: const Text('Apply'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result != null) _setAccentColor(result);
+  }
+
+  Widget _buildImageControls(ColorScheme cs) {
+    final Map<String, dynamic> payload = _activeEditPayload();
+    final ImagePayloadData data = imagePayloadFromMap(payload);
+    void update({
+      double? offsetX,
+      double? offsetY,
+      double? scale,
+      double? rotationDegrees,
+      bool? flipX,
+      bool? flipY,
+    }) {
+      _setActiveEditPayload(
+        payloadWithTransform(
+          payload,
+          offsetX: offsetX,
+          offsetY: offsetY,
+          scale: scale,
+          rotationDegrees: rotationDegrees,
+          flipX: flipX,
+          flipY: flipY,
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _imagePane == _ComposerImagePane.card
+              ? 'Card Image'
+              : (_isCollection ? 'Collection Image' : 'Post Image'),
+          style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<_ComposerImagePane>(
+          segments: const <ButtonSegment<_ComposerImagePane>>[
+            ButtonSegment<_ComposerImagePane>(
+              value: _ComposerImagePane.post,
+              icon: Icon(Icons.image_outlined),
+              label: Text('Post'),
+            ),
+            ButtonSegment<_ComposerImagePane>(
+              value: _ComposerImagePane.card,
+              icon: Icon(Icons.dashboard_customize_outlined),
+              label: Text('Card'),
+            ),
+          ],
+          selected: <_ComposerImagePane>{_imagePane},
+          onSelectionChanged: (value) =>
+              setState(() => _imagePane = value.first),
+        ),
+        const SizedBox(height: 10),
+        if (_imagePane == _ComposerImagePane.card) ...[
+          SegmentedButton<String>(
+            segments: <ButtonSegment<String>>[
+              ButtonSegment<String>(
+                value: _isCollection ? 'collection_item' : 'post',
+                icon: const Icon(Icons.link_rounded),
+                label: Text(_isCollection ? 'Item' : 'Post'),
+              ),
+              const ButtonSegment<String>(
+                value: 'custom',
+                icon: Icon(Icons.add_photo_alternate_outlined),
+                label: Text('Custom'),
+              ),
+            ],
+            selected: <String>{
+              _cardSourceKind == 'custom'
+                  ? 'custom'
+                  : (_isCollection ? 'collection_item' : 'post')
+            },
+            onSelectionChanged: (value) => _setCardSource(value.first),
+          ),
+          const SizedBox(height: 10),
+        ],
+        FilledButton.icon(
+          onPressed: _assetUploading ? null : _uploadImageForActivePane,
+          icon: _assetUploading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.upload_file_rounded),
+          label: Text(_assetUploading ? 'Uploading...' : 'Upload Image'),
+        ),
+        const SizedBox(height: 12),
+        _TransformSlider(
+          label: 'Scale',
+          value: data.scale,
+          min: 0.35,
+          max: 8,
+          onChanged: (value) => update(scale: value),
+        ),
+        _TransformSlider(
+          label: 'Horizontal',
+          value: data.offsetX,
+          min: -1.5,
+          max: 1.5,
+          onChanged: (value) => update(offsetX: value),
+        ),
+        _TransformSlider(
+          label: 'Vertical',
+          value: data.offsetY,
+          min: -1.5,
+          max: 1.5,
+          onChanged: (value) => update(offsetY: value),
+        ),
+        _TransformSlider(
+          label: 'Rotate',
+          value: data.rotationDegrees,
+          min: -180,
+          max: 180,
+          onChanged: (value) => update(rotationDegrees: value),
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChip(
+              selected: data.flipX,
+              label: const Text('Flip X'),
+              avatar: const Icon(Icons.flip_rounded, size: 18),
+              onSelected: (_) => update(flipX: !data.flipX),
+            ),
+            FilterChip(
+              selected: data.flipY,
+              label: const Text('Flip Y'),
+              avatar: const Icon(Icons.flip_to_back_rounded, size: 18),
+              onSelected: (_) => update(flipY: !data.flipY),
+            ),
+            ActionChip(
+              avatar: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('Reset'),
+              onPressed: () => _setActiveEditPayload(
+                payloadWithTransform(
+                  payload,
+                  offsetX: 0,
+                  offsetY: 0,
+                  scale: 1,
+                  rotationDegrees: 0,
+                  flipX: false,
+                  flipY: false,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildColorControls(ColorScheme cs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Card Color',
+            style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: _cardAccentColorFromHex(_accentColorHex),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.3)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _accentHexController,
+                onChanged: _applyAccentText,
+                decoration: const InputDecoration(
+                  labelText: 'Accent Hex',
+                  hintText: '#FD4687',
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ActionChip(
+              avatar: _autoAccentLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.auto_awesome_rounded, size: 18),
+              label: const Text('Auto'),
+              onPressed: _autoAccentLoading ? null : _autoAccentFromCardImage,
+            ),
+            ActionChip(
+              avatar: const Icon(Icons.edit_rounded, size: 18),
+              label: const Text('Manual'),
+              onPressed: _openManualColorPicker,
+            ),
+            ActionChip(
+              avatar: const Icon(Icons.colorize_rounded, size: 18),
+              label: const Text('Pick'),
+              onPressed: _sampleAccentWithEyedropper,
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   Widget _buildPreview(ColorScheme cs) {
@@ -9803,10 +10239,22 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         ),
         showCollectionCount: _isCollection,
         collectionCountLabel: '${_items.length}',
-        child: _SharedPresetPreview(
-          mode: kImageRenderMode,
+        child: EditableImageStage(
           payload: payload,
-          clipper: const SvgCardClipper(),
+          onChanged: (next) {
+            if (_cardSourceKind != 'custom') {
+              _cardSourceKind = 'custom';
+            }
+            setState(() {
+              _cardPayload = imagePayloadFromMap(next)
+                  .copyWith(sourceKind: 'custom')
+                  .toMap();
+              _imagePane = _ComposerImagePane.card;
+            });
+          },
+          fit: BoxFit.cover,
+          backgroundColor: Colors.transparent,
+          emptyLabel: 'Choose a card image.',
         ),
       ),
     );
@@ -9867,8 +10315,12 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                         return ChoiceChip(
                           selected: index == _thumbnailIndex,
                           label: Text('${index + 1}. ${_items[index].name}'),
-                          onSelected: (_) =>
-                              setState(() => _thumbnailIndex = index),
+                          onSelected: (_) => setState(() {
+                            _thumbnailIndex = index;
+                            if (_cardSourceKind != 'custom') {
+                              _syncCardFromLinkedSource();
+                            }
+                          }),
                         );
                       }),
                     ),
@@ -9889,6 +10341,8 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  _buildImageControls(cs),
+                  const SizedBox(height: 18),
                   TextField(
                     controller: _titleController,
                     onChanged: (_) => setState(() {}),
@@ -10000,14 +10454,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                     ),
                   ],
                   const SizedBox(height: 14),
-                  TextField(
-                    controller: _accentHexController,
-                    onChanged: _applyAccentText,
-                    decoration: const InputDecoration(
-                      labelText: 'Accent Hex',
-                      hintText: '#FD4687',
-                    ),
-                  ),
+                  _buildColorControls(cs),
                   const SizedBox(height: 14),
                   SegmentedButton<bool>(
                     segments: const <ButtonSegment<bool>>[
@@ -10047,6 +10494,123 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TransformSlider extends StatelessWidget {
+  const _TransformSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label, style: TextStyle(color: cs.onSurfaceVariant)),
+            const Spacer(),
+            Text(
+              value.toStringAsFixed(label == 'Rotate' ? 0 : 2),
+              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
+            ),
+          ],
+        ),
+        Slider(
+          value: value.clamp(min, max).toDouble(),
+          min: min,
+          max: max,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+}
+
+class _RgbSlider extends StatelessWidget {
+  const _RgbSlider({
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final Color color;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(width: 18, child: Text(label)),
+        Expanded(
+          child: Slider(
+            value: value.clamp(0, 255).toDouble(),
+            min: 0,
+            max: 255,
+            activeColor: color,
+            onChanged: (next) => onChanged(next.round().clamp(0, 255)),
+          ),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(
+            value.toString(),
+            textAlign: TextAlign.end,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ColorSwatchButton extends StatelessWidget {
+  const _ColorSwatchButton({
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message:
+          '#${(color.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected ? Colors.white : Colors.white24,
+              width: selected ? 3 : 1,
+            ),
+          ),
+        ),
       ),
     );
   }

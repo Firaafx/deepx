@@ -3,14 +3,12 @@ import 'app_user_profile.dart';
 class CollectionItemSnapshot {
   CollectionItemSnapshot({
     required this.id,
-    required this.mode,
     required this.name,
     required this.position,
     required this.snapshot,
   });
 
   final String id;
-  final String mode;
   final String name;
   final int position;
   final Map<String, dynamic> snapshot;
@@ -18,7 +16,6 @@ class CollectionItemSnapshot {
   factory CollectionItemSnapshot.fromMap(Map<String, dynamic> map) {
     return CollectionItemSnapshot(
       id: map['id']?.toString() ?? '',
-      mode: map['mode']?.toString() ?? '2d',
       name: map['preset_name']?.toString() ?? 'Untitled preset',
       position: _toInt(map['position']),
       snapshot: map['preset_snapshot'] is Map
@@ -39,7 +36,6 @@ class CollectionSummary {
     required this.mentionUserIds,
     required this.published,
     required this.thumbnailPayload,
-    required this.thumbnailMode,
     required this.itemsCount,
     required this.createdAt,
     required this.updatedAt,
@@ -68,7 +64,6 @@ class CollectionSummary {
   final List<String> mentionUserIds;
   final bool published;
   final Map<String, dynamic> thumbnailPayload;
-  final String? thumbnailMode;
   final int itemsCount;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -100,22 +95,18 @@ class CollectionDetail {
 
 class CollectionDraftItem {
   CollectionDraftItem({
-    required this.mode,
     required this.name,
     required this.snapshot,
   });
 
-  final String mode;
   final String name;
   final Map<String, dynamic> snapshot;
 
   CollectionDraftItem copyWith({
-    String? mode,
     String? name,
     Map<String, dynamic>? snapshot,
   }) {
     return CollectionDraftItem(
-      mode: mode ?? this.mode,
       name: name ?? this.name,
       snapshot: snapshot ?? this.snapshot,
     );

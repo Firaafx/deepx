@@ -502,7 +502,7 @@ class AppRepository {
     );
   }
 
-  Future<List<RenderPreset>> fetchUserPresets({String? mode}) async {
+  Future<List<RenderPreset>> fetchUserPresets() async {
     final user = currentUser;
     if (user == null) return const <RenderPreset>[];
 
@@ -511,10 +511,6 @@ class AppRepository {
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', ascending: false);
-
-    if (mode != null) {
-      query = query.eq('mode', mode);
-    }
 
     final List<dynamic> rows = await query;
     final List<RenderPreset> presets = rows
@@ -819,7 +815,6 @@ class AppRepository {
       id: preset.id,
       shareId: preset.shareId,
       userId: preset.userId,
-      mode: preset.mode,
       name: preset.name,
       title: preset.title,
       description: preset.description,
@@ -827,7 +822,6 @@ class AppRepository {
       mentionUserIds: preset.mentionUserIds,
       visibility: preset.visibility,
       thumbnailPayload: preset.thumbnailPayload,
-      thumbnailMode: preset.thumbnailMode,
       payload: preset.payload,
       createdAt: preset.createdAt,
       updatedAt: preset.updatedAt,
@@ -930,7 +924,6 @@ class AppRepository {
   }
 
   Future<void> savePreset({
-    required String mode,
     required String name,
     required Map<String, dynamic> payload,
   }) async {
@@ -940,7 +933,6 @@ class AppRepository {
     if (cleanName.isEmpty) return;
     final Map<String, dynamic> imagePayload = normalizeImagePayload(
       payload,
-      fallbackMode: mode,
       editor: 'repository_save',
     );
 
@@ -948,7 +940,6 @@ class AppRepository {
         .from('presets')
         .select('id')
         .eq('user_id', user.id)
-        .eq('mode', kImageRenderMode)
         .eq('name', cleanName)
         .order('updated_at', ascending: false)
         .limit(1)
@@ -956,7 +947,6 @@ class AppRepository {
 
     final values = <String, dynamic>{
       'user_id': user.id,
-      'mode': kImageRenderMode,
       'name': cleanName,
       'title': cleanName,
       'description': '',
@@ -965,7 +955,6 @@ class AppRepository {
       'visibility': 'private',
       'payload': imagePayload,
       'thumbnail_payload': imagePayload,
-      'thumbnail_mode': kImageRenderMode,
       'is_paid': false,
       'price_cents': null,
       'accent_color_hex': null,
@@ -980,7 +969,6 @@ class AppRepository {
   }
 
   Future<String> publishPresetPost({
-    required String mode,
     required String name,
     required Map<String, dynamic> payload,
     required String title,
@@ -989,7 +977,6 @@ class AppRepository {
     required List<String> mentionUserIds,
     String visibility = 'public',
     Map<String, dynamic>? thumbnailPayload,
-    String? thumbnailMode,
     bool isPaid = false,
     int? priceCents,
     String? accentColorHex,
@@ -998,12 +985,10 @@ class AppRepository {
     if (user == null) throw Exception('Not authenticated.');
     final Map<String, dynamic> imagePayload = normalizeImagePayload(
       payload,
-      fallbackMode: mode,
       editor: 'repository_publish',
     );
     final Map<String, dynamic> imageThumbnailPayload = normalizeImagePayload(
       thumbnailPayload ?? payload,
-      fallbackMode: thumbnailMode ?? mode,
       editor: 'repository_thumbnail',
     );
 
@@ -1012,7 +997,6 @@ class AppRepository {
         .insert(
           <String, dynamic>{
             'user_id': user.id,
-            'mode': kImageRenderMode,
             'name': name.trim().isEmpty ? 'Untitled' : name.trim(),
             'title': title.trim().isEmpty ? 'Untitled' : title.trim(),
             'description': description.trim(),
@@ -1021,7 +1005,6 @@ class AppRepository {
             'visibility': visibility == 'private' ? 'private' : 'public',
             'payload': imagePayload,
             'thumbnail_payload': imageThumbnailPayload,
-            'thumbnail_mode': kImageRenderMode,
             'is_paid': isPaid,
             'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
             'accent_color_hex': _normalizeHexOrNull(accentColorHex),
@@ -1042,7 +1025,6 @@ class AppRepository {
     List<String>? tags,
     List<String>? mentionUserIds,
     Map<String, dynamic>? payload,
-    String? mode,
     String? visibility,
     bool? isPaid,
     int? priceCents,
@@ -1052,7 +1034,6 @@ class AppRepository {
         ? null
         : normalizeImagePayload(
             payload,
-            fallbackMode: mode ?? kImageRenderMode,
             editor: 'repository_update',
           );
     return updatePresetPost(
@@ -1072,7 +1053,6 @@ class AppRepository {
   Future<void> updatePresetCard({
     required String presetId,
     required Map<String, dynamic> thumbnailPayload,
-    required String thumbnailMode,
     String? title,
     String? description,
     List<String>? tags,
@@ -1084,7 +1064,6 @@ class AppRepository {
   }) {
     final Map<String, dynamic> imageThumbnailPayload = normalizeImagePayload(
       thumbnailPayload,
-      fallbackMode: thumbnailMode,
       editor: 'repository_thumbnail_update',
     );
     return updatePresetPost(
@@ -1094,7 +1073,6 @@ class AppRepository {
       tags: tags,
       mentionUserIds: mentionUserIds,
       thumbnailPayload: imageThumbnailPayload,
-      thumbnailMode: kImageRenderMode,
       visibility: visibility,
       isPaid: isPaid,
       priceCents: priceCents,
@@ -1110,7 +1088,6 @@ class AppRepository {
     List<String>? mentionUserIds,
     Map<String, dynamic>? payload,
     Map<String, dynamic>? thumbnailPayload,
-    String? thumbnailMode,
     String? visibility,
     bool? isPaid,
     int? priceCents,
@@ -1135,21 +1112,14 @@ class AppRepository {
     if (payload != null) {
       values['payload'] = normalizeImagePayload(
         payload,
-        fallbackMode: kImageRenderMode,
         editor: 'repository_update',
       );
-      values['mode'] = kImageRenderMode;
     }
     if (thumbnailPayload != null) {
       values['thumbnail_payload'] = normalizeImagePayload(
         thumbnailPayload,
-        fallbackMode: thumbnailMode ?? kImageRenderMode,
         editor: 'repository_thumbnail_update',
       );
-      values['thumbnail_mode'] = kImageRenderMode;
-    }
-    if (thumbnailMode != null) {
-      values['thumbnail_mode'] = kImageRenderMode;
     }
     if (visibility != null) {
       values['visibility'] = visibility == 'private' ? 'private' : 'public';
@@ -1199,7 +1169,6 @@ class AppRepository {
   }
 
   Future<Map<String, dynamic>?> fetchUserPresetByName({
-    required String mode,
     required String name,
   }) async {
     final user = currentUser;
@@ -1209,7 +1178,6 @@ class AppRepository {
         .from('presets')
         .select('payload')
         .eq('user_id', user.id)
-        .eq('mode', mode)
         .eq('name', name)
         .order('updated_at', ascending: false)
         .limit(1)
@@ -2236,7 +2204,6 @@ class AppRepository {
             mentionUserIds: _stringListFrom(row['mention_user_ids']),
             published: row['published'] == true,
             thumbnailPayload: _mapFrom(row['thumbnail_payload']),
-            thumbnailMode: row['thumbnail_mode']?.toString(),
             itemsCount: items.length,
             createdAt: DateTime.tryParse(row['created_at']?.toString() ?? '') ??
                 DateTime.fromMillisecondsSinceEpoch(0),
@@ -2273,7 +2240,6 @@ class AppRepository {
     List<String> tags = const <String>[],
     List<String> mentionUserIds = const <String>[],
     Map<String, dynamic>? thumbnailPayload,
-    String? thumbnailMode,
     required bool publish,
     required List<CollectionDraftItem> items,
     bool isPaid = false,
@@ -2286,10 +2252,8 @@ class AppRepository {
     final List<CollectionDraftItem> imageItems = items
         .map(
           (item) => item.copyWith(
-            mode: kImageRenderMode,
             snapshot: normalizeImagePayload(
               item.snapshot,
-              fallbackMode: item.mode,
               editor: 'repository_collection_item',
             ),
           ),
@@ -2297,7 +2261,6 @@ class AppRepository {
         .toList();
     final Map<String, dynamic> imageThumbnailPayload = normalizeImagePayload(
       thumbnailPayload ?? imageItems.first.snapshot,
-      fallbackMode: thumbnailMode ?? imageItems.first.mode,
       editor: 'repository_collection_thumbnail',
     );
 
@@ -2314,7 +2277,6 @@ class AppRepository {
               'tags': _normalizeTags(tags),
               'mention_user_ids': _normalizeUuidList(mentionUserIds),
               'thumbnail_payload': imageThumbnailPayload,
-              'thumbnail_mode': kImageRenderMode,
               'published': publish,
               'is_paid': isPaid,
               'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
@@ -2335,7 +2297,6 @@ class AppRepository {
         'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
       };
       values['thumbnail_payload'] = imageThumbnailPayload;
-      values['thumbnail_mode'] = kImageRenderMode;
       if (accentColorHex != null) {
         values['accent_color_hex'] = _normalizeHexOrNull(accentColorHex);
       }
@@ -2354,7 +2315,6 @@ class AppRepository {
         <String, dynamic>{
           'collection_id': id,
           'position': i,
-          'mode': kImageRenderMode,
           'preset_name': imageItems[i].name,
           'preset_snapshot': imageItems[i].snapshot,
         },
@@ -2402,7 +2362,6 @@ class AppRepository {
     required bool publish,
     required List<CollectionDraftItem> items,
     required Map<String, dynamic> thumbnailPayload,
-    required String thumbnailMode,
     bool isPaid = false,
     int? priceCents,
     String? accentColorHex,
@@ -2416,7 +2375,6 @@ class AppRepository {
       publish: publish,
       items: items,
       thumbnailPayload: thumbnailPayload,
-      thumbnailMode: thumbnailMode,
       isPaid: isPaid,
       priceCents: priceCents,
       accentColorHex: accentColorHex,
@@ -2723,7 +2681,6 @@ class AppRepository {
         mentionUserIds: _stringListFrom(map['mention_user_ids']),
         published: map['published'] == true,
         thumbnailPayload: _mapFrom(map['thumbnail_payload']),
-        thumbnailMode: map['thumbnail_mode']?.toString(),
         itemsCount: items.length,
         createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
             DateTime.fromMillisecondsSinceEpoch(0),
@@ -2858,7 +2815,6 @@ class AppRepository {
       'id': preset.id,
       'share_id': preset.shareId,
       'user_id': preset.userId,
-      'mode': preset.mode,
       'name': preset.name,
       'title': preset.title,
       'description': preset.description,
@@ -2866,7 +2822,6 @@ class AppRepository {
       'mention_user_ids': preset.mentionUserIds,
       'visibility': preset.visibility,
       'thumbnail_payload': preset.thumbnailPayload,
-      'thumbnail_mode': preset.thumbnailMode,
       'payload': preset.payload,
       'is_paid': preset.isPaid,
       'price_cents': preset.priceCents,
@@ -2962,7 +2917,6 @@ class AppRepository {
   Map<String, dynamic> _encodeCollectionItem(CollectionItemSnapshot item) {
     return <String, dynamic>{
       'id': item.id,
-      'mode': item.mode,
       'preset_name': item.name,
       'position': item.position,
       'preset_snapshot': item.snapshot,
@@ -2984,7 +2938,6 @@ class AppRepository {
       'mention_user_ids': summary.mentionUserIds,
       'published': summary.published,
       'thumbnail_payload': summary.thumbnailPayload,
-      'thumbnail_mode': summary.thumbnailMode,
       'items_count': summary.itemsCount,
       'created_at': summary.createdAt.toIso8601String(),
       'updated_at': summary.updatedAt.toIso8601String(),
@@ -3022,7 +2975,6 @@ class AppRepository {
       mentionUserIds: _stringListFrom(map['mention_user_ids']),
       published: map['published'] == true,
       thumbnailPayload: _mapFrom(map['thumbnail_payload']),
-      thumbnailMode: map['thumbnail_mode']?.toString(),
       itemsCount: _toInt(map['items_count']),
       createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),

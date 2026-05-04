@@ -3,7 +3,6 @@ class RenderPreset {
     required this.id,
     required this.shareId,
     required this.userId,
-    required this.mode,
     required this.name,
     required this.title,
     required this.description,
@@ -11,7 +10,6 @@ class RenderPreset {
     required this.mentionUserIds,
     required this.visibility,
     required this.thumbnailPayload,
-    required this.thumbnailMode,
     required this.payload,
     required this.createdAt,
     required this.updatedAt,
@@ -24,7 +22,6 @@ class RenderPreset {
   final String id;
   final String shareId;
   final String userId;
-  final String mode;
   final String name;
   final String title;
   final String description;
@@ -32,7 +29,6 @@ class RenderPreset {
   final List<String> mentionUserIds;
   final String visibility;
   final Map<String, dynamic> thumbnailPayload;
-  final String? thumbnailMode;
   final Map<String, dynamic> payload;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -51,11 +47,12 @@ class RenderPreset {
             ? Map<String, dynamic>.from(rawPayload)
             : <String, dynamic>{});
     final dynamic rawThumbPayload = map['thumbnail_payload'];
-    final Map<String, dynamic> thumbPayload = rawThumbPayload is Map<String, dynamic>
-        ? rawThumbPayload
-        : (rawThumbPayload is Map
-            ? Map<String, dynamic>.from(rawThumbPayload)
-            : <String, dynamic>{});
+    final Map<String, dynamic> thumbPayload =
+        rawThumbPayload is Map<String, dynamic>
+            ? rawThumbPayload
+            : (rawThumbPayload is Map
+                ? Map<String, dynamic>.from(rawThumbPayload)
+                : <String, dynamic>{});
     final List<String> tags = _toStringList(map['tags']);
     final List<String> mentions = _toStringList(map['mention_user_ids']);
     final String normalizedVisibility =
@@ -66,7 +63,6 @@ class RenderPreset {
       id: map['id']?.toString() ?? '',
       shareId: map['share_id']?.toString() ?? '',
       userId: map['user_id']?.toString() ?? '',
-      mode: map['mode']?.toString() ?? '2d',
       name: map['name']?.toString() ?? 'Untitled',
       title: map['title']?.toString().trim().isNotEmpty == true
           ? map['title']!.toString().trim()
@@ -76,7 +72,6 @@ class RenderPreset {
       mentionUserIds: mentions,
       visibility: normalizedVisibility,
       thumbnailPayload: thumbPayload,
-      thumbnailMode: map['thumbnail_mode']?.toString(),
       payload: payload,
       createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
