@@ -88,48 +88,65 @@ void main() {
     const Size cardSize = Size(1852, 1413);
     final Rect oneLineBounds = const SvgCardClipper(
       usernameCharCount: 6,
-      metaWidthFactor: 0,
+      metaSize: SvgCardMetaSize.small,
       twoLineTitle: false,
     ).getClip(cardSize).getBounds();
     final Rect twoLineBounds = const SvgCardClipper(
       usernameCharCount: 6,
-      metaWidthFactor: 0,
+      metaSize: SvgCardMetaSize.small,
       twoLineTitle: true,
     ).getClip(cardSize).getBounds();
 
     expect(twoLineBounds.bottom, oneLineBounds.bottom);
   });
 
-  test('svg card username cutout follows username length from the bottom', () {
-    final Rect shortNameNotch = svgCardUsernameNotchBoundsForTesting(
-      usernameCharCount: 3,
-    );
-    final Rect longNameNotch = svgCardUsernameNotchBoundsForTesting(
-      usernameCharCount: 5,
-    );
+  test('svg card username cutout uses exact discrete username lengths', () {
+    final Map<int, Rect> expected = <int, Rect>{
+      1: const Rect.fromLTWH(121, 776, 55, 114),
+      2: const Rect.fromLTWH(121, 776, 55, 114),
+      3: const Rect.fromLTWH(121, 694, 55, 196),
+      4: const Rect.fromLTWH(121, 634, 55, 256),
+      5: const Rect.fromLTWH(121, 572, 55, 318),
+      6: const Rect.fromLTWH(121, 500, 55, 390),
+      12: const Rect.fromLTWH(121, 500, 55, 390),
+    };
 
-    expect(shortNameNotch.top, closeTo(690, 1));
-    expect(shortNameNotch.bottom, closeTo(879, 1));
-    expect(longNameNotch.top, closeTo(576, 1));
-    expect(longNameNotch.bottom, closeTo(900, 1));
-    expect(longNameNotch.top, lessThan(shortNameNotch.top));
-    expect(longNameNotch.height, greaterThan(shortNameNotch.height));
+    for (final entry in expected.entries) {
+      final Rect notch = svgCardUsernameNotchBoundsForTesting(
+        usernameCharCount: entry.key,
+      );
+      expect(notch.left, closeTo(entry.value.left, 0.1));
+      expect(notch.top, closeTo(entry.value.top, 0.1));
+      expect(notch.width, closeTo(entry.value.width, 0.1));
+      expect(notch.height, closeTo(entry.value.height, 0.1));
+    }
   });
 
-  test('svg card metadata cutout grows for longer metadata text', () {
+  test('svg card metadata cutout uses exact discrete sizes', () {
     final Rect shortMetaNotch = svgCardMetaNotchBoundsForTesting(
-      metaWidthFactor: 0,
+      metaSize: SvgCardMetaSize.small,
     );
-    final Rect longMetaNotch = svgCardMetaNotchBoundsForTesting(
-      metaWidthFactor: 1,
+    final Rect mediumMetaNotch = svgCardMetaNotchBoundsForTesting(
+      metaSize: SvgCardMetaSize.medium,
+    );
+    final Rect largeMetaNotch = svgCardMetaNotchBoundsForTesting(
+      metaSize: SvgCardMetaSize.large,
     );
 
-    expect(shortMetaNotch.left, closeTo(1222, 1));
-    expect(shortMetaNotch.width, closeTo(410, 1));
-    expect(longMetaNotch.left, closeTo(908, 1));
-    expect(longMetaNotch.width, closeTo(723, 1));
-    expect(longMetaNotch.left, lessThan(shortMetaNotch.left));
-    expect(longMetaNotch.width, greaterThan(shortMetaNotch.width));
+    expect(shortMetaNotch.left, closeTo(1203, 0.1));
+    expect(shortMetaNotch.top, closeTo(136, 0.1));
+    expect(shortMetaNotch.width, closeTo(441, 0.1));
+    expect(shortMetaNotch.height, closeTo(55, 0.1));
+
+    expect(mediumMetaNotch.left, closeTo(1064, 0.1));
+    expect(mediumMetaNotch.top, closeTo(136, 0.1));
+    expect(mediumMetaNotch.width, closeTo(580, 0.1));
+    expect(mediumMetaNotch.height, closeTo(55, 0.1));
+
+    expect(largeMetaNotch.left, closeTo(978, 0.1));
+    expect(largeMetaNotch.top, closeTo(136, 0.1));
+    expect(largeMetaNotch.width, closeTo(666, 0.1));
+    expect(largeMetaNotch.height, closeTo(55, 0.1));
   });
 
   test('wallpaper and overlay settings persist locally', () async {

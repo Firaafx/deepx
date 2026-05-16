@@ -57,6 +57,12 @@ enum _ComposerImagePane {
   card,
 }
 
+enum _DetailOwnerAction {
+  update,
+  visibility,
+  delete,
+}
+
 String _routeIdFromShareOrUuid({
   required String shareId,
   required String uuid,
@@ -553,24 +559,24 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
   @override
   Widget build(BuildContext context) {
     final int usernameChars = widget.verticalUsername.trim().isEmpty
-        ? 1
+        ? 2
         : widget.verticalUsername
             .trim()
             .replaceAll('@', '')
             .length
-            .clamp(1, 6)
+            .clamp(2, 6)
             .toInt();
     final bool twoLineTitle = _cardTitleNeedsTwoLines(
       context,
       widget.title,
     );
-    final double metaWidthFactor = _cardMetaWidthFactor(
+    final SvgCardMetaSize metaSize = _cardMetaSize(
       context,
       widget.metaText,
     );
     final SvgCardClipper clipper = SvgCardClipper(
       usernameCharCount: usernameChars,
-      metaWidthFactor: metaWidthFactor,
+      metaSize: metaSize,
       twoLineTitle: twoLineTitle,
     );
     final List<SvgCardMenuAction> menuActions = widget.menuItems.map((item) {
@@ -593,6 +599,7 @@ class _GridCardPreviewSurfaceState extends State<_GridCardPreviewSurface> {
           baseColor: const Color(0x00000000),
           title: widget.title,
           metaText: widget.metaText,
+          metaSize: metaSize,
           verticalUsername: widget.verticalUsername,
           priceLabel: widget.priceText,
           showCollectionCount: widget.showCollectionCount,
@@ -891,22 +898,8 @@ bool _cardTitleNeedsTwoLines(BuildContext context, String raw) {
   return painter.computeLineMetrics().length > 1;
 }
 
-double _cardMetaWidthFactor(BuildContext context, String raw) {
-  final String text = raw.trim();
-  if (text.isEmpty) return 0;
-  final TextPainter painter = TextPainter(
-    text: TextSpan(
-      text: text,
-      style: GoogleFonts.inter(
-        fontSize: 9,
-        fontWeight: FontWeight.w400,
-      ),
-    ),
-    maxLines: 1,
-    textDirection: Directionality.of(context),
-  )..layout(maxWidth: 9999);
-  final double measured = painter.width + 14;
-  return ((measured - 70) / 130).clamp(0.0, 1.0).toDouble();
+SvgCardMetaSize _cardMetaSize(BuildContext context, String raw) {
+  return svgCardMetaSizeForText(context, raw);
 }
 
 Color _cardAccentColorFromHex(
@@ -3925,13 +3918,40 @@ class _SharedPresetPreview extends StatelessWidget {
   }
 }
 
-Future<void> _openDetailFullscreenViewer(
+Widget _detailOwnerMenuButton({
+  required bool isPublic,
+  required ValueChanged<_DetailOwnerAction> onSelected,
+}) {
+  return PopupMenuButton<_DetailOwnerAction>(
+    tooltip: 'More',
+    onSelected: onSelected,
+    icon: const Icon(Icons.more_vert_rounded, size: 20),
+    itemBuilder: (context) => <PopupMenuEntry<_DetailOwnerAction>>[
+      const PopupMenuItem<_DetailOwnerAction>(
+        value: _DetailOwnerAction.update,
+        child: Text('Update'),
+      ),
+      PopupMenuItem<_DetailOwnerAction>(
+        value: _DetailOwnerAction.visibility,
+        child: Text(isPublic ? 'Make Private' : 'Make Public'),
+      ),
+      const PopupMenuItem<_DetailOwnerAction>(
+        value: _DetailOwnerAction.delete,
+        child: Text('Delete'),
+      ),
+    ],
+  );
+}
+
+Future<_DetailOwnerAction?> _openDetailFullscreenViewer(
   BuildContext context, {
   required String heroTag,
   required Map<String, dynamic> payload,
+  required bool showOwnerMenu,
+  required bool isPublic,
 }) async {
-  await Navigator.of(context).push<void>(
-    PageRouteBuilder<void>(
+  return Navigator.of(context).push<_DetailOwnerAction>(
+    PageRouteBuilder<_DetailOwnerAction>(
       settings: const RouteSettings(name: '/post/detail/fullscreen'),
       opaque: true,
       transitionDuration: const Duration(milliseconds: 320 + 40),
@@ -3940,6 +3960,8 @@ Future<void> _openDetailFullscreenViewer(
         return _DetailFullscreenViewerPage(
           heroTag: heroTag,
           payload: payload,
+          showOwnerMenu: showOwnerMenu,
+          isPublic: isPublic,
         );
       },
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -3953,10 +3975,14 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
   const _DetailFullscreenViewerPage({
     required this.heroTag,
     required this.payload,
+    required this.showOwnerMenu,
+    required this.isPublic,
   });
 
   final String heroTag;
   final Map<String, dynamic> payload;
+  final bool showOwnerMenu;
+  final bool isPublic;
 
   @override
   Widget build(BuildContext context) {
@@ -3999,6 +4025,15 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                   icon: const Icon(Icons.fullscreen_exit),
                 ),
               ),
+              if (showOwnerMenu)
+                Positioned(
+                  top: 18,
+                  right: 14,
+                  child: _detailOwnerMenuButton(
+                    isPublic: isPublic,
+                    onSelected: (action) => Navigator.pop(context, action),
+                  ),
+                ),
             ],
           ),
         ),
@@ -4083,11 +4118,127 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   String get _detailHeroTag => 'post-detail-hero-${_post.preset.id}';
 
   Future<void> _openFullscreenViewer() async {
-    await _openDetailFullscreenViewer(
+    final _DetailOwnerAction? action = await _openDetailFullscreenViewer(
       context,
       heroTag: _detailHeroTag,
       payload: _post.preset.payload,
+      showOwnerMenu: _mine,
+      isPublic: _post.preset.isPublic,
     );
+    if (!mounted || action == null) return;
+    await _handleDetailOwnerAction(action);
+  }
+
+  Future<void> _refreshPost() async {
+    try {
+      final FeedPost? fetched = await QueryGuard.run(
+        () => _repository.fetchFeedPostById(_post.preset.id),
+      );
+      if (!mounted || fetched == null) return;
+      setState(() => _post = fetched);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to refresh post: $e')),
+      );
+    }
+  }
+
+  Future<void> _openDetailPostEditor() async {
+    final bool? updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        settings: const RouteSettings(name: '/post/editor/detail-update'),
+        builder: (_) => _PostCardComposerPage.single(
+          name: _post.preset.name,
+          payload: _post.preset.payload,
+          existingPreset: _post.preset,
+          initialIsPaid: _post.preset.isPaid,
+          initialPriceCents: _post.preset.priceCents,
+          initialAccentColorHex: _post.preset.accentColorHex,
+          editTarget: _ComposerEditTarget.card,
+          startBlankCard: false,
+        ),
+      ),
+    );
+    if (updated == true) {
+      await _refreshPost();
+    }
+  }
+
+  Future<void> _toggleDetailVisibility() async {
+    try {
+      await _repository.setPresetVisibility(
+        presetId: _post.preset.id,
+        isPublic: !_post.preset.isPublic,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _post.preset.isPublic
+                ? 'Post set to private.'
+                : 'Post set to public.',
+          ),
+        ),
+      );
+      await _refreshPost();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update visibility: $e')),
+      );
+    }
+  }
+
+  Future<void> _deleteDetailPost() async {
+    final bool shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete post?'),
+            content: const Text('This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldDelete) return;
+    try {
+      await _repository.deletePresetPost(_post.preset.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post deleted.')),
+      );
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e')),
+      );
+    }
+  }
+
+  Future<void> _handleDetailOwnerAction(_DetailOwnerAction action) async {
+    if (!_mine) return;
+    switch (action) {
+      case _DetailOwnerAction.update:
+        await _openDetailPostEditor();
+        break;
+      case _DetailOwnerAction.visibility:
+        await _toggleDetailVisibility();
+        break;
+      case _DetailOwnerAction.delete:
+        await _deleteDetailPost();
+        break;
+    }
   }
 
   Future<void> _loadComments() async {
@@ -4788,7 +4939,9 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
               Positioned.fill(
                 child: _SharedPresetPreview(
                   payload: previewPayload,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: const BorderRadius.only(
+                    bottomRight: Radius.circular(16),
+                  ),
                   fit: BoxFit.contain,
                 ),
               ),
@@ -4800,6 +4953,17 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
                 ),
               ),
+              if (_mine)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: _detailOwnerMenuButton(
+                    isPublic: _post.preset.isPublic,
+                    onSelected: (action) {
+                      unawaited(_handleDetailOwnerAction(action));
+                    },
+                  ),
+                ),
               Positioned(
                 right: 8,
                 bottom: 8,
@@ -6101,6 +6265,13 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
   CollectionSummary? get _activeSummary =>
       _detail?.summary ?? widget.initialSummary;
 
+  bool get _mine {
+    final summary = _activeSummary;
+    return summary != null &&
+        _repository.currentUser != null &&
+        _repository.currentUser!.id == summary.userId;
+  }
+
   String _displayFilterName(String filter) {
     if (filter == 'FromUser') {
       final username = _activeSummary?.author?.username?.trim();
@@ -6353,6 +6524,127 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     );
   }
 
+  Future<void> _openDetailCollectionEditor() async {
+    final detail = _detail;
+    final summary = _activeSummary;
+    if (detail == null || summary == null) return;
+    final bool? updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        settings:
+            const RouteSettings(name: '/post/editor/collection-detail-update'),
+        builder: (_) => _PostCardComposerPage.collection(
+          collectionId: summary.id,
+          collectionName: summary.name,
+          collectionDescription: summary.description,
+          tags: summary.tags,
+          mentionUserIds: summary.mentionUserIds,
+          published: summary.published,
+          initialIsPaid: summary.isPaid,
+          initialPriceCents: summary.priceCents,
+          initialAccentColorHex: summary.accentColorHex,
+          initialCardPayload: summary.thumbnailPayload,
+          initialLinkedItemPosition:
+              linkedItemPositionFromPayload(summary.thumbnailPayload),
+          editTarget: _ComposerEditTarget.card,
+          startBlankCard: false,
+          items: detail.items
+              .map(
+                (item) => CollectionDraftItem(
+                  name: item.name,
+                  snapshot: item.snapshot,
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+    if (updated == true) {
+      await _load();
+    }
+  }
+
+  Future<void> _toggleDetailCollectionVisibility() async {
+    final summary = _activeSummary;
+    if (summary == null) return;
+    try {
+      await _repository.setCollectionPublished(
+        collectionId: summary.id,
+        published: !summary.published,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            summary.published
+                ? 'Collection set to private.'
+                : 'Collection set to public.',
+          ),
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update collection: $e')),
+      );
+    }
+  }
+
+  Future<void> _deleteDetailCollection() async {
+    final summary = _activeSummary;
+    if (summary == null) return;
+    final bool shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete collection?'),
+            content: const Text('This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!shouldDelete) return;
+    try {
+      await _repository.deleteCollection(summary.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Collection deleted.')),
+      );
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete failed: $e')),
+      );
+    }
+  }
+
+  Future<void> _handleDetailCollectionOwnerAction(
+    _DetailOwnerAction action,
+  ) async {
+    if (!_mine) return;
+    switch (action) {
+      case _DetailOwnerAction.update:
+        await _openDetailCollectionEditor();
+        break;
+      case _DetailOwnerAction.visibility:
+        await _toggleDetailCollectionVisibility();
+        break;
+      case _DetailOwnerAction.delete:
+        await _deleteDetailCollection();
+        break;
+    }
+  }
+
   String _collectionHeroTag(int index) =>
       'collection-detail-hero-${widget.collectionId}-$index';
 
@@ -6360,11 +6652,16 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     CollectionItemSnapshot item,
     int index,
   ) async {
-    await _openDetailFullscreenViewer(
+    final summary = _activeSummary;
+    final _DetailOwnerAction? action = await _openDetailFullscreenViewer(
       context,
       heroTag: _collectionHeroTag(index),
       payload: item.snapshot,
+      showOwnerMenu: _mine,
+      isPublic: summary?.published ?? true,
     );
+    if (!mounted || action == null) return;
+    await _handleDetailCollectionOwnerAction(action);
   }
 
   Widget _buildCard(
@@ -6380,7 +6677,9 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
         ),
         _SharedPresetPreview(
           payload: item.snapshot,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: const BorderRadius.only(
+            bottomRight: Radius.circular(16),
+          ),
           fit: BoxFit.contain,
         ),
       ],
@@ -6796,6 +7095,17 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                 icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
               ),
             ),
+            if (_mine)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: _detailOwnerMenuButton(
+                  isPublic: summary.published,
+                  onSelected: (action) {
+                    unawaited(_handleDetailCollectionOwnerAction(action));
+                  },
+                ),
+              ),
             Positioned(
               right: 8,
               bottom: 8,

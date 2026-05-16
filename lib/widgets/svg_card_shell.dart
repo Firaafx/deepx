@@ -1,4 +1,4 @@
-import 'dart:ui' show ImageFilter, lerpDouble;
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -12,30 +12,333 @@ const Color _kInnerColor = Color(0xFF151515);
 const Color _kStrokeColor = Color(0xFFCACACA);
 const Color _kMetaColor = Color(0xFFB4B4B4);
 
+enum SvgCardMetaSize { small, medium, large }
+
+class _UsernameNotchVariant {
+  const _UsernameNotchVariant({
+    required this.placeholderTop,
+    required this.placeholderHeight,
+    required this.sideTop,
+  });
+
+  final double placeholderTop;
+  final double placeholderHeight;
+  final double sideTop;
+
+  double get sideBottom => 859.257;
+}
+
+class _MetaNotchVariant {
+  const _MetaNotchVariant({
+    required this.placeholderLeft,
+    required this.placeholderWidth,
+    required this.shelfStart,
+    required this.shelfControl1,
+    required this.shelfControl2,
+    required this.shelfEnd,
+    required this.tabStart,
+    required this.tabControl1,
+    required this.tabControl2,
+    required this.tabEnd,
+  });
+
+  final double placeholderLeft;
+  final double placeholderWidth;
+  final double shelfStart;
+  final double shelfControl1;
+  final double shelfControl2;
+  final double shelfEnd;
+  final double tabStart;
+  final double tabControl1;
+  final double tabControl2;
+  final double tabEnd;
+}
+
+_UsernameNotchVariant _usernameVariantForCount(int usernameCharCount) {
+  final int count = usernameCharCount.clamp(2, 6).toInt();
+  switch (count) {
+    case 2:
+      return const _UsernameNotchVariant(
+        placeholderTop: 776,
+        placeholderHeight: 114,
+        sideTop: 812.423,
+      );
+    case 3:
+      return const _UsernameNotchVariant(
+        placeholderTop: 694,
+        placeholderHeight: 196,
+        sideTop: 735.966,
+      );
+    case 4:
+      return const _UsernameNotchVariant(
+        placeholderTop: 634,
+        placeholderHeight: 256,
+        sideTop: 672.675,
+      );
+    case 5:
+      return const _UsernameNotchVariant(
+        placeholderTop: 572,
+        placeholderHeight: 318,
+        sideTop: 611.169,
+      );
+    case 6:
+    default:
+      return const _UsernameNotchVariant(
+        placeholderTop: 500,
+        placeholderHeight: 390,
+        sideTop: 520.597,
+      );
+  }
+}
+
+_MetaNotchVariant _metaVariantForSize(SvgCardMetaSize size) {
+  switch (size) {
+    case SvgCardMetaSize.small:
+      return const _MetaNotchVariant(
+        placeholderLeft: 1203,
+        placeholderWidth: 441,
+        shelfStart: 1110.75,
+        shelfControl1: 1121.59,
+        shelfControl2: 1132.12,
+        shelfEnd: 1140.65,
+        tabStart: 1225,
+        tabControl1: 1234.06,
+        tabControl2: 1245.24,
+        tabEnd: 1256.75,
+      );
+    case SvgCardMetaSize.medium:
+      return const _MetaNotchVariant(
+        placeholderLeft: 1064,
+        placeholderWidth: 580,
+        shelfStart: 974.254,
+        shelfControl1: 985.093,
+        shelfControl2: 995.62,
+        shelfEnd: 1004.15,
+        tabStart: 1088.5,
+        tabControl1: 1097.56,
+        tabControl2: 1108.74,
+        tabEnd: 1120.25,
+      );
+    case SvgCardMetaSize.large:
+      return const _MetaNotchVariant(
+        placeholderLeft: 978,
+        placeholderWidth: 666,
+        shelfStart: 902.253,
+        shelfControl1: 913.092,
+        shelfControl2: 923.619,
+        shelfEnd: 932.153,
+        tabStart: 1016.5,
+        tabControl1: 1025.56,
+        tabControl2: 1036.74,
+        tabEnd: 1048.25,
+      );
+  }
+}
+
+SvgCardMetaSize svgCardMetaSizeForText(BuildContext context, String raw) {
+  final String text = raw.trim();
+  if (text.isEmpty) return SvgCardMetaSize.small;
+  final TextPainter painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: GoogleFonts.inter(
+        color: _kMetaColor,
+        fontWeight: FontWeight.w400,
+        fontSize: 55,
+      ),
+    ),
+    maxLines: 1,
+    textDirection: Directionality.of(context),
+  )..layout(maxWidth: 9999);
+  final double measuredBase = painter.width + 52;
+  if (measuredBase <= 441) return SvgCardMetaSize.small;
+  if (measuredBase <= 580) return SvgCardMetaSize.medium;
+  return SvgCardMetaSize.large;
+}
+
+void _appendLeftUsernameSegment(
+  Path path,
+  double sx,
+  double sy,
+  _UsernameNotchVariant variant,
+) {
+  if (variant.placeholderHeight == 390) {
+    path
+      ..lineTo(183.5 * sx, 520.597 * sy)
+      ..cubicTo(
+        183.5 * sx,
+        507.93 * sy,
+        178.832 * sx,
+        495.707 * sy,
+        170.388 * sx,
+        486.266 * sy,
+      )
+      ..lineTo(134.058 * sx, 445.641 * sy)
+      ..cubicTo(
+        130.479 * sx,
+        441.639 * sy,
+        128.5 * sx,
+        436.459 * sy,
+        128.5 * sx,
+        431.091 * sy,
+      )
+      ..cubicTo(
+        128.5 * sx,
+        425.067 * sy,
+        130.989 * sx,
+        419.311 * sy,
+        135.379 * sx,
+        415.186 * sy,
+      )
+      ..lineTo(148.27 * sx, 403.07 * sy)
+      ..cubicTo(
+        158.626 * sx,
+        393.337 * sy,
+        164.5 * sx,
+        379.756 * sy,
+        164.5 * sx,
+        365.543 * sy,
+      )
+      ..lineTo(164.5 * sx, 258.541 * sy);
+    return;
+  }
+
+  if (variant.placeholderHeight == 318) {
+    path
+      ..lineTo(183.5 * sx, 611.169 * sy)
+      ..cubicTo(
+        183.5 * sx,
+        599.08 * sy,
+        179.246 * sx,
+        587.375 * sy,
+        171.484 * sx,
+        578.106 * sy,
+      )
+      ..lineTo(137.454 * sx, 537.465 * sy)
+      ..cubicTo(
+        130.145 * sx,
+        528.736 * sy,
+        126.139 * sx,
+        517.713 * sy,
+        126.139 * sx,
+        506.328 * sy,
+      )
+      ..lineTo(126.139 * sx, 444.136 * sy);
+  } else if (variant.placeholderHeight == 256) {
+    path
+      ..lineTo(183.5 * sx, 672.675 * sy)
+      ..cubicTo(
+        183.5 * sx,
+        659.038 * sy,
+        178.091 * sx,
+        645.958 * sy,
+        168.46 * sx,
+        636.303 * sy,
+      )
+      ..lineTo(140.303 * sx, 608.078 * sy)
+      ..cubicTo(
+        131.233 * sx,
+        598.986 * sy,
+        126.139 * sx,
+        586.667 * sy,
+        126.139 * sx,
+        573.825 * sy,
+      )
+      ..lineTo(126.139 * sx, 444.136 * sy);
+  } else if (variant.placeholderHeight == 196) {
+    path
+      ..lineTo(183.5 * sx, 735.966 * sy)
+      ..cubicTo(
+        183.5 * sx,
+        723.071 * sy,
+        178.662 * sx,
+        710.645 * sy,
+        169.942 * sx,
+        701.144 * sy,
+      )
+      ..lineTo(138.906 * sx, 667.328 * sy)
+      ..cubicTo(
+        130.695 * sx,
+        658.38 * sy,
+        126.139 * sx,
+        646.678 * sy,
+        126.139 * sx,
+        634.534 * sy,
+      )
+      ..lineTo(126.139 * sx, 444.136 * sy);
+  } else {
+    path
+      ..lineTo(183.5 * sx, 812.423 * sy)
+      ..cubicTo(
+        183.5 * sx,
+        798.94 * sy,
+        178.211 * sx,
+        785.994 * sy,
+        168.771 * sx,
+        776.367 * sy,
+      )
+      ..lineTo(140.009 * sx, 747.033 * sy)
+      ..cubicTo(
+        131.119 * sx,
+        737.966 * sy,
+        126.139 * sx,
+        725.775 * sy,
+        126.139 * sx,
+        713.077 * sy,
+      )
+      ..lineTo(126.139 * sx, 444.136 * sy);
+  }
+
+  path
+    ..cubicTo(
+      126.139 * sx,
+      430.462 * sy,
+      131.911 * sx,
+      417.423 * sy,
+      142.035 * sx,
+      408.23 * sy,
+    )
+    ..lineTo(147.619 * sx, 403.16 * sy)
+    ..cubicTo(
+      158.369 * sx,
+      393.398 * sy,
+      164.5 * sx,
+      379.552 * sy,
+      164.5 * sx,
+      365.032 * sy,
+    )
+    ..lineTo(164.5 * sx, 258.541 * sy);
+}
+
 Rect svgCardUsernameNotchBoundsForTesting({
   required int usernameCharCount,
   Size size = const Size(_svgCardBaseWidth, _svgCardBaseHeight),
 }) {
   final double sx = size.width / _svgCardBaseWidth;
   final double sy = size.height / _svgCardBaseHeight;
-  final int usernameCount = usernameCharCount.clamp(1, 6);
-  final double top =
-      (861 - (usernameCount * 57)).clamp(500.0, 804.0).toDouble();
-  final double bottom =
-      (847.5 + (usernameCount * 10.5)).clamp(858.0, 904.0).toDouble();
-  return Rect.fromLTRB(120 * sx, top * sy, 175 * sx, bottom * sy);
+  final _UsernameNotchVariant variant =
+      _usernameVariantForCount(usernameCharCount);
+  return Rect.fromLTWH(
+    121 * sx,
+    variant.placeholderTop * sy,
+    55 * sx,
+    variant.placeholderHeight * sy,
+  );
 }
 
 Rect svgCardMetaNotchBoundsForTesting({
-  required double metaWidthFactor,
+  required SvgCardMetaSize metaSize,
   Size size = const Size(_svgCardBaseWidth, _svgCardBaseHeight),
 }) {
   final double sx = size.width / _svgCardBaseWidth;
   final double sy = size.height / _svgCardBaseHeight;
-  final double metaFactor = metaWidthFactor.clamp(0.0, 1.0).toDouble();
-  final double left = 1222 + lerpDouble(0, -314, metaFactor)!;
-  final double width = 410 + lerpDouble(0, 313, metaFactor)!;
-  return Rect.fromLTWH(left * sx, 134 * sy, width * sx, 55 * sy);
+  final _MetaNotchVariant variant = _metaVariantForSize(metaSize);
+  return Rect.fromLTWH(
+    variant.placeholderLeft * sx,
+    136 * sy,
+    variant.placeholderWidth * sx,
+    55 * sy,
+  );
 }
 
 Path _buildOuterCardPath(Size size, {required bool twoLineTitle}) {
@@ -177,12 +480,12 @@ class SvgCardMenuAction {
 class SvgCardClipper extends CustomClipper<Path> {
   const SvgCardClipper({
     this.usernameCharCount = 6,
-    this.metaWidthFactor = 0,
+    this.metaSize = SvgCardMetaSize.small,
     this.twoLineTitle = false,
   });
 
   final int usernameCharCount;
-  final double metaWidthFactor;
+  final SvgCardMetaSize metaSize;
   final bool twoLineTitle;
 
   @override
@@ -190,37 +493,30 @@ class SvgCardClipper extends CustomClipper<Path> {
     final double sx = size.width / _svgCardBaseWidth;
     final double sy = size.height / _svgCardBaseHeight;
 
-    final int usernameCount = usernameCharCount.clamp(1, 6);
-    final double metaFactor = metaWidthFactor.clamp(0.0, 1.0).toDouble();
-
-    final double topShelfStart = 1113.25 + lerpDouble(0, -302, metaFactor)!;
-    final double topTabStart = 1227.5 + lerpDouble(0, -319.5, metaFactor)!;
-
-    final double leftTailBottom =
-        (847.5 + (usernameCount * 10.5)).clamp(858.0, 904.0).toDouble();
-    final double leftTailTop =
-        (861 - (usernameCount * 57)).clamp(500.0, 804.0).toDouble();
+    final _UsernameNotchVariant usernameVariant =
+        _usernameVariantForCount(usernameCharCount);
+    final _MetaNotchVariant metaVariant = _metaVariantForSize(metaSize);
 
     const double titleSpaceBottom = 1037.5;
 
     final Path p = Path()
       ..moveTo(447.921 * sx, 127.698 * sy)
-      ..lineTo(topShelfStart * sx, 127.698 * sy)
+      ..lineTo(metaVariant.shelfStart * sx, 127.698 * sy)
       ..cubicTo(
-        (topShelfStart + 10.84) * sx,
+        metaVariant.shelfControl1 * sx,
         127.698 * sy,
-        (topShelfStart + 21.37) * sx,
+        metaVariant.shelfControl2 * sx,
         131.329 * sy,
-        (topShelfStart + 29.9) * sx,
+        metaVariant.shelfEnd * sx,
         138.011 * sy,
       )
-      ..lineTo(topTabStart * sx, 204.051 * sy)
+      ..lineTo(metaVariant.tabStart * sx, 204.051 * sy)
       ..cubicTo(
-        (topTabStart + 9.06) * sx,
+        metaVariant.tabControl1 * sx,
         211.147 * sy,
-        (topTabStart + 20.24) * sx,
+        metaVariant.tabControl2 * sx,
         215.002 * sy,
-        (topTabStart + 31.75) * sx,
+        metaVariant.tabEnd * sx,
         215.002 * sy,
       )
       ..lineTo(1596.33 * sx, 215.002 * sy)
@@ -313,52 +609,17 @@ class SvgCardClipper extends CustomClipper<Path> {
         268.265 * sx,
         (titleSpaceBottom - 115.6) * sy,
       )
-      ..lineTo(191.303 * sx, leftTailBottom * sy)
+      ..lineTo(191.303 * sx, usernameVariant.sideBottom * sy)
       ..cubicTo(
         186.409 * sx,
-        (leftTailBottom - 3.47) * sy,
+        855.789 * sy,
         183.5 * sx,
-        (leftTailBottom - 9.09) * sy,
+        850.162 * sy,
         183.5 * sx,
-        (leftTailBottom - 15.09) * sy,
-      )
-      ..lineTo(183.5 * sx, leftTailTop * sy)
-      ..lineTo(190.514 * sx, 517.413 * sy)
-      ..cubicTo(
-        190.835 * sx,
-        504.267 * sy,
-        186.115 * sx,
-        491.495 * sy,
-        177.322 * sx,
-        481.717 * sy,
-      )
-      ..lineTo(130.314 * sx, 429.443 * sy)
-      ..cubicTo(
-        129.146 * sx,
-        428.144 * sy,
-        128.5 * sx,
-        426.458 * sy,
-        128.5 * sx,
-        424.711 * sy,
-      )
-      ..cubicTo(
-        128.5 * sx,
-        422.759 * sy,
-        129.307 * sx,
-        420.892 * sy,
-        130.729 * sx,
-        419.555 * sy,
-      )
-      ..lineTo(148.27 * sx, 403.071 * sy)
-      ..cubicTo(
-        158.626 * sx,
-        393.337 * sy,
-        164.5 * sx,
-        379.756 * sy,
-        164.5 * sx,
-        365.543 * sy,
-      )
-      ..lineTo(164.5 * sx, 258.541 * sy)
+        844.164 * sy,
+      );
+    _appendLeftUsernameSegment(p, sx, sy, usernameVariant);
+    p
       ..cubicTo(
         164.5 * sx,
         245.511 * sy,
@@ -402,22 +663,20 @@ class SvgCardClipper extends CustomClipper<Path> {
   @override
   bool shouldReclip(covariant SvgCardClipper oldClipper) {
     return oldClipper.usernameCharCount != usernameCharCount ||
-        oldClipper.metaWidthFactor != metaWidthFactor ||
+        oldClipper.metaSize != metaSize ||
         oldClipper.twoLineTitle != twoLineTitle;
   }
 }
 
 class SvgCardShadowPainter extends CustomPainter {
   const SvgCardShadowPainter({
-    required this.accentColor,
     required this.usernameCharCount,
-    required this.metaWidthFactor,
+    required this.metaSize,
     required this.twoLineTitle,
   });
 
-  final Color accentColor;
   final int usernameCharCount;
-  final double metaWidthFactor;
+  final SvgCardMetaSize metaSize;
   final bool twoLineTitle;
 
   @override
@@ -429,7 +688,7 @@ class SvgCardShadowPainter extends CustomPainter {
     final Path outer = _buildOuterPath(size);
     final Path inner = SvgCardClipper(
       usernameCharCount: usernameCharCount,
-      metaWidthFactor: metaWidthFactor,
+      metaSize: metaSize,
       twoLineTitle: twoLineTitle,
     ).getClip(size);
 
@@ -445,15 +704,6 @@ class SvgCardShadowPainter extends CustomPainter {
 
     final Paint innerFill = Paint()..color = _kInnerColor;
     canvas.drawPath(inner, innerFill);
-
-    final Paint innerStroke = Paint()
-      ..color = _kStrokeColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3 * scale;
-    canvas.drawPath(inner, innerStroke);
-
-    _paintAccentCorners(canvas, size, accentColor, scale);
-    _paintBottomBadge(canvas, size, accentColor, scale);
   }
 
   Path _buildOuterPath(Size size) {
@@ -554,6 +804,49 @@ class SvgCardShadowPainter extends CustomPainter {
         110.645 * sy,
       )
       ..close();
+  }
+
+  @override
+  bool shouldRepaint(covariant SvgCardShadowPainter oldDelegate) {
+    return oldDelegate.usernameCharCount != usernameCharCount ||
+        oldDelegate.metaSize != metaSize ||
+        oldDelegate.twoLineTitle != twoLineTitle;
+  }
+}
+
+class SvgCardForegroundPainter extends CustomPainter {
+  const SvgCardForegroundPainter({
+    required this.accentColor,
+    required this.usernameCharCount,
+    required this.metaSize,
+    required this.twoLineTitle,
+  });
+
+  final Color accentColor;
+  final int usernameCharCount;
+  final SvgCardMetaSize metaSize;
+  final bool twoLineTitle;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double scale = ((size.width / _svgCardBaseWidth) +
+            (size.height / _svgCardBaseHeight)) /
+        2;
+    final double clampedScale = scale.clamp(0.05, 4.0).toDouble();
+    final Path inner = SvgCardClipper(
+      usernameCharCount: usernameCharCount,
+      metaSize: metaSize,
+      twoLineTitle: twoLineTitle,
+    ).getClip(size);
+
+    _paintAccentCorners(canvas, size, accentColor, clampedScale);
+    _paintBottomBadge(canvas, size, accentColor, clampedScale);
+
+    final Paint innerStroke = Paint()
+      ..color = _kStrokeColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3 * clampedScale;
+    canvas.drawPath(inner, innerStroke);
   }
 
   void _paintAccentCorners(
@@ -695,10 +988,10 @@ class SvgCardShadowPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant SvgCardShadowPainter oldDelegate) {
+  bool shouldRepaint(covariant SvgCardForegroundPainter oldDelegate) {
     return oldDelegate.accentColor != accentColor ||
         oldDelegate.usernameCharCount != usernameCharCount ||
-        oldDelegate.metaWidthFactor != metaWidthFactor ||
+        oldDelegate.metaSize != metaSize ||
         oldDelegate.twoLineTitle != twoLineTitle;
   }
 }
@@ -715,6 +1008,7 @@ class SvgCardShell extends StatelessWidget {
     this.accentColor = const Color(0xFFFD4687),
     this.title,
     this.metaText,
+    this.metaSize,
     this.verticalUsername,
     this.priceLabel,
     this.collectionCountLabel,
@@ -737,6 +1031,7 @@ class SvgCardShell extends StatelessWidget {
   final Color accentColor;
   final String? title;
   final String? metaText;
+  final SvgCardMetaSize? metaSize;
   final String? verticalUsername;
   final String? priceLabel;
   final String? collectionCountLabel;
@@ -751,10 +1046,11 @@ class SvgCardShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final String resolvedTitle = (title ?? '').trim();
     final String resolvedMeta = (metaText ?? '').trim();
-    final String resolvedHandle = (verticalUsername ?? '').replaceAll('@', '');
+    final String resolvedHandle =
+        (verticalUsername ?? '').trim().replaceAll('@', '');
     final int usernameChars = resolvedHandle.isEmpty
-        ? 1
-        : resolvedHandle.split('').length.clamp(1, 6).toInt();
+        ? 2
+        : resolvedHandle.split('').length.clamp(2, 6).toInt();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -763,13 +1059,8 @@ class SvgCardShell extends StatelessWidget {
         final double sy = size.height / _svgCardBaseHeight;
         final double scale = ((sx + sy) / 2).clamp(0.05, 4.0).toDouble();
 
-        final double metaWidthBase = _resolveMetaWidthBase(
-          context,
-          resolvedMeta,
-          scale,
-        );
-        final double metaFactor =
-            ((metaWidthBase - 410) / (723 - 410)).clamp(0.0, 1.0).toDouble();
+        final SvgCardMetaSize resolvedMetaSize =
+            metaSize ?? svgCardMetaSizeForText(context, resolvedMeta);
         final bool twoLineTitle = _isTwoLineTitle(
           context,
           resolvedTitle,
@@ -779,7 +1070,7 @@ class SvgCardShell extends StatelessWidget {
 
         final SvgCardClipper innerClipper = SvgCardClipper(
           usernameCharCount: usernameChars,
-          metaWidthFactor: metaFactor,
+          metaSize: resolvedMetaSize,
           twoLineTitle: twoLineTitle,
         );
 
@@ -792,9 +1083,8 @@ class SvgCardShell extends StatelessWidget {
             Positioned.fill(
               child: CustomPaint(
                 painter: SvgCardShadowPainter(
-                  accentColor: accentColor,
                   usernameCharCount: usernameChars,
-                  metaWidthFactor: metaFactor,
+                  metaSize: resolvedMetaSize,
                   twoLineTitle: twoLineTitle,
                 ),
               ),
@@ -826,14 +1116,25 @@ class SvgCardShell extends StatelessWidget {
               ),
             ),
             Positioned.fill(
+              child: CustomPaint(
+                painter: SvgCardForegroundPainter(
+                  accentColor: accentColor,
+                  usernameCharCount: usernameChars,
+                  metaSize: resolvedMetaSize,
+                  twoLineTitle: twoLineTitle,
+                ),
+              ),
+            ),
+            Positioned.fill(
               child: _CardTextOverlay(
                 title: resolvedTitle,
                 metaText: resolvedMeta,
                 verticalUsername: resolvedHandle,
+                usernameCharCount: usernameChars,
                 priceLabel: (priceLabel ?? '').trim(),
                 collectionCountLabel: (collectionCountLabel ?? '').trim(),
                 showCollectionCount: showCollectionCount,
-                metaWidthFactor: metaFactor,
+                metaSize: resolvedMetaSize,
                 twoLineTitle: twoLineTitle,
               ),
             ),
@@ -855,28 +1156,6 @@ class SvgCardShell extends StatelessWidget {
         );
       },
     );
-  }
-
-  double _resolveMetaWidthBase(
-    BuildContext context,
-    String text,
-    double scale,
-  ) {
-    if (text.isEmpty) return 410;
-    final TextPainter painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: GoogleFonts.inter(
-          color: _kMetaColor,
-          fontWeight: FontWeight.w400,
-          fontSize: 55 * scale,
-        ),
-      ),
-      maxLines: 1,
-      textDirection: Directionality.of(context),
-    )..layout(maxWidth: 9999);
-    final double measuredBase = (painter.width / scale) + 52;
-    return measuredBase.clamp(410, 723).toDouble();
   }
 
   bool _isTwoLineTitle(
@@ -909,20 +1188,22 @@ class _CardTextOverlay extends StatelessWidget {
     required this.title,
     required this.metaText,
     required this.verticalUsername,
+    required this.usernameCharCount,
     required this.priceLabel,
     required this.collectionCountLabel,
     required this.showCollectionCount,
-    required this.metaWidthFactor,
+    required this.metaSize,
     required this.twoLineTitle,
   });
 
   final String title;
   final String metaText;
   final String verticalUsername;
+  final int usernameCharCount;
   final String priceLabel;
   final String collectionCountLabel;
   final bool showCollectionCount;
-  final double metaWidthFactor;
+  final SvgCardMetaSize metaSize;
   final bool twoLineTitle;
 
   @override
@@ -934,18 +1215,13 @@ class _CardTextOverlay extends StatelessWidget {
         final double sy = size.height / _svgCardBaseHeight;
         final double scale = ((sx + sy) / 2).clamp(0.05, 4.0).toDouble();
         final double titleShift = twoLineTitle ? _kTwoLineTitleExpansion : 0;
-        final double metaFactor = metaWidthFactor.clamp(0.0, 1.0).toDouble();
-        final double metaLeftBase = 1222 + lerpDouble(0, -314, metaFactor)!;
-        final double metaWidthBase = 410 + lerpDouble(0, 313, metaFactor)!;
+        final _MetaNotchVariant metaVariant = _metaVariantForSize(metaSize);
+        final Rect usernameBounds = svgCardUsernameNotchBoundsForTesting(
+          usernameCharCount: usernameCharCount,
+        );
 
         final List<String> chars =
             verticalUsername.trim().toUpperCase().split('').take(6).toList();
-        final int charCount = chars.isEmpty ? 1 : chars.length;
-        final double usernameBottom =
-            (847.5 + (charCount * 10.5)).clamp(858.0, 904.0).toDouble();
-        final double usernameTop =
-            (861 - (charCount * 57)).clamp(500.0, 804.0).toDouble();
-        final double blueHeight = usernameBottom - usernameTop;
 
         return Stack(
           clipBehavior: Clip.none,
@@ -971,9 +1247,9 @@ class _CardTextOverlay extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: metaLeftBase * sx,
+              left: metaVariant.placeholderLeft * sx,
               top: 148 * sy,
-              width: metaWidthBase * sx,
+              width: metaVariant.placeholderWidth * sx,
               height: 55 * sy,
               child: Align(
                 alignment: Alignment.centerLeft,
@@ -995,16 +1271,16 @@ class _CardTextOverlay extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: 121 * sx,
-              top: usernameTop * sy,
-              width: 55 * sx,
-              height: blueHeight * sy,
+              left: usernameBounds.left * sx,
+              top: usernameBounds.top * sy,
+              width: usernameBounds.width * sx,
+              height: usernameBounds.height * sy,
               child: Align(
                 alignment: Alignment.bottomCenter,
                 child: Text(
                   chars.isEmpty ? '' : chars.join('\n'),
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.gabarito(
+                  style: GoogleFonts.inter(
                     color: Colors.white,
                     fontSize: 55 * scale,
                     fontWeight: FontWeight.w400,
