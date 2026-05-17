@@ -43,24 +43,3 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-
-# =========================
-# Flutter / Dart
-# =========================
-.dart_tool/
-.packages
-.pub/
-build/
-
-# Flutter web
-web/.last_build_id
-
-# Platform folders (ignore if web-only)
-android/
-ios/
-linux/
-macos/
-windows/
-
-# IDE
-.vscode/
