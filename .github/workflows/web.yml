@@ -51,14 +51,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
 
-    # ONLY deploy main branch (prevents test-ui overwriting live site)
-    if: github.ref == 'refs/heads/main'
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Deploy to GitHub Pages
-        id: deployment
         uses: actions/deploy-pages@v4
