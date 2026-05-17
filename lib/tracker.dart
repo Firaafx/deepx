@@ -1,6 +1,5 @@
-// lib/tracker.dart
 import 'package:flutter/material.dart';
-import 'package:web/web.dart' as web;
+import 'dart:html' as html;
 import 'dart:ui_web' as ui_web;
 
 class Tracker extends StatefulWidget {
@@ -23,16 +22,18 @@ class _TrackerState extends State<Tracker> {
   @override
   void initState() {
     super.initState();
-    // Unique ID for the platform view
+
     viewID = 'cyber-tracker-${DateTime.now().millisecondsSinceEpoch}';
 
     ui_web.platformViewRegistry.registerViewFactory(viewID, (int viewId) {
-      final web.HTMLIFrameElement iframe = web.HTMLIFrameElement();
+      final html.IFrameElement iframe = html.IFrameElement();
+
       iframe.width = '100%';
       iframe.height = '100%';
       iframe.src = 'tracker.html';
       iframe.style.border = 'none';
-      iframe.allow = 'camera *; microphone *; fullscreen *';
+      iframe.allow = 'camera; microphone; fullscreen';
+
       return iframe;
     });
   }
