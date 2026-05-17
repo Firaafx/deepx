@@ -1,7 +1,6 @@
-// lib/tracker.dart
 import 'package:flutter/material.dart';
 import 'dart:html' as html;
-import 'dart:ui' as ui;
+import 'dart:ui_web' as ui;
 
 class Tracker extends StatefulWidget {
   const Tracker({
@@ -26,7 +25,7 @@ class _TrackerState extends State<Tracker> {
 
     viewID = 'cyber-tracker-${DateTime.now().millisecondsSinceEpoch}';
 
-    // ignore: undefined_prefixed_name
+    // Register iframe view for Flutter Web
     ui.platformViewRegistry.registerViewFactory(viewID, (int viewId) {
       final iframe = html.IFrameElement()
         ..width = '100%'
