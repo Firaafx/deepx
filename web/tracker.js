@@ -128,7 +128,7 @@ let handTransX = 0.001;
 let handSlowY = 1.0;
 let handFastY = 10.0;
 let handTransY = 0.001;
-let uiVisible = true;
+let uiVisible = false;
 let realMouseResumeTimer = null;
 const parentPointerTarget = {
     __deepxParentPointerTarget: true,
@@ -511,6 +511,7 @@ async function init() {
         const fsCheckbox = isClient ? document.getElementById('full-screen-client') : document.getElementById('full-screen-host');
         if (fsCheckbox) fsCheckbox.checked = isFull;
     });
+    setTrackerUiVisible(uiVisible);
 }
 function connectToHost(remotePeerId) {
     conn = peer.connect(remotePeerId);

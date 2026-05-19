@@ -7,6 +7,13 @@
         html, body { width: 100%; height: 100%; }
         body { margin: 0; background: rgba(0,0,0,0.4); overflow: hidden; font-family: 'Poppins', sans-serif; color: #e0e0e0; transition: background 160ms ease; }
         body.tracker-ui-hidden { background: transparent; }
+        body.tracker-ui-hidden #tracker-panel,
+        body.tracker-ui-hidden #ui-video-box,
+        body.tracker-ui-hidden #client-panel,
+        body.tracker-ui-hidden #toggle-btns,
+        body.tracker-ui-hidden #ui-text-canvas,
+        body.tracker-ui-hidden #timer-overlay,
+        body.tracker-ui-hidden #cal-dot { display: none; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; }
         /* --- TRACKER PANEL (LEFT) --- */
         #tracker-panel {
@@ -83,7 +90,7 @@
         }
     </style>
 </head>
-<body>
+<body class="tracker-ui-hidden">
     <div id="canvas-container"></div>
     <canvas id="ui-text-canvas"></canvas>
     <div id="timer-overlay">

@@ -18,7 +18,7 @@ class TrackerOverlay extends StatefulWidget {
 }
 
 class _TrackerOverlayState extends State<TrackerOverlay> {
-  bool _trackerMounted = false;
+  bool _trackerMounted = isTrackerSupported;
   bool _trackerUiVisible = false;
   StreamSubscription<bool>? _visibilitySub;
 
@@ -30,6 +30,19 @@ class _TrackerOverlayState extends State<TrackerOverlay> {
       if (!mounted) return;
       setState(() => _trackerUiVisible = visible);
     });
+    if (isTrackerSupported) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _hideInitialTrackerUi();
+        Future<void>.delayed(
+          const Duration(milliseconds: 500),
+          _hideInitialTrackerUi,
+        );
+        Future<void>.delayed(
+          const Duration(milliseconds: 1400),
+          _hideInitialTrackerUi,
+        );
+      });
+    }
   }
 
   @override
@@ -64,6 +77,11 @@ class _TrackerOverlayState extends State<TrackerOverlay> {
     }
   }
 
+  void _hideInitialTrackerUi() {
+    if (!mounted || _trackerUiVisible) return;
+    hideTrackerUi();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -83,15 +101,17 @@ class _TrackerOverlayState extends State<TrackerOverlay> {
                 color: Colors.black.withValues(alpha: 0.46),
                 shape: const CircleBorder(),
                 clipBehavior: Clip.antiAlias,
-                child: IconButton(
-                  tooltip:
-                      _trackerUiVisible ? 'Hide tracker UI' : 'Show tracker',
-                  onPressed: _toggleTracker,
-                  icon: Icon(
-                    _trackerUiVisible
-                        ? Icons.visibility_off_outlined
-                        : Icons.center_focus_strong,
-                    color: Colors.white,
+                child: Semantics(
+                  button: true,
+                  label: _trackerUiVisible ? 'Hide tracker UI' : 'Show tracker',
+                  child: IconButton(
+                    onPressed: _toggleTracker,
+                    icon: Icon(
+                      _trackerUiVisible
+                          ? Icons.visibility_off_outlined
+                          : Icons.center_focus_strong,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
