@@ -2,6 +2,8 @@
   const pointerId = 97231;
   let trackerUiVisible = true;
   let lastHoverTarget = null;
+  let pendingRealMouse = null;
+  let realMouseForwardScheduled = false;
 
   function trackerFrame() {
     return document.getElementById('deepx-tracker-frame');
@@ -150,13 +152,24 @@
     if (!event.isTrusted || trackerUiVisible) return;
     const frame = trackerFrame();
     if (!frame || !frame.contentWindow) return;
-    frame.contentWindow.postMessage({
+    pendingRealMouse = {
       type: 'deepx-parent-real-mouse',
       action,
       x: event.clientX,
       y: event.clientY,
       deltaY: event.deltaY || 0
-    }, '*');
+    };
+    if (realMouseForwardScheduled) return;
+    realMouseForwardScheduled = true;
+    requestAnimationFrame(() => {
+      realMouseForwardScheduled = false;
+      const next = pendingRealMouse;
+      pendingRealMouse = null;
+      if (!next) return;
+      const nextFrame = trackerFrame();
+      if (!nextFrame || !nextFrame.contentWindow) return;
+      nextFrame.contentWindow.postMessage(next, '*');
+    });
   }
 
   window.addEventListener('message', (event) => {

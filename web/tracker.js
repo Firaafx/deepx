@@ -361,7 +361,7 @@ async function init() {
                                 for (let pt of data.drawLm) {
                                     drawLmObj[pt.i] = {x: pt.x, y: pt.y, z: pt.z};
                                 }
-                                drawFaceDots(drawLmObj);
+                                if (uiVisible) drawFaceDots(drawLmObj);
                                 if (!data.partial && data.drawLm.length >= FILTERED_INDICES.length) {
                                     let lmArray = [];
                                     for (let pt of data.drawLm) {
@@ -410,7 +410,7 @@ async function init() {
                                 for (let pt of data.drawLm) {
                                     lmArray[pt.i] = {x: pt.x, y: pt.y, z: pt.z};
                                 }
-                                drawHandDots(lmArray);
+                                if (uiVisible) drawHandDots(lmArray);
                                 if (!data.partial && data.drawLm.length === 21) {
                                     processHand(lmArray);
                                 }
@@ -995,13 +995,15 @@ function setupOnResults() {
             return;
         } else {
             if (activeTracker !== 'face') return;
-            oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
+            if (uiVisible) {
+                oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
+            }
             if (!document.getElementById('tracking-toggle').checked) { cursor.style.display = 'none'; return; }
             cursor.style.display = (!isPaused && document.getElementById('show-cursor').checked) ? 'block' : 'none';
             if (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) {
                 faceLm = results.multiFaceLandmarks[0];
                 processFace(faceLm);
-                drawFaceDots(faceLm);
+                if (uiVisible) drawFaceDots(faceLm);
             } else {
                 faceLm = null;
             }
@@ -1033,7 +1035,9 @@ function setupOnResults() {
             }
             return;
         } else {
-            oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
+            if (uiVisible) {
+                oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
+            }
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 hasHand = true;
                 handLm = results.multiHandLandmarks[0];
@@ -1041,7 +1045,7 @@ function setupOnResults() {
                     activeTracker = 'hand';
                 }
                 processHand(handLm);
-                drawHandDots(handLm);
+                if (uiVisible) drawHandDots(handLm);
                 lastHandDataTime = performance.now();
             } else {
                 hasHand = false;
@@ -1252,7 +1256,6 @@ function frameUpdate() {
     prevCenterY = centerY;
     let hoveredElement = null;
     if (!uiVisible) {
-        postParentPointer('mousemove', centerX, centerY, {buttons: dragging ? 1 : 0});
         if (prevHoveredElement) {
             prevHoveredElement.classList.remove('fake-hover');
             dispatchTrackerMouseEvent(prevHoveredElement, 'mouseout', centerX, centerY);
