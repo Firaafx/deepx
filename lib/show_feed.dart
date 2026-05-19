@@ -2292,6 +2292,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                                     icon: Icon(Icons.refresh,
                                         color: headerTitleColor),
                                   ),
+                                  const SizedBox(width: 52),
                                 ],
                               ),
                             ),

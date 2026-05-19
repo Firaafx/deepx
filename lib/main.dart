@@ -10,6 +10,7 @@ import 'services/cache_service.dart';
 import 'services/realtime_cache_invalidator.dart';
 import 'show_feed.dart';
 import 'supabase_config.dart';
+import 'widgets/tracker_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -181,7 +182,9 @@ class _MyAppState extends State<MyApp> {
         ),
       ),
       initialRoute: SupabaseConfig.isConfigured ? '/feed/home' : '/config',
-      builder: (context, child) => child ?? const SizedBox.shrink(),
+      builder: (context, child) => TrackerOverlay(
+        child: child ?? const SizedBox.shrink(),
+      ),
       onGenerateRoute: (settings) {
         final String name = settings.name ?? '/';
         final Uri uri = Uri.parse(name);
