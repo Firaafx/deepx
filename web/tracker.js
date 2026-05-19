@@ -843,7 +843,7 @@ function handleRealMouseActivity(x, y, deltaY = 0) {
     isPaused = true;
     cursor.style.display = 'none';
     if (realMouseResumeTimer) clearTimeout(realMouseResumeTimer);
-    realMouseResumeTimer = setTimeout(resumeTrackerAfterRealMouse, 3000);
+    realMouseResumeTimer = setTimeout(resumeTrackerAfterRealMouse, 80);
 }
 function processFace(lm) {
     let rawHeadYaw = ((lm[1].x - lm[234].x) / (lm[454].x - lm[234].x) - 0.5) * -120;

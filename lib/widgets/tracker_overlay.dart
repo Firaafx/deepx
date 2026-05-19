@@ -89,7 +89,10 @@ class _TrackerOverlayState extends State<TrackerOverlay> {
         Positioned.fill(child: widget.child),
         if (_trackerMounted)
           Positioned.fill(
-            child: TrackerPlatformView(interactive: _trackerUiVisible),
+            child: IgnorePointer(
+              ignoring: !_trackerUiVisible,
+              child: TrackerPlatformView(interactive: _trackerUiVisible),
+            ),
           ),
         if (isTrackerSupported)
           Positioned(
