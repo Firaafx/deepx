@@ -130,6 +130,9 @@ let handFastY = 10.0;
 let handTransY = 0.001;
 let uiVisible = false;
 let realMouseResumeTimer = null;
+let pageActive = true;
+let lastParentHoverX = Number.NaN;
+let lastParentHoverY = Number.NaN;
 const parentPointerTarget = {
     __deepxParentPointerTarget: true,
     tagName: 'PARENT',
@@ -594,6 +597,7 @@ function drawHandDots(lmArray) {
     }
 }
 async function updatePerformanceSettings() {
+    if (!pageActive) return;
     let refineLandmarks = (perfMode !== 'low');
     let minDetectionConfidence = (perfMode === 'low') ? 0.5 : (perfMode === 'medium') ? 0.3 : 0.3;
     let minTrackingConfidence = minDetectionConfidence;
@@ -611,6 +615,7 @@ async function updatePerformanceSettings() {
     if (cameraSvc) await cameraSvc.stop();
     cameraSvc = new Camera(document.getElementById('webcam-small'), {
         onFrame: async () => {
+            if (!pageActive || isPaused) return;
             startTime = performance.now();
             if (currentMode === 'hand') {
                 await hands.send({image: document.getElementById('webcam-small')});
@@ -748,6 +753,16 @@ function postParentPointer(action, x, y, options = {}) {
         buttons: options.buttons ?? 0
     }, '*');
 }
+function postParentHoverMove(x, y, options = {}, force = false) {
+    const dx = Math.abs(x - lastParentHoverX);
+    const dy = Math.abs(y - lastParentHoverY);
+    if (!force && Number.isFinite(dx) && Number.isFinite(dy) && dx < 0.75 && dy < 0.75) {
+        return;
+    }
+    lastParentHoverX = x;
+    lastParentHoverY = y;
+    postParentPointer('mousemove', x, y, options);
+}
 function dispatchTrackerMouseEvent(targetElem, eventName, x, y, options = {}) {
     if (!targetElem) return;
     if (isParentPointerTarget(targetElem)) {
@@ -835,6 +850,7 @@ function resumeTrackerAfterRealMouse() {
     if (document.getElementById('tracking-toggle').checked && document.getElementById('show-cursor').checked) {
         cursor.style.display = 'block';
     }
+    if (!uiVisible) postParentHoverMove(mouseX, mouseY, {buttons: 0}, true);
 }
 function handleRealMouseActivity(x, y, deltaY = 0) {
     if (typeof x === 'number') mouseX = x;
@@ -844,6 +860,36 @@ function handleRealMouseActivity(x, y, deltaY = 0) {
     cursor.style.display = 'none';
     if (realMouseResumeTimer) clearTimeout(realMouseResumeTimer);
     realMouseResumeTimer = setTimeout(resumeTrackerAfterRealMouse, 80);
+}
+async function stopLocalTrackingCamera() {
+    if (cameraSvc) {
+        try {
+            await cameraSvc.stop();
+        } catch (_) {}
+    }
+    const video = document.getElementById('webcam-small');
+    const stream = video ? video.srcObject : null;
+    if (stream && stream.getTracks) {
+        stream.getTracks().forEach(track => track.stop());
+    }
+    if (video) video.srcObject = null;
+}
+async function restartLocalTrackingCamera() {
+    if (isClient || isRemote) return;
+    if (!document.getElementById('tracking-toggle').checked) return;
+    await updatePerformanceSettings();
+}
+function handlePageVisibility() {
+    pageActive = !document.hidden;
+    if (!pageActive) {
+        cursor.style.display = 'none';
+        stopLocalTrackingCamera();
+        return;
+    }
+    restartLocalTrackingCamera();
+    if (document.getElementById('tracking-toggle').checked && document.getElementById('show-cursor').checked) {
+        cursor.style.display = 'block';
+    }
 }
 function processFace(lm) {
     let rawHeadYaw = ((lm[1].x - lm[234].x) / (lm[454].x - lm[234].x) - 0.5) * -120;
@@ -1256,6 +1302,7 @@ function frameUpdate() {
     prevCenterY = centerY;
     let hoveredElement = null;
     if (!uiVisible) {
+        postParentHoverMove(centerX, centerY, {buttons: dragging ? 1 : 0});
         if (prevHoveredElement) {
             prevHoveredElement.classList.remove('fake-hover');
             dispatchTrackerMouseEvent(prevHoveredElement, 'mouseout', centerX, centerY);
@@ -1820,6 +1867,21 @@ window.addEventListener('resize', () => {
         isIrisCalibrated = false;
         alert('Screen resized. Please recalibrate for iris mode.');
     }
+});
+document.addEventListener('visibilitychange', handlePageVisibility);
+window.addEventListener('pagehide', () => {
+    pageActive = false;
+    stopLocalTrackingCamera();
+});
+window.addEventListener('pageshow', () => {
+    if (!document.hidden) {
+        pageActive = true;
+        restartLocalTrackingCamera();
+    }
+});
+window.addEventListener('beforeunload', () => {
+    pageActive = false;
+    stopLocalTrackingCamera();
 });
 window.addEventListener('mousemove', (e) => {
     if (e.isTrusted) {

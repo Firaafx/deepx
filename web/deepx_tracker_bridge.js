@@ -4,6 +4,8 @@
   let lastHoverTarget = null;
   let pendingRealMouse = null;
   let realMouseForwardScheduled = false;
+  let pendingTrackerMove = null;
+  let trackerMoveScheduled = false;
 
   function trackerFrame() {
     return document.getElementById('deepx-tracker-frame');
@@ -17,9 +19,12 @@
 
   function targetAt(x, y) {
     const frame = trackerFrame();
+    if (!trackerUiVisible) {
+      return document.elementFromPoint(x, y) || document.body;
+    }
     if (frame) frame.style.pointerEvents = 'none';
     const target = document.elementFromPoint(x, y) || document.body;
-    if (frame) frame.style.pointerEvents = trackerUiVisible ? 'auto' : 'none';
+    if (frame) frame.style.pointerEvents = 'auto';
     return target;
   }
 
@@ -93,7 +98,7 @@
     }
   }
 
-  function handleTrackerPointer(data) {
+  function handleTrackerPointerNow(data) {
     const x = Number(data.x);
     const y = Number(data.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
@@ -146,6 +151,22 @@
       });
       dispatchMouse(target, 'click', x, y, options);
     }
+  }
+
+  function handleTrackerPointer(data) {
+    if (data.action !== 'mousemove') {
+      handleTrackerPointerNow(data);
+      return;
+    }
+    pendingTrackerMove = data;
+    if (trackerMoveScheduled) return;
+    trackerMoveScheduled = true;
+    requestAnimationFrame(() => {
+      trackerMoveScheduled = false;
+      const next = pendingTrackerMove;
+      pendingTrackerMove = null;
+      if (next) handleTrackerPointerNow(next);
+    });
   }
 
   function forwardRealMouse(action, event) {
