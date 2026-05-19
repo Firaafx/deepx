@@ -1,7 +1,6 @@
 (function () {
   const pointerId = 97231;
   let trackerUiVisible = true;
-  let lastHoverTarget = null;
   let pendingRealMouse = null;
   let realMouseForwardScheduled = false;
   let pendingTrackerMove = null;
@@ -78,17 +77,6 @@
     dispatchMouse(target, mouseType, x, y, options);
   }
 
-  function updateHover(target, x, y, options) {
-    if (target === lastHoverTarget) return;
-    if (lastHoverTarget) {
-      dispatchBoth(lastHoverTarget, 'pointerout', 'mouseout', x, y, options);
-    }
-    if (target) {
-      dispatchBoth(target, 'pointerover', 'mouseover', x, y, options);
-    }
-    lastHoverTarget = target;
-  }
-
   function focusTarget(target) {
     if (!target || typeof target.focus !== 'function') return;
     try {
@@ -111,13 +99,11 @@
     const action = data.action;
 
     if (action === 'mousemove') {
-      updateHover(target, x, y, options);
-      dispatchBoth(target, 'pointermove', 'mousemove', x, y, options);
+      dispatchPointer(target, 'pointermove', x, y, options);
       return;
     }
 
     if (action === 'mousedown') {
-      updateHover(target, x, y, {...options, buttons: 1});
       dispatchBoth(target, 'pointerdown', 'mousedown', x, y, {
         ...options,
         buttons: 1
@@ -139,7 +125,6 @@
     }
 
     if (action === 'click') {
-      updateHover(target, x, y, options);
       focusTarget(target);
       dispatchBoth(target, 'pointerdown', 'mousedown', x, y, {
         ...options,

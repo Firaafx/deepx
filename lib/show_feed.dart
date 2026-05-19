@@ -1674,7 +1674,6 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
 
   @override
   void dispose() {
-    debugPrint('Disposing ShowFeedPage(tab=${_activeTab.name})');
     super.dispose();
   }
 
@@ -8816,7 +8815,6 @@ class _ChatTabState extends State<_ChatTab> {
 
   @override
   void dispose() {
-    debugPrint('Disposing ChatTab');
     _messageController.dispose();
     super.dispose();
   }
