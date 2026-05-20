@@ -5,6 +5,7 @@
   let realMouseForwardScheduled = false;
   let pendingTrackerMove = null;
   let trackerMoveScheduled = false;
+  let lastHoverTarget = null;
 
   function trackerFrame() {
     return document.getElementById('deepx-tracker-frame');
@@ -38,6 +39,7 @@
       screenY: y,
       button: options.button || 0,
       buttons: options.buttons || 0,
+      relatedTarget: options.relatedTarget || null,
       pointerId,
       pointerType: 'mouse',
       isPrimary: true,
@@ -56,6 +58,7 @@
       screenY: y,
       button: options.button || 0,
       buttons: options.buttons || 0,
+      relatedTarget: options.relatedTarget || null,
       view: window
     };
   }
@@ -75,6 +78,27 @@
   function dispatchBoth(target, pointerType, mouseType, x, y, options) {
     dispatchPointer(target, pointerType, x, y, options);
     dispatchMouse(target, mouseType, x, y, options);
+  }
+
+  function updateSyntheticHover(target, x, y, options) {
+    if (target === lastHoverTarget) return;
+
+    const previous = lastHoverTarget && lastHoverTarget.isConnected ? lastHoverTarget : null;
+    const next = target && target.isConnected ? target : document.body;
+
+    if (previous) {
+      const outOptions = {...options, relatedTarget: next};
+      dispatchPointer(previous, 'pointerout', x, y, outOptions);
+      dispatchMouse(previous, 'mouseout', x, y, outOptions);
+    }
+
+    if (next) {
+      const overOptions = {...options, relatedTarget: previous};
+      dispatchPointer(next, 'pointerover', x, y, overOptions);
+      dispatchMouse(next, 'mouseover', x, y, overOptions);
+    }
+
+    lastHoverTarget = next;
   }
 
   function focusTarget(target) {
@@ -99,6 +123,7 @@
     const action = data.action;
 
     if (action === 'mousemove') {
+      updateSyntheticHover(target, x, y, options);
       dispatchPointer(target, 'pointermove', x, y, options);
       return;
     }

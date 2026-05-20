@@ -133,6 +133,11 @@ let realMouseResumeTimer = null;
 let pageActive = true;
 let lastParentHoverX = Number.NaN;
 let lastParentHoverY = Number.NaN;
+const MEDIAPIPE_FACE_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4';
+const MEDIAPIPE_HANDS_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4';
+const PEER_JS_URL = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+const scriptLoadPromises = new Map();
+let handsResultsAttached = false;
 const parentPointerTarget = {
     __deepxParentPointerTarget: true,
     tagName: 'PARENT',
@@ -145,13 +150,46 @@ let doubleClickThreshold = 600; // Changed to 600ms
 let doubleDragThreshold = 300;
 let lastDoubleDragTime = 0;
 const inputSmooth = 0.7;
+function loadScriptOnce(src, globalName) {
+    if (globalName && window[globalName]) return Promise.resolve();
+    if (scriptLoadPromises.has(src)) return scriptLoadPromises.get(src);
+
+    const existing = Array.from(document.scripts).find(script => script.src === src);
+    if (existing && existing.dataset.loaded === 'true') return Promise.resolve();
+
+    const promise = new Promise((resolve, reject) => {
+        const script = existing || document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = () => {
+            script.dataset.loaded = 'true';
+            resolve();
+        };
+        script.onerror = () => {
+            scriptLoadPromises.delete(src);
+            reject(new Error(`Failed to load ${src}`));
+        };
+        if (!existing) document.body.appendChild(script);
+    });
+    scriptLoadPromises.set(src, promise);
+    return promise;
+}
+async function ensurePeerJsLoaded() {
+    await loadScriptOnce(PEER_JS_URL, 'Peer');
+}
+async function ensureHandsReady() {
+    if (hands) return hands;
+    await loadScriptOnce(`${MEDIAPIPE_HANDS_BASE}/hands.js`, 'Hands');
+    hands = new Hands({locateFile: (file) => `${MEDIAPIPE_HANDS_BASE}/${file}`});
+    setupHandsResults();
+    return hands;
+}
 async function init() {
     const urlParams = new URLSearchParams(window.parent.location.search);
     const mode = urlParams.get('mode');
     const remotePeerId = urlParams.get('peer');
     isClient = (mode === 'client');
-    faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`});
-    hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`});
+    faceMesh = new FaceMesh({locateFile: (file) => `${MEDIAPIPE_FACE_BASE}/${file}`});
     setupDraggablePanel();
     setupTrackerEvents();
     setupOnResults();
@@ -167,6 +205,7 @@ async function init() {
         document.getElementById('face-dots-overlay').style.display = 'none';
         document.getElementById('client-panel').style.display = 'block';
         document.getElementById('stop-connection-client').style.display = 'none';
+        await ensurePeerJsLoaded();
         peer = new Peer();
         peer.on('open', (id) => {
             connectToHost(remotePeerId);
@@ -177,7 +216,6 @@ async function init() {
             await updatePerformanceSettings();
         };
         document.getElementById('perf-mode-client').value = 'medium';
-        document.getElementById('perf-mode-client').dispatchEvent(new Event('change'));
         document.getElementById('send-iris').onchange = (e) => sendIris = e.target.checked;
         document.getElementById('send-nose').onchange = (e) => sendNose = e.target.checked;
         document.getElementById('send-yaw-pitch').onchange = (e) => sendYawPitch = e.target.checked;
@@ -279,6 +317,7 @@ async function init() {
                 reconnectMsg.style.color = '#fff';
                 document.getElementById('ui-video-box').appendChild(reconnectMsg);
                 let hostPeerId = localStorage.getItem('hostPeerId');
+                await ensurePeerJsLoaded();
                 peer = new Peer(hostPeerId || undefined);
                 peer.on('open', (id) => {
                     localStorage.setItem('hostPeerId', id);
@@ -493,7 +532,6 @@ async function init() {
             location.reload();
         };
         document.getElementById('perf-mode-host').value = 'medium';
-        document.getElementById('perf-mode-host').dispatchEvent(new Event('change'));
         document.getElementById('full-screen-host').onchange = (e) => {
             if (e.target.checked) {
                 document.documentElement.requestFullscreen();
@@ -506,6 +544,8 @@ async function init() {
     }
     frameUpdate();
     loadSettings();
+    currentMode = document.getElementById('cursor-mode').value;
+    perfMode = isClient ? document.getElementById('perf-mode-client').value : document.getElementById('perf-mode-host').value;
     if (document.getElementById('tracking-toggle').checked) {
         await updatePerformanceSettings();
     }
@@ -528,9 +568,12 @@ function connectToHost(remotePeerId) {
             }
         }, 1000);
     });
-    conn.on('data', (data) => {
+    conn.on('data', async (data) => {
         if (data.type === 'set_mode') {
             currentMode = data.mode;
+            if (document.getElementById('tracking-toggle').checked) {
+                await updatePerformanceSettings();
+            }
         } else if (data.type === 'ping') {
             conn.send({type: 'pong', time: data.time});
         }
@@ -611,14 +654,18 @@ async function updatePerformanceSettings() {
         vidSize = 640;
     }
     faceMesh.setOptions({ refineLandmarks, maxNumFaces: 1, minDetectionConfidence, minTrackingConfidence });
-    hands.setOptions({ modelComplexity: 0, maxNumHands: 1, minDetectionConfidence: 0.3, minTrackingConfidence: 0.3 });
+    if (currentMode === 'hand') {
+        const handTracker = await ensureHandsReady();
+        handTracker.setOptions({ modelComplexity: 0, maxNumHands: 1, minDetectionConfidence: 0.3, minTrackingConfidence: 0.3 });
+    }
     if (cameraSvc) await cameraSvc.stop();
     cameraSvc = new Camera(document.getElementById('webcam-small'), {
         onFrame: async () => {
             if (!pageActive || isPaused) return;
             startTime = performance.now();
             if (currentMode === 'hand') {
-                await hands.send({image: document.getElementById('webcam-small')});
+                const handTracker = await ensureHandsReady();
+                await handTracker.send({image: document.getElementById('webcam-small')});
             } else {
                 await faceMesh.send({image: document.getElementById('webcam-small')});
             }
@@ -1055,6 +1102,11 @@ function setupOnResults() {
             }
         }
     });
+}
+function setupHandsResults() {
+    if (!hands || handsResultsAttached) return;
+    handsResultsAttached = true;
+    const oCtx = document.getElementById('face-dots-overlay').getContext('2d');
     hands.onResults((results) => {
         latency = performance.now() - startTime;
         if (isClient) {
