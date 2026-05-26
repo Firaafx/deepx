@@ -5,6 +5,7 @@ class AppearanceSettings {
   const AppearanceSettings({
     required this.ambientBlurSigmaX,
     required this.ambientBlurSigmaY,
+    required this.svgCardBlurSigma,
     required this.wallpaperImageUrl,
     required this.wallpaperOverlayColor,
     required this.wallpaperOverlayOpacity,
@@ -12,6 +13,7 @@ class AppearanceSettings {
 
   final double ambientBlurSigmaX;
   final double ambientBlurSigmaY;
+  final double svgCardBlurSigma;
   final String wallpaperImageUrl;
   final int wallpaperOverlayColor;
   final double wallpaperOverlayOpacity;
@@ -19,6 +21,7 @@ class AppearanceSettings {
   AppearanceSettings copyWith({
     double? ambientBlurSigmaX,
     double? ambientBlurSigmaY,
+    double? svgCardBlurSigma,
     String? wallpaperImageUrl,
     int? wallpaperOverlayColor,
     double? wallpaperOverlayOpacity,
@@ -26,6 +29,7 @@ class AppearanceSettings {
     return AppearanceSettings(
       ambientBlurSigmaX: ambientBlurSigmaX ?? this.ambientBlurSigmaX,
       ambientBlurSigmaY: ambientBlurSigmaY ?? this.ambientBlurSigmaY,
+      svgCardBlurSigma: svgCardBlurSigma ?? this.svgCardBlurSigma,
       wallpaperImageUrl: wallpaperImageUrl ?? this.wallpaperImageUrl,
       wallpaperOverlayColor:
           wallpaperOverlayColor ?? this.wallpaperOverlayColor,
@@ -42,8 +46,10 @@ class AppearanceSettingsService {
       AppearanceSettingsService._();
 
   static const double _defaultSigma = 56;
+  static const double _defaultSvgCardBlurSigma = 75;
   static const String _sigmaXKey = 'appearance.blurSigmaX';
   static const String _sigmaYKey = 'appearance.blurSigmaY';
+  static const String _svgCardBlurSigmaKey = 'appearance.svgCardBlurSigma';
   static const String _wallpaperUrlKey = 'appearance.wallpaperImageUrl';
   static const String _wallpaperOverlayColorKey =
       'appearance.wallpaperOverlayColor';
@@ -55,6 +61,7 @@ class AppearanceSettingsService {
     const AppearanceSettings(
       ambientBlurSigmaX: _defaultSigma,
       ambientBlurSigmaY: _defaultSigma,
+      svgCardBlurSigma: _defaultSvgCardBlurSigma,
       wallpaperImageUrl: '',
       wallpaperOverlayColor: 0xFF000000,
       wallpaperOverlayOpacity: 0.18,
@@ -67,6 +74,10 @@ class AppearanceSettingsService {
     _prefs ??= await SharedPreferences.getInstance();
     final double sigmaX = _prefs?.getDouble(_sigmaXKey) ?? _defaultSigma;
     final double sigmaY = _prefs?.getDouble(_sigmaYKey) ?? _defaultSigma;
+    final double svgCardBlurSigma =
+        (_prefs?.getDouble(_svgCardBlurSigmaKey) ?? _defaultSvgCardBlurSigma)
+            .clamp(0.0, 100.0)
+            .toDouble();
     final String wallpaperUrl = _prefs?.getString(_wallpaperUrlKey) ?? '';
     final int overlayColor =
         _prefs?.getInt(_wallpaperOverlayColorKey) ?? 0xFF000000;
@@ -77,6 +88,7 @@ class AppearanceSettingsService {
     settings.value = AppearanceSettings(
       ambientBlurSigmaX: sigmaX,
       ambientBlurSigmaY: sigmaY,
+      svgCardBlurSigma: svgCardBlurSigma,
       wallpaperImageUrl: wallpaperUrl,
       wallpaperOverlayColor: overlayColor,
       wallpaperOverlayOpacity: overlayOpacity,
@@ -93,6 +105,12 @@ class AppearanceSettingsService {
     final double next = value.clamp(0.0, 100.0).toDouble();
     settings.value = settings.value.copyWith(ambientBlurSigmaY: next);
     _prefs?.setDouble(_sigmaYKey, next);
+  }
+
+  void updateSvgCardBlurSigma(double value) {
+    final double next = value.clamp(0.0, 100.0).toDouble();
+    settings.value = settings.value.copyWith(svgCardBlurSigma: next);
+    _prefs?.setDouble(_svgCardBlurSigmaKey, next);
   }
 
   void updateWallpaperImageUrl(String value) {

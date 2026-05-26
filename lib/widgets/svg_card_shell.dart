@@ -3,9 +3,12 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../services/appearance_settings_service.dart';
+
 const double _svgCardBaseWidth = 1852;
 const double _svgCardBaseHeight = 1413;
 const double _kTwoLineTitleExpansion = 102;
+const double _kMetaTextLeftInsetBase = 24;
 
 const Color _kShellColor = Color(0x992A2A2A);
 const Color _kInnerColor = Color(0xFF151515);
@@ -337,6 +340,21 @@ Rect svgCardMetaNotchBoundsForTesting({
     variant.placeholderLeft * sx,
     136 * sy,
     variant.placeholderWidth * sx,
+    55 * sy,
+  );
+}
+
+Rect svgCardMetaTextBoundsForTesting({
+  required SvgCardMetaSize metaSize,
+  Size size = const Size(_svgCardBaseWidth, _svgCardBaseHeight),
+}) {
+  final double sx = size.width / _svgCardBaseWidth;
+  final double sy = size.height / _svgCardBaseHeight;
+  final _MetaNotchVariant variant = _metaVariantForSize(metaSize);
+  return Rect.fromLTWH(
+    (variant.placeholderLeft + _kMetaTextLeftInsetBase) * sx,
+    148 * sy,
+    (variant.placeholderWidth - _kMetaTextLeftInsetBase) * sx,
     55 * sy,
   );
 }
@@ -1092,11 +1110,17 @@ class SvgCardShell extends StatelessWidget {
             Positioned.fill(
               child: ClipPath(
                 clipper: _SvgOuterClipper(twoLineTitle: twoLineTitle),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 75, sigmaY: 75),
-                  child: const ColoredBox(
-                    color: Color(0x012A2A2A),
-                  ),
+                child: ValueListenableBuilder<AppearanceSettings>(
+                  valueListenable: AppearanceSettingsService.instance.settings,
+                  builder: (context, settings, _) {
+                    final double sigma = settings.svgCardBlurSigma;
+                    return BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+                      child: const ColoredBox(
+                        color: Color(0x012A2A2A),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -1247,9 +1271,11 @@ class _CardTextOverlay extends StatelessWidget {
               ),
             ),
             Positioned(
-              left: metaVariant.placeholderLeft * sx,
+              left:
+                  (metaVariant.placeholderLeft + _kMetaTextLeftInsetBase) * sx,
               top: 148 * sy,
-              width: metaVariant.placeholderWidth * sx,
+              width:
+                  (metaVariant.placeholderWidth - _kMetaTextLeftInsetBase) * sx,
               height: 55 * sy,
               child: Align(
                 alignment: Alignment.centerLeft,

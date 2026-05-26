@@ -9,6 +9,21 @@ let anchorYaw = 0, anchorPitch = 0;
 let anchorHand = { x: 0.5, y: 0.5 };
 let isCapturing = false;
 let cameraSvc = null;
+let localStream = null;
+let currentVideoSize = 0;
+let inferenceRaf = 0;
+let inferenceGeneration = 0;
+let inferenceInFlight = false;
+let lastInferenceTime = 0;
+let configuredFaceSignature = '';
+let configuredHandSignature = '';
+let handsReadyPromise = null;
+let handsHealthy = true;
+let handsRetryAt = 0;
+let lastHudDrawTime = 0;
+let lastOverlayDrawTime = 0;
+let lastHoverHitTestTime = 0;
+let cachedHoveredElement = null;
 const tCanvas = document.getElementById('ui-text-canvas');
 const tCtx = tCanvas.getContext('2d');
 const cursor = document.getElementById('white-cursor');
@@ -138,6 +153,13 @@ const MEDIAPIPE_HANDS_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4'
 const PEER_JS_URL = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
 const scriptLoadPromises = new Map();
 let handsResultsAttached = false;
+const elementCache = new Map();
+const numericSettingCache = new Map();
+const performanceProfiles = {
+    low: { width: 160, height: 160, intervalMs: 1000 / 15 },
+    medium: { width: 320, height: 320, intervalMs: 1000 / 24 },
+    high: { width: 480, height: 480, intervalMs: 1000 / 30 }
+};
 const parentPointerTarget = {
     __deepxParentPointerTarget: true,
     tagName: 'PARENT',
@@ -150,6 +172,60 @@ let doubleClickThreshold = 600; // Changed to 600ms
 let doubleDragThreshold = 300;
 let lastDoubleDragTime = 0;
 const inputSmooth = 0.7;
+function el(id) {
+    if (!elementCache.has(id)) {
+        elementCache.set(id, document.getElementById(id));
+    }
+    return elementCache.get(id);
+}
+function numericSetting(id, fallback = 0) {
+    const node = el(id);
+    if (!node) return fallback;
+    const raw = node.value;
+    const cached = numericSettingCache.get(id);
+    if (cached && cached.raw === raw) return cached.value;
+    const parsed = Number.parseFloat(raw);
+    const value = Number.isFinite(parsed) ? parsed : fallback;
+    numericSettingCache.set(id, { raw, value });
+    return value;
+}
+function trackingEnabled() {
+    return !!el('tracking-toggle')?.checked;
+}
+function showCursorEnabled() {
+    return !!el('show-cursor')?.checked;
+}
+function currentPerformanceProfile() {
+    return performanceProfiles[perfMode] || performanceProfiles.medium;
+}
+function clearHandState() {
+    hasHand = false;
+    handLm = null;
+    isPinching = false;
+    currentHandDx = 0;
+    currentHandDy = 0;
+}
+function shouldDrawTrackerOverlay() {
+    const now = performance.now();
+    if (!uiVisible || now - lastOverlayDrawTime < 100) return false;
+    lastOverlayDrawTime = now;
+    return true;
+}
+function resetHandsTracker(reason) {
+    if (reason) console.warn('Resetting MediaPipe Hands after failure:', reason);
+    handsHealthy = false;
+    handsRetryAt = performance.now() + 2000;
+    const tracker = hands;
+    hands = null;
+    handsReadyPromise = null;
+    handsResultsAttached = false;
+    clearHandState();
+    if (tracker && typeof tracker.close === 'function') {
+        try {
+            tracker.close();
+        } catch (_) {}
+    }
+}
 function loadScriptOnce(src, globalName) {
     if (globalName && window[globalName]) return Promise.resolve();
     if (scriptLoadPromises.has(src)) return scriptLoadPromises.get(src);
@@ -178,11 +254,25 @@ async function ensurePeerJsLoaded() {
     await loadScriptOnce(PEER_JS_URL, 'Peer');
 }
 async function ensureHandsReady() {
-    if (hands) return hands;
-    await loadScriptOnce(`${MEDIAPIPE_HANDS_BASE}/hands.js`, 'Hands');
-    hands = new Hands({locateFile: (file) => `${MEDIAPIPE_HANDS_BASE}/${file}`});
-    setupHandsResults();
-    return hands;
+    if (hands && handsHealthy) return hands;
+    if (handsReadyPromise) return handsReadyPromise;
+    if (performance.now() < handsRetryAt) return null;
+    handsHealthy = true;
+    handsReadyPromise = (async () => {
+        await loadScriptOnce(`${MEDIAPIPE_HANDS_BASE}/hands.js`, 'Hands');
+        const tracker = new Hands({locateFile: (file) => `${MEDIAPIPE_HANDS_BASE}/${file}`});
+        hands = tracker;
+        handsResultsAttached = false;
+        configuredHandSignature = '';
+        setupHandsResults(tracker);
+        return tracker;
+    })().catch((error) => {
+        resetHandsTracker(error);
+        return null;
+    }).finally(() => {
+        handsReadyPromise = null;
+    });
+    return handsReadyPromise;
 }
 async function init() {
     const urlParams = new URLSearchParams(window.parent.location.search);
@@ -292,7 +382,7 @@ async function init() {
         document.getElementById('input-source').onchange = async (e) => {
             isRemote = (e.target.value === 'remote');
             if (isRemote) {
-                if (cameraSvc) await cameraSvc.stop();
+                await stopLocalTrackingCamera();
                 const s = document.getElementById('webcam-small').srcObject;
                 if (s) s.getTracks().forEach(t => t.stop());
                 document.getElementById('webcam-small').srcObject = null;
@@ -377,10 +467,10 @@ async function init() {
                                 if (data.partial.ear) {
                                     currentLeftEAR = data.partial.ear.left;
                                     currentRightEAR = data.partial.ear.right;
-                                    const leftClosedThresh = parseFloat(document.getElementById('left-closed-thresh').value);
-                                    const leftOpenThresh = parseFloat(document.getElementById('left-open-thresh').value);
-                                    const rightClosedThresh = parseFloat(document.getElementById('right-closed-thresh').value);
-                                    const rightOpenThresh = parseFloat(document.getElementById('right-open-thresh').value);
+                                    const leftClosedThresh = numericSetting('left-closed-thresh', 0.16);
+                                    const leftOpenThresh = numericSetting('left-open-thresh', 0.22);
+                                    const rightClosedThresh = numericSetting('right-closed-thresh', 0.16);
+                                    const rightOpenThresh = numericSetting('right-open-thresh', 0.22);
                                     leftClosed = currentLeftEAR < leftClosedThresh;
                                     rightClosed = currentRightEAR < rightClosedThresh;
                                     const leftWink = leftClosed && (currentRightEAR > rightOpenThresh);
@@ -403,7 +493,7 @@ async function init() {
                                 for (let pt of data.drawLm) {
                                     drawLmObj[pt.i] = {x: pt.x, y: pt.y, z: pt.z};
                                 }
-                                if (uiVisible) drawFaceDots(drawLmObj);
+                                if (shouldDrawTrackerOverlay()) drawFaceDots(drawLmObj);
                                 if (!data.partial && data.drawLm.length >= FILTERED_INDICES.length) {
                                     let lmArray = [];
                                     for (let pt of data.drawLm) {
@@ -420,8 +510,8 @@ async function init() {
                                 if (data.partial.fingertips) {
                                     const index = data.partial.fingertips.index;
                                     const thumb = data.partial.fingertips.thumb;
-                                    const deadZoneHandX = parseFloat(document.getElementById('dz-hx').value);
-                                    const deadZoneHandY = parseFloat(document.getElementById('dz-hand-y').value);
+                                    const deadZoneHandX = numericSetting('dz-hx', 0);
+                                    const deadZoneHandY = numericSetting('dz-hand-y', 0);
                                     let rawIndexX = index.x;
                                     let rawIndexY = index.y;
                                     let deltaX = rawIndexX - currentHandIndexX;
@@ -442,7 +532,7 @@ async function init() {
                                     currentHandIndexY = currentHandIndexY * inputSmooth + adjustedY * (1 - inputSmooth);
                                     currentHandDx = currentHandIndexX - anchorHand.x;
                                     currentHandDy = currentHandIndexY - anchorHand.y;
-                                    const pinchThresh = parseFloat(document.getElementById('pinch-thresh').value);
+                                    const pinchThresh = numericSetting('pinch-thresh', 0.05);
                                     const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y, thumb.z - index.z);
                                     isPinching = pinchDist < pinchThresh;
                                 }
@@ -452,7 +542,7 @@ async function init() {
                                 for (let pt of data.drawLm) {
                                     lmArray[pt.i] = {x: pt.x, y: pt.y, z: pt.z};
                                 }
-                                if (uiVisible) drawHandDots(lmArray);
+                                if (shouldDrawTrackerOverlay()) drawHandDots(lmArray);
                                 if (!data.partial && data.drawLm.length === 21) {
                                     processHand(lmArray);
                                 }
@@ -546,6 +636,7 @@ async function init() {
     loadSettings();
     currentMode = document.getElementById('cursor-mode').value;
     perfMode = isClient ? document.getElementById('perf-mode-client').value : document.getElementById('perf-mode-host').value;
+    isMouseTracking = !!el('mouse-tracking')?.checked;
     if (document.getElementById('tracking-toggle').checked) {
         await updatePerformanceSettings();
     }
@@ -641,45 +732,139 @@ function drawHandDots(lmArray) {
 }
 async function updatePerformanceSettings() {
     if (!pageActive) return;
-    let refineLandmarks = (perfMode !== 'low');
-    let minDetectionConfidence = (perfMode === 'low') ? 0.5 : (perfMode === 'medium') ? 0.3 : 0.3;
-    let minTrackingConfidence = minDetectionConfidence;
-    let modelComplexity = (perfMode === 'low' ? 0 : 1);
-    let vidSize;
-    if (perfMode === 'low') {
-        vidSize = 160;
-    } else if (perfMode === 'medium') {
-        vidSize = 320;
-    } else {
-        vidSize = 640;
+    const generation = ++inferenceGeneration;
+    const profile = currentPerformanceProfile();
+    const refineLandmarks = currentMode === 'iris';
+    const minDetectionConfidence = perfMode === 'low' ? 0.5 : 0.3;
+    const minTrackingConfidence = minDetectionConfidence;
+    const faceSignature = [
+        refineLandmarks,
+        minDetectionConfidence,
+        minTrackingConfidence
+    ].join('|');
+    if (faceMesh && configuredFaceSignature !== faceSignature) {
+        faceMesh.setOptions({
+            refineLandmarks,
+            maxNumFaces: 1,
+            minDetectionConfidence,
+            minTrackingConfidence
+        });
+        configuredFaceSignature = faceSignature;
     }
-    faceMesh.setOptions({ refineLandmarks, maxNumFaces: 1, minDetectionConfidence, minTrackingConfidence });
     if (currentMode === 'hand') {
         const handTracker = await ensureHandsReady();
-        handTracker.setOptions({ modelComplexity: 0, maxNumHands: 1, minDetectionConfidence: 0.3, minTrackingConfidence: 0.3 });
+        if (generation !== inferenceGeneration) return;
+        const handSignature = '0|1|0.3|0.3';
+        if (handTracker && configuredHandSignature !== handSignature) {
+            handTracker.setOptions({
+                modelComplexity: 0,
+                maxNumHands: 1,
+                minDetectionConfidence: 0.3,
+                minTrackingConfidence: 0.3
+            });
+            configuredHandSignature = handSignature;
+        }
     }
-    if (cameraSvc) await cameraSvc.stop();
-    cameraSvc = new Camera(document.getElementById('webcam-small'), {
-        onFrame: async () => {
-            if (!pageActive || isPaused) return;
-            startTime = performance.now();
-            if (currentMode === 'hand') {
-                const handTracker = await ensureHandsReady();
-                await handTracker.send({image: document.getElementById('webcam-small')});
-            } else {
-                await faceMesh.send({image: document.getElementById('webcam-small')});
+    const overlay = el('face-dots-overlay');
+    overlay.width = profile.width;
+    overlay.height = profile.height;
+    if (!isRemote && trackingEnabled()) {
+        await ensureLocalTrackingCamera(profile, generation);
+        startInferenceLoop();
+    } else {
+        await stopLocalTrackingCamera();
+    }
+}
+async function ensureLocalTrackingCamera(profile, generation) {
+    const video = el('webcam-small');
+    if (!video || !navigator.mediaDevices?.getUserMedia) return;
+    if (localStream && currentVideoSize === profile.width) {
+        if (video.srcObject !== localStream) video.srcObject = localStream;
+        if (video.paused) {
+            try {
+                await video.play();
+            } catch (_) {}
+        }
+        return;
+    }
+    await stopLocalTrackingCamera({ keepLoop: true });
+    if (generation !== inferenceGeneration || !trackingEnabled() || isRemote) return;
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+                width: { ideal: profile.width },
+                height: { ideal: profile.height },
+                facingMode: 'user'
             }
-            frameCounter++;
-        },
-        width: vidSize,
-        height: vidSize
-    });
-    const overlay = document.getElementById('face-dots-overlay');
-    overlay.width = vidSize;
-    overlay.height = vidSize;
-    if (!isRemote && document.getElementById('tracking-toggle').checked) {
-        await cameraSvc.start();
+        });
+    } catch (error) {
+        console.warn('Unable to acquire tracker camera:', error);
+        return;
     }
+    if (generation !== inferenceGeneration || !trackingEnabled() || isRemote) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+        return;
+    }
+    currentVideoSize = profile.width;
+    video.srcObject = localStream;
+    video.muted = true;
+    video.playsInline = true;
+    try {
+        await video.play();
+    } catch (error) {
+        console.warn('Unable to start tracker video stream:', error);
+    }
+}
+function startInferenceLoop() {
+    if (inferenceRaf) return;
+    inferenceRaf = requestAnimationFrame(runInferenceLoop);
+}
+function stopInferenceLoop() {
+    if (!inferenceRaf) return;
+    cancelAnimationFrame(inferenceRaf);
+    inferenceRaf = 0;
+}
+function runInferenceLoop(now) {
+    inferenceRaf = 0;
+    if (!pageActive || isRemote || !trackingEnabled()) return;
+    const profile = currentPerformanceProfile();
+    if (!isPaused && !inferenceInFlight && now - lastInferenceTime >= profile.intervalMs) {
+        const generation = inferenceGeneration;
+        const video = el('webcam-small');
+        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            lastInferenceTime = now;
+            inferenceInFlight = true;
+            startTime = performance.now();
+            const mode = currentMode;
+            const run = mode === 'hand'
+                ? sendHandFrame(video, generation)
+                : sendFaceFrame(video, generation);
+            run.catch(error => {
+                if (mode === 'hand') {
+                    resetHandsTracker(error);
+                } else {
+                    console.warn('Face tracking frame failed:', error);
+                }
+            }).finally(() => {
+                if (generation === inferenceGeneration) {
+                    frameCounter++;
+                }
+                inferenceInFlight = false;
+            });
+        }
+    }
+    inferenceRaf = requestAnimationFrame(runInferenceLoop);
+}
+async function sendFaceFrame(video, generation) {
+    if (!faceMesh || generation !== inferenceGeneration) return;
+    await faceMesh.send({ image: video });
+}
+async function sendHandFrame(video, generation) {
+    const handTracker = await ensureHandsReady();
+    if (!handTracker || generation !== inferenceGeneration) return;
+    await handTracker.send({ image: video });
 }
 function setupDraggablePanel() {
     const panel = document.getElementById('tracker-panel');
@@ -908,22 +1093,27 @@ function handleRealMouseActivity(x, y, deltaY = 0) {
     if (realMouseResumeTimer) clearTimeout(realMouseResumeTimer);
     realMouseResumeTimer = setTimeout(resumeTrackerAfterRealMouse, 80);
 }
-async function stopLocalTrackingCamera() {
+async function stopLocalTrackingCamera(options = {}) {
+    if (!options.keepLoop) inferenceGeneration++;
+    if (!options.keepLoop) stopInferenceLoop();
     if (cameraSvc) {
         try {
             await cameraSvc.stop();
         } catch (_) {}
+        cameraSvc = null;
     }
-    const video = document.getElementById('webcam-small');
-    const stream = video ? video.srcObject : null;
+    const video = el('webcam-small');
+    const stream = localStream || (video ? video.srcObject : null);
     if (stream && stream.getTracks) {
         stream.getTracks().forEach(track => track.stop());
     }
+    localStream = null;
+    currentVideoSize = 0;
     if (video) video.srcObject = null;
 }
 async function restartLocalTrackingCamera() {
-    if (isClient || isRemote) return;
-    if (!document.getElementById('tracking-toggle').checked) return;
+    if (isRemote) return;
+    if (!trackingEnabled()) return;
     await updatePerformanceSettings();
 }
 function handlePageVisibility() {
@@ -941,8 +1131,8 @@ function handlePageVisibility() {
 function processFace(lm) {
     let rawHeadYaw = ((lm[1].x - lm[234].x) / (lm[454].x - lm[234].x) - 0.5) * -120;
     let rawHeadPitch = ((lm[1].y - lm[10].y) / (lm[152].y - lm[10].y) - 0.5) * 80;
-    const deadZoneHeadYaw = parseFloat(document.getElementById('dz-head-yaw').value);
-    const deadZoneHeadPitch = parseFloat(document.getElementById('dz-hp').value);
+    const deadZoneHeadYaw = numericSetting('dz-head-yaw', 0);
+    const deadZoneHeadPitch = numericSetting('dz-hp', 0);
     let adjustedHeadYaw = rawHeadYaw;
     let deltaYaw = rawHeadYaw - currentHeadYaw;
     if (Math.abs(deltaYaw) <= deadZoneHeadYaw) {
@@ -969,8 +1159,8 @@ function processFace(lm) {
         const leftPitchRatio = (lm[468].y - lm[159].y) / (lm[145].y - lm[159].y);
         const rightPitchRatio = (lm[473].y - lm[386].y) / (lm[374].y - lm[386].y);
         const avgPitchRatio = (leftPitchRatio + rightPitchRatio) / 2;
-        const deadZoneIrisX = parseFloat(document.getElementById('dz-ix').value);
-        const deadZoneIrisY = parseFloat(document.getElementById('dz-iy').value);
+        const deadZoneIrisX = numericSetting('dz-ix', 0);
+        const deadZoneIrisY = numericSetting('dz-iy', 0);
         let rawDx = avgYawRatio - 0.5;
         let adjustedDx = rawDx;
         let deltaDx = rawDx - currentDx;
@@ -1006,10 +1196,10 @@ function processFace(lm) {
     currentFace.z = Math.sqrt(Math.pow(lm[33].x - lm[263].x, 2) + Math.pow(lm[33].y - lm[263].y, 2));
     currentLeftEAR = getEAR(lm, true);
     currentRightEAR = getEAR(lm, false);
-    const leftClosedThresh = parseFloat(document.getElementById('left-closed-thresh').value);
-    const leftOpenThresh = parseFloat(document.getElementById('left-open-thresh').value);
-    const rightClosedThresh = parseFloat(document.getElementById('right-closed-thresh').value);
-    const rightOpenThresh = parseFloat(document.getElementById('right-open-thresh').value);
+    const leftClosedThresh = numericSetting('left-closed-thresh', 0.16);
+    const leftOpenThresh = numericSetting('left-open-thresh', 0.22);
+    const rightClosedThresh = numericSetting('right-closed-thresh', 0.16);
+    const rightOpenThresh = numericSetting('right-open-thresh', 0.22);
     leftClosed = currentLeftEAR < leftClosedThresh;
     rightClosed = currentRightEAR < rightClosedThresh;
     const leftWink = leftClosed && (currentRightEAR > rightOpenThresh);
@@ -1027,8 +1217,8 @@ function processFace(lm) {
 function processHand(lm) {
     let rawIndexX = lm[8].x;
     let rawIndexY = lm[8].y;
-    const deadZoneHandX = parseFloat(document.getElementById('dz-hx').value);
-    const deadZoneHandY = parseFloat(document.getElementById('dz-hand-y').value);
+    const deadZoneHandX = numericSetting('dz-hx', 0);
+    const deadZoneHandY = numericSetting('dz-hand-y', 0);
     let deltaX = rawIndexX - currentHandIndexX;
     let adjustedX = rawIndexX;
     if (Math.abs(deltaX) <= deadZoneHandX) {
@@ -1047,7 +1237,7 @@ function processHand(lm) {
     currentHandIndexY = currentHandIndexY * inputSmooth + adjustedY * (1 - inputSmooth);
     currentHandDx = currentHandIndexX - anchorHand.x;
     currentHandDy = currentHandIndexY - anchorHand.y;
-    const pinchThresh = parseFloat(document.getElementById('pinch-thresh').value);
+    const pinchThresh = numericSetting('pinch-thresh', 0.05);
     const pinchDist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y, lm[4].z - lm[8].z);
     isPinching = pinchDist < pinchThresh;
 }
@@ -1087,27 +1277,30 @@ function setupOnResults() {
             }
             return;
         } else {
-            if (activeTracker !== 'face') return;
-            if (uiVisible) {
-                oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
-            }
+            if (currentMode === 'hand' || activeTracker !== 'face') return;
             if (!document.getElementById('tracking-toggle').checked) { cursor.style.display = 'none'; return; }
             cursor.style.display = (!isPaused && document.getElementById('show-cursor').checked) ? 'block' : 'none';
+            const drawOverlay = shouldDrawTrackerOverlay();
             if (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) {
                 faceLm = results.multiFaceLandmarks[0];
                 processFace(faceLm);
-                if (uiVisible) drawFaceDots(faceLm);
+                if (drawOverlay) drawFaceDots(faceLm);
             } else {
                 faceLm = null;
+                if (drawOverlay) {
+                    const overlay = el('face-dots-overlay');
+                    oCtx.clearRect(0, 0, overlay.width, overlay.height);
+                }
             }
         }
     });
 }
-function setupHandsResults() {
-    if (!hands || handsResultsAttached) return;
+function setupHandsResults(tracker = hands) {
+    if (!tracker || handsResultsAttached) return;
     handsResultsAttached = true;
     const oCtx = document.getElementById('face-dots-overlay').getContext('2d');
-    hands.onResults((results) => {
+    tracker.onResults((results) => {
+        if (tracker !== hands) return;
         latency = performance.now() - startTime;
         if (isClient) {
             hasHand = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
@@ -1133,9 +1326,11 @@ function setupHandsResults() {
             }
             return;
         } else {
-            if (uiVisible) {
-                oCtx.clearRect(0, 0, document.getElementById('face-dots-overlay').width, document.getElementById('face-dots-overlay').height);
+            if (tracker !== hands || currentMode !== 'hand' || !trackingEnabled()) {
+                clearHandState();
+                return;
             }
+            const drawOverlay = shouldDrawTrackerOverlay();
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 hasHand = true;
                 handLm = results.multiHandLandmarks[0];
@@ -1143,21 +1338,20 @@ function setupHandsResults() {
                     activeTracker = 'hand';
                 }
                 processHand(handLm);
-                if (uiVisible) drawHandDots(handLm);
+                if (drawOverlay) drawHandDots(handLm);
                 lastHandDataTime = performance.now();
             } else {
-                hasHand = false;
-                handLm = null;
-                isPinching = false;
-                if (activeTracker === 'hand') {
-                    activeTracker = 'face';
+                clearHandState();
+                if (drawOverlay) {
+                    const overlay = el('face-dots-overlay');
+                    oCtx.clearRect(0, 0, overlay.width, overlay.height);
                 }
             }
         }
     });
 }
 function updateTrackerTargets(lm) {
-    const s = parseFloat(document.getElementById('s-sens').value) / 100;
+    const s = numericSetting('s-sens', 100) / 100;
     let rawRelX = currentFace.x - anchorFace.x;
     let rawRelY = currentFace.y - anchorFace.y;
     let rawRelZ = anchorFace.z - currentFace.z;
@@ -1192,8 +1386,7 @@ function frameUpdate() {
         }
     }
     if (currentMode === 'hand' && (now - lastHandDataTime > 1000)) {
-        hasHand = false;
-        activeTracker = 'face';
+        clearHandState();
     }
     if (isPaused) {
         requestAnimationFrame(frameUpdate);
@@ -1211,8 +1404,8 @@ function frameUpdate() {
                 const velY = deltaY / (dt / 1000);
                 const speedX = Math.abs(velX);
                 const speedY = Math.abs(velY);
-                const baseSensH = parseFloat(document.getElementById('h-sens').value);
-                const baseSensV = parseFloat(document.getElementById('v-sens').value);
+                const baseSensH = numericSetting('h-sens', 100);
+                const baseSensV = numericSetting('v-sens', 100);
                 const baseThresholdX = 0.05;
                 const baseThresholdY = 0.05;
                 const thresholdX = baseThresholdX / handTransX;
@@ -1236,36 +1429,10 @@ function frameUpdate() {
                 prevHandIndexX = currentHandIndexX;
                 prevHandIndexY = currentHandIndexY;
             } else {
-                const deltaYaw = currentHeadYaw - prevHeadYaw;
-                const deltaPitch = currentHeadPitch - prevHeadPitch;
-                const velYaw = deltaYaw / (dt / 1000);
-                const velPitch = deltaPitch / (dt / 1000);
-                const speedX = Math.abs(velYaw);
-                const speedY = Math.abs(velPitch);
-                const baseSensH = parseFloat(document.getElementById('h-sens').value);
-                const baseSensV = parseFloat(document.getElementById('v-sens').value);
-                const baseThresholdX = 5;
-                const baseThresholdY = 3;
-                const thresholdX = baseThresholdX / headTransX;
-                const thresholdY = baseThresholdY / headTransY;
-                let accelX = headSlowX;
-                if (speedX > thresholdX) {
-                    const normalizedX = (speedX - thresholdX) / (90 - thresholdX);
-                    accelX = headSlowX + (headFastX - headSlowX) * Math.pow(normalizedX, 1.5);
-                }
-                let accelY = headSlowY;
-                if (speedY > thresholdY) {
-                    const normalizedY = (speedY - thresholdY) / (30 - thresholdY);
-                    accelY = headSlowY + (headFastY - headSlowY) * Math.pow(normalizedY, 1.5);
-                }
-                let cursorDeltaX = deltaYaw * baseSensH * accelX * 1;
-                let cursorDeltaY = deltaPitch * baseSensV * accelY;
-                targetX += cursorDeltaX;
-                targetY += cursorDeltaY;
-                targetX = Math.max(0, Math.min(window.innerWidth, targetX));
-                targetY = Math.max(0, Math.min(window.innerHeight, targetY));
                 prevHeadYaw = currentHeadYaw;
                 prevHeadPitch = currentHeadPitch;
+                prevHandIndexX = currentHandIndexX;
+                prevHandIndexY = currentHandIndexY;
                 isWinking = false;
             }
         } else if (isHead) {
@@ -1275,8 +1442,8 @@ function frameUpdate() {
             const velPitch = deltaPitch / (dt / 1000);
             const speedX = Math.abs(velYaw);
             const speedY = Math.abs(velPitch);
-            const baseSensH = parseFloat(document.getElementById('h-sens').value);
-            const baseSensV = parseFloat(document.getElementById('v-sens').value);
+            const baseSensH = numericSetting('h-sens', 100);
+            const baseSensV = numericSetting('v-sens', 100);
             const baseThresholdX = 5;
             const baseThresholdY = 3;
             const thresholdX = baseThresholdX / headTransX;
@@ -1313,13 +1480,13 @@ function frameUpdate() {
                 const scale = 1.0;
                 rawRelYaw = currentIrisYaw;
                 rawRelPitch = currentIrisPitch;
-                targetX = (window.innerWidth / 2) + (rawRelYaw * scale * (parseFloat(document.getElementById('h-sens').value) / 10));
-                targetY = (window.innerHeight / 2) + (rawRelPitch * scale * (parseFloat(document.getElementById('v-sens').value) / 10));
+                targetX = (window.innerWidth / 2) + (rawRelYaw * scale * (numericSetting('h-sens', 100) / 10));
+                targetY = (window.innerHeight / 2) + (rawRelPitch * scale * (numericSetting('v-sens', 100) / 10));
             }
             prevHeadYaw = currentHeadYaw;
             prevHeadPitch = currentHeadPitch;
         }
-        const sFactor = parseFloat(document.getElementById('s-sens').value) / 100;
+        const sFactor = numericSetting('s-sens', 100) / 100;
         smoothX = (smoothX * sFactor) + (targetX * (1 - sFactor));
         smoothY = (smoothY * sFactor) + (targetY * (1 - sFactor));
         const centerX = smoothX;
@@ -1333,14 +1500,16 @@ function frameUpdate() {
         currentFace.y = (mouseY / window.innerHeight - 0.5) * 2;
         currentFace.z = anchorFace.z - mouseWheelZ;
         updateTrackerTargets();
-        if (tCanvas.style.display !== 'none') {
+        if (tCanvas.style.display !== 'none' && now - lastHudDrawTime >= 100) {
+            lastHudDrawTime = now;
             if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
             drawMouseHUD();
         }
     } else if (!document.getElementById('tracking-toggle').checked) {
         tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
     } else {
-        if (tCanvas.style.display !== 'none') {
+        if (tCanvas.style.display !== 'none' && now - lastHudDrawTime >= 100) {
+            lastHudDrawTime = now;
             if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
             drawHUD();
         }
@@ -1365,8 +1534,13 @@ function frameUpdate() {
         isHoverRed = false;
         isHoverBlue = false;
     } else {
-        hoveredElement = document.elementFromPoint(centerX, centerY);
-        if (hoveredElement !== prevHoveredElement) {
+        const shouldHitTest = isMoving || !cachedHoveredElement || now - lastHoverHitTestTime >= 100;
+        if (shouldHitTest) {
+            lastHoverHitTestTime = now;
+            cachedHoveredElement = document.elementFromPoint(centerX, centerY);
+        }
+        hoveredElement = cachedHoveredElement;
+        if (shouldHitTest && hoveredElement !== prevHoveredElement) {
             if (prevHoveredElement) {
                 prevHoveredElement.classList.remove('fake-hover');
                 dispatchTrackerMouseEvent(prevHoveredElement, 'mouseout', centerX, centerY);
@@ -1590,6 +1764,36 @@ function drawMouseHUD() {
 function setupTrackerEvents() {
     document.getElementById('toggle-tracker-ui').onclick = toggleUI;
     document.getElementById('tracker-hide-ui').onclick = () => setTrackerUiVisible(false);
+    const trackingToggle = el('tracking-toggle');
+    if (trackingToggle) {
+        trackingToggle.onchange = async (e) => {
+            localStorage.setItem('tracking-toggle', String(e.target.checked));
+            if (e.target.checked) {
+                await updatePerformanceSettings();
+                if (showCursorEnabled() && !isPaused) cursor.style.display = 'block';
+            } else {
+                await stopLocalTrackingCamera();
+                cursor.style.display = 'none';
+                tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
+            }
+        };
+    }
+    const showCursorToggle = el('show-cursor');
+    if (showCursorToggle) {
+        showCursorToggle.onchange = (e) => {
+            localStorage.setItem('show-cursor', String(e.target.checked));
+            cursor.style.display = e.target.checked && trackingEnabled() && !isPaused
+                ? 'block'
+                : 'none';
+        };
+    }
+    const mouseTrackingToggle = el('mouse-tracking');
+    if (mouseTrackingToggle) {
+        mouseTrackingToggle.onchange = (e) => {
+            isMouseTracking = e.target.checked;
+            localStorage.setItem('mouse-tracking', String(e.target.checked));
+        };
+    }
     window.addEventListener('message', (event) => {
         const data = event.data;
         if (!data || typeof data !== 'object') return;

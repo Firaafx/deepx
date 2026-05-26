@@ -149,7 +149,20 @@ void main() {
     expect(largeMetaNotch.height, closeTo(55, 0.1));
   });
 
-  test('wallpaper and overlay settings persist locally', () async {
+  test('svg card metadata text is inset without changing notch geometry', () {
+    final Rect notch = svgCardMetaNotchBoundsForTesting(
+      metaSize: SvgCardMetaSize.small,
+    );
+    final Rect textBounds = svgCardMetaTextBoundsForTesting(
+      metaSize: SvgCardMetaSize.small,
+    );
+
+    expect(textBounds.left, greaterThan(notch.left));
+    expect(textBounds.right, notch.right);
+    expect(textBounds.top, greaterThan(notch.top));
+  });
+
+  test('appearance settings persist locally', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await AppearanceSettingsService.instance.initialize();
 
@@ -157,12 +170,14 @@ void main() {
         .updateWallpaperImageUrl('https://example.com/wallpaper.jpg');
     AppearanceSettingsService.instance.updateWallpaperOverlayColor(0xFF123456);
     AppearanceSettingsService.instance.updateWallpaperOverlayOpacity(0.42);
+    AppearanceSettingsService.instance.updateSvgCardBlurSigma(33);
 
     final AppearanceSettings settings =
         AppearanceSettingsService.instance.settings.value;
     expect(settings.wallpaperImageUrl, 'https://example.com/wallpaper.jpg');
     expect(settings.wallpaperOverlayColor, 0xFF123456);
     expect(settings.wallpaperOverlayOpacity, 0.42);
+    expect(settings.svgCardBlurSigma, 33);
   });
 
   test('active runtime no longer references retired renderer paths', () {

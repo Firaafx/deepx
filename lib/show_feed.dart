@@ -50,6 +50,7 @@ enum _ComposerKind {
 
 enum _ComposerEditTarget {
   card,
+  post,
 }
 
 enum _ComposerImagePane {
@@ -4156,7 +4157,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
           initialIsPaid: _post.preset.isPaid,
           initialPriceCents: _post.preset.priceCents,
           initialAccentColorHex: _post.preset.accentColorHex,
-          editTarget: _ComposerEditTarget.card,
+          editTarget: _ComposerEditTarget.post,
           startBlankCard: false,
         ),
       ),
@@ -9798,7 +9799,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   int _thumbnailIndex = 0;
   bool _assetUploading = false;
   bool _autoAccentLoading = false;
-  _ComposerImagePane _imagePane = _ComposerImagePane.card;
+  late _ComposerImagePane _imagePane;
   late Map<String, dynamic> _postPayload;
   late Map<String, dynamic> _cardPayload;
   String _cardSourceKind = 'post';
@@ -9809,6 +9810,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   @override
   void initState() {
     super.initState();
+    _imagePane = widget.editTarget == _ComposerEditTarget.post
+        ? _ComposerImagePane.post
+        : _ComposerImagePane.card;
     final RenderPreset? existing = widget.existingPreset;
     _items = widget.items
         .map(
@@ -10015,6 +10019,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   }
 
   Map<String, dynamic> _previewPayload() {
+    if (widget.editTarget == _ComposerEditTarget.post) return _postPayload;
     return _cardPayload;
   }
 
@@ -10059,19 +10064,34 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         }
         final existing = widget.existingPreset;
         if (existing != null) {
-          await _repository.updatePresetPost(
-            presetId: existing.id,
-            title: title,
-            description: _descriptionController.text.trim(),
-            tags: tags,
-            mentionUserIds: mentions,
-            payload: payload,
-            thumbnailPayload: _cardPayload,
-            visibility: visibility,
-            isPaid: _isPaidContent,
-            priceCents: priceCents,
-            accentColorHex: _accentColorHex,
-          );
+          if (widget.editTarget == _ComposerEditTarget.post) {
+            await _repository.updatePresetDetail(
+              presetId: existing.id,
+              title: title,
+              description: _descriptionController.text.trim(),
+              tags: tags,
+              mentionUserIds: mentions,
+              payload: payload,
+              visibility: visibility,
+              isPaid: _isPaidContent,
+              priceCents: priceCents,
+              accentColorHex: _accentColorHex,
+            );
+          } else {
+            await _repository.updatePresetPost(
+              presetId: existing.id,
+              title: title,
+              description: _descriptionController.text.trim(),
+              tags: tags,
+              mentionUserIds: mentions,
+              payload: payload,
+              thumbnailPayload: _cardPayload,
+              visibility: visibility,
+              isPaid: _isPaidContent,
+              priceCents: priceCents,
+              accentColorHex: _accentColorHex,
+            );
+          }
         } else {
           await _repository.publishPresetPost(
             name: widget.name.trim().isEmpty ? title : widget.name.trim(),
@@ -10343,31 +10363,36 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          _imagePane == _ComposerImagePane.card
-              ? 'Card Image'
-              : (_isCollection ? 'Collection Image' : 'Post Image'),
+          widget.editTarget == _ComposerEditTarget.post
+              ? 'Post Image'
+              : (_imagePane == _ComposerImagePane.card
+                  ? 'Card Image'
+                  : (_isCollection ? 'Collection Image' : 'Post Image')),
           style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
-        SegmentedButton<_ComposerImagePane>(
-          segments: const <ButtonSegment<_ComposerImagePane>>[
-            ButtonSegment<_ComposerImagePane>(
-              value: _ComposerImagePane.post,
-              icon: Icon(Icons.image_outlined),
-              label: Text('Post'),
-            ),
-            ButtonSegment<_ComposerImagePane>(
-              value: _ComposerImagePane.card,
-              icon: Icon(Icons.dashboard_customize_outlined),
-              label: Text('Card'),
-            ),
-          ],
-          selected: <_ComposerImagePane>{_imagePane},
-          onSelectionChanged: (value) =>
-              setState(() => _imagePane = value.first),
-        ),
-        const SizedBox(height: 10),
-        if (_imagePane == _ComposerImagePane.card) ...[
+        if (widget.editTarget != _ComposerEditTarget.post) ...[
+          SegmentedButton<_ComposerImagePane>(
+            segments: const <ButtonSegment<_ComposerImagePane>>[
+              ButtonSegment<_ComposerImagePane>(
+                value: _ComposerImagePane.post,
+                icon: Icon(Icons.image_outlined),
+                label: Text('Post'),
+              ),
+              ButtonSegment<_ComposerImagePane>(
+                value: _ComposerImagePane.card,
+                icon: Icon(Icons.dashboard_customize_outlined),
+                label: Text('Card'),
+              ),
+            ],
+            selected: <_ComposerImagePane>{_imagePane},
+            onSelectionChanged: (value) =>
+                setState(() => _imagePane = value.first),
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (widget.editTarget != _ComposerEditTarget.post &&
+            _imagePane == _ComposerImagePane.card) ...[
           SegmentedButton<String>(
             segments: <ButtonSegment<String>>[
               ButtonSegment<String>(
@@ -10551,6 +10576,10 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         child: EditableImageStage(
           payload: payload,
           onChanged: (next) {
+            if (widget.editTarget == _ComposerEditTarget.post) {
+              _setActiveEditPayload(next);
+              return;
+            }
             if (_cardSourceKind != 'custom') {
               _cardSourceKind = 'custom';
             }
@@ -10563,7 +10592,9 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
           },
           fit: BoxFit.cover,
           backgroundColor: Colors.transparent,
-          emptyLabel: 'Choose a card image.',
+          emptyLabel: widget.editTarget == _ComposerEditTarget.post
+              ? 'Choose a post image.'
+              : 'Choose a card image.',
         ),
       ),
     );
@@ -11360,7 +11391,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                           fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
                   Text(
-                    'Adjust blur strength for post and collection detail backgrounds.',
+                    'Adjust blur strength for post and collection detail backgrounds and SVG cards.',
                     style: TextStyle(color: cs.onSurfaceVariant),
                   ),
                   const SizedBox(height: 10),
@@ -11377,6 +11408,14 @@ class _SettingsTabState extends State<_SettingsTab> {
                     min: 0,
                     max: 100,
                     onChanged: AppearanceSettingsService.instance.updateSigmaY,
+                  ),
+                  _appearanceSlider(
+                    label: 'SVG Card Blur',
+                    value: settings.svgCardBlurSigma,
+                    min: 0,
+                    max: 100,
+                    onChanged: AppearanceSettingsService
+                        .instance.updateSvgCardBlurSigma,
                   ),
                 ],
               );
