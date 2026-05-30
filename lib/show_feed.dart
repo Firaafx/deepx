@@ -19,6 +19,7 @@ import 'models/notification_item.dart';
 import 'models/preset_comment.dart';
 import 'models/profile_stats.dart';
 import 'models/render_preset.dart';
+import 'models/three_d_payload.dart';
 import 'models/watch_later_item.dart';
 import 'rendering_support.dart';
 import 'services/app_repository.dart';
@@ -33,6 +34,7 @@ import 'widgets/editable_image_stage.dart';
 import 'widgets/preset_viewer.dart';
 import 'widgets/query_feedback.dart';
 import 'widgets/svg_card_shell.dart';
+import 'widgets/three_d_viewer.dart';
 
 enum _ShellTab {
   home,
@@ -2339,12 +2341,11 @@ class _NavButtonState extends State<_NavButton> {
   Widget build(BuildContext context) {
     final Color fg =
         widget.active ? Colors.black : widget.colorScheme.onSurface;
-    Color bg = Colors.transparent;
-    if (widget.active) {
-      bg = Colors.white;
-    } else if (_hovered) {
-      bg = widget.colorScheme.onSurface.withValues(alpha: 0.12);
-    }
+    final Color bg = widget.active
+        ? Colors.white
+        : (_hovered
+            ? widget.colorScheme.onSurface.withValues(alpha: 0.12)
+            : Colors.transparent);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -2352,35 +2353,119 @@ class _NavButtonState extends State<_NavButton> {
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
           onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
             height: 48,
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                Icon(widget.icon, color: fg, size: 24),
-                if (widget.expanded) ...[
-                  const SizedBox(width: 12),
-                  Text(
-                    widget.label,
-                    style: TextStyle(
-                      color: fg,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                    ),
-                  ),
-                ],
+                _ParallelogramHighlight(color: bg),
+                Row(
+                  children: [
+                    Icon(widget.icon, color: fg, size: 24),
+                    if (widget.expanded) ...[
+                      const SizedBox(width: 12),
+                      Text(
+                        widget.label,
+                        style: TextStyle(
+                          color: fg,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ParallelogramHighlight extends StatelessWidget {
+  const _ParallelogramHighlight({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (color.a <= 0) return const SizedBox.shrink();
+    return ClipPath(
+      clipper: const _ParallelogramHighlightClipper(),
+      child: ColoredBox(color: color),
+    );
+  }
+}
+
+class _ParallelogramHighlightClipper extends CustomClipper<Path> {
+  const _ParallelogramHighlightClipper();
+
+  static const Size _source = Size(996, 238);
+
+  @override
+  Path getClip(Size size) {
+    double sx(double value) => value / _source.width * size.width;
+    double sy(double value) => value / _source.height * size.height;
+    return Path()
+      ..moveTo(sx(63.064), sy(38.47))
+      ..cubicTo(sx(71.974), sy(15.293), sx(94.24), sy(0), sx(119.068), sy(0))
+      ..lineTo(sx(965.679), sy(0))
+      ..cubicTo(
+          sx(986.731), sy(0), sx(1001.24), sy(21.116), sx(993.681), sy(40.765))
+      ..lineTo(sx(932.643), sy(199.531))
+      ..cubicTo(
+          sx(923.733), sy(222.707), sx(901.469), sy(238), sx(876.64), sy(238))
+      ..lineTo(sx(30.028), sy(238))
+      ..cubicTo(
+          sx(8.977), sy(238), sx(-5.528), sy(216.884), sx(2.026), sy(197.235))
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant _ParallelogramHighlightClipper oldClipper) {
+    return false;
+  }
+}
+
+class _ParallelogramListTile extends StatefulWidget {
+  const _ParallelogramListTile({
+    required this.active,
+    required this.activeColor,
+    required this.hoverColor,
+    required this.child,
+  });
+
+  final bool active;
+  final Color activeColor;
+  final Color hoverColor;
+  final Widget child;
+
+  @override
+  State<_ParallelogramListTile> createState() => _ParallelogramListTileState();
+}
+
+class _ParallelogramListTileState extends State<_ParallelogramListTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color bg = widget.active
+        ? widget.activeColor
+        : (_hovered ? widget.hoverColor : Colors.transparent);
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Stack(
+        children: [
+          Positioned.fill(child: _ParallelogramHighlight(color: bg)),
+          widget.child,
+        ],
       ),
     );
   }
@@ -3888,6 +3973,17 @@ class _SharedPresetPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (isThreeDPayload(payload)) {
+      final Widget viewer = ThreeDViewer(payload: payload);
+      if (clipper != null) {
+        return ClipPath(
+          clipper: clipper!,
+          clipBehavior: Clip.antiAlias,
+          child: viewer,
+        );
+      }
+      return ClipRRect(borderRadius: borderRadius, child: viewer);
+    }
     final String imageUrl = imageUrlFromPayload(payload)?.trim() ?? '';
     final Widget base = imageUrl.isEmpty
         ? (emptyChild != null
@@ -5381,17 +5477,29 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   final AppRepository _repository = AppRepository.instance;
   final TextEditingController _collectionNameController =
       TextEditingController(text: 'My Collection');
+  final TextEditingController _threeDTitleController =
+      TextEditingController(text: '3D Scene');
+  final TextEditingController _threeDDescriptionController =
+      TextEditingController();
 
   int _postTypeIndex = 0;
   int _selectedItemIndex = -1;
   bool _uploading = false;
   bool _openingComposer = false;
+  bool _threeDProcessing = false;
+  double _threeDProgress = 0;
+  String _threeDStage = '';
   Map<String, dynamic>? _singlePayload;
+  Map<String, dynamic>? _threeDAssetPayload;
+  Map<String, dynamic>? _threeDThumbnailPayload;
+  final List<UploadedAsset> _threeDSourceImages = <UploadedAsset>[];
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
 
   @override
   void dispose() {
     _collectionNameController.dispose();
+    _threeDTitleController.dispose();
+    _threeDDescriptionController.dispose();
     super.dispose();
   }
 
@@ -5435,6 +5543,282 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  String _extensionForFile(String name) {
+    final int dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return '';
+    return name.substring(dot + 1).toLowerCase();
+  }
+
+  Future<void> _uploadThreeDThumbnail() async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _uploading = true;
+      _threeDProgress = 0.1;
+      _threeDStage = 'Uploading thumbnail...';
+    });
+    try {
+      final file = await pickDeviceFile(accept: 'image/*');
+      if (file == null) {
+        if (mounted) {
+          setState(() => _threeDStage = 'Thumbnail upload cancelled');
+        }
+        return;
+      }
+      final publicUrl = await _repository.uploadAssetBytes(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: 'card-images',
+      );
+      setState(() {
+        _threeDThumbnailPayload = simpleImagePayload(
+          imageUrl: publicUrl,
+          editor: 'three_d_thumbnail',
+          meta: <String, dynamic>{'sourceName': file.name},
+        );
+        _threeDProgress = 1;
+        _threeDStage = 'Thumbnail ready';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Thumbnail upload failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _uploadThreeDSourceImage() async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _uploading = true;
+      _threeDProgress = 0.08;
+      _threeDStage = 'Uploading source image...';
+    });
+    try {
+      final file = await pickDeviceFile(accept: 'image/*');
+      if (file == null) {
+        if (mounted) setState(() => _threeDStage = 'Source upload cancelled');
+        return;
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: '3d-sources',
+        bucket: AppRepository.sourceImagesBucket,
+      );
+      setState(() {
+        _threeDSourceImages.add(asset);
+        _threeDProgress =
+            (_threeDSourceImages.length / 3).clamp(0.15, 1).toDouble();
+        _threeDStage = _threeDSourceImages.length < 3
+            ? 'Add ${3 - _threeDSourceImages.length} more source image(s).'
+            : 'Source set ready';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Source image upload failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _uploadManualThreeDAsset({
+    required DeepXMediaType mediaType,
+    required String accept,
+    required Set<String> allowedExtensions,
+  }) async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _uploading = true;
+      _threeDProcessing = true;
+      _threeDProgress = 0.12;
+      _threeDStage = 'Uploading 3D asset...';
+    });
+    try {
+      final file = await pickDeviceFile(accept: accept);
+      if (file == null) {
+        if (mounted) setState(() => _threeDStage = '3D upload cancelled');
+        return;
+      }
+      final String ext = _extensionForFile(file.name);
+      if (!allowedExtensions.contains(ext)) {
+        throw Exception('Unsupported file type .$ext');
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: mediaType == DeepXMediaType.gaussianSplat
+            ? 'gaussian-splats'
+            : 'triangle-meshes',
+        bucket: AppRepository.threeDAssetsBucket,
+      );
+      setState(() {
+        _threeDAssetPayload = simpleThreeDPayload(
+          mediaType: mediaType,
+          assetUrl: asset.publicUrl,
+          assetPath: asset.path,
+          format: ext,
+          contentType: file.contentType,
+          byteSize: file.bytes.length,
+          sourceKind: 'manual',
+          meta: <String, dynamic>{'sourceName': file.name},
+        );
+        _threeDProgress = 1;
+        _threeDStage = '3D asset ready';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('3D upload failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploading = false;
+          _threeDProcessing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _publishManualThreeDPost() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final payload = _threeDAssetPayload;
+    final thumbnail = _threeDThumbnailPayload;
+    if (payload == null || threeDAssetFromPayload(payload) == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Upload a 3D asset first.')),
+      );
+      return;
+    }
+    if (thumbnail == null || imageUrlFromPayload(thumbnail) == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Upload a thumbnail first.')),
+      );
+      return;
+    }
+    if (_threeDProcessing) return;
+    setState(() {
+      _threeDProcessing = true;
+      _threeDStage = 'Publishing...';
+      _threeDProgress = 0.8;
+    });
+    try {
+      await _repository.publishPresetPost(
+        name: _threeDTitleController.text.trim().isEmpty
+            ? '3D Scene'
+            : _threeDTitleController.text.trim(),
+        payload: payload,
+        title: _threeDTitleController.text.trim(),
+        description: _threeDDescriptionController.text.trim(),
+        tags: const <String>[],
+        mentionUserIds: const <String>[],
+        visibility: 'public',
+        thumbnailPayload: thumbnail,
+      );
+      if (!mounted) return;
+      setState(() {
+        _threeDAssetPayload = null;
+        _threeDProgress = 1;
+        _threeDStage = 'Published';
+      });
+      messenger.showSnackBar(
+        const SnackBar(content: Text('3D post published successfully.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('Publish failed: $e')));
+    } finally {
+      if (mounted) setState(() => _threeDProcessing = false);
+    }
+  }
+
+  Future<void> _startInstantSplatJob() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final thumbnail = _threeDThumbnailPayload;
+    if (_threeDSourceImages.length < 3) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Upload at least 3 source images.')),
+      );
+      return;
+    }
+    if (thumbnail == null || imageUrlFromPayload(thumbnail) == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Upload a thumbnail first.')),
+      );
+      return;
+    }
+    if (_threeDProcessing) return;
+    setState(() {
+      _threeDProcessing = true;
+      _threeDProgress = 0.05;
+      _threeDStage = 'Creating job...';
+    });
+    try {
+      final String jobId = await _repository.createSplatGenerationJob(
+        title: _threeDTitleController.text.trim(),
+        description: _threeDDescriptionController.text.trim(),
+        tags: const <String>[],
+        mentionUserIds: const <String>[],
+        visibility: 'public',
+        sourceImagePaths: _threeDSourceImages.map((e) => e.path).toList(),
+        thumbnailPayload: thumbnail,
+      );
+      setState(() {
+        _threeDProgress = 0.12;
+        _threeDStage = 'Starting InstantSplat...';
+      });
+      await _repository.startInstantSplatWorker(jobId);
+      await _pollSplatJob(jobId);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _threeDStage = 'Failed');
+      messenger.showSnackBar(SnackBar(content: Text('3DGS job failed: $e')));
+    } finally {
+      if (mounted) setState(() => _threeDProcessing = false);
+    }
+  }
+
+  Future<void> _pollSplatJob(String jobId) async {
+    for (int i = 0; i < 240; i++) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      final job = await _repository.fetchSplatGenerationJob(jobId);
+      if (!mounted || job == null) return;
+      final String status = job['status']?.toString() ?? 'queued';
+      final int progress = job['progress'] is num
+          ? (job['progress'] as num).toInt()
+          : int.tryParse(job['progress']?.toString() ?? '') ?? 0;
+      setState(() {
+        _threeDProgress = progress.clamp(0, 100) / 100;
+        _threeDStage = job['stage']?.toString() ?? status;
+      });
+      if (status == 'succeeded') {
+        setState(() {
+          _threeDSourceImages.clear();
+          _threeDProgress = 1;
+          _threeDStage = 'Published';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('3DGS post published successfully.')),
+        );
+        return;
+      }
+      if (status == 'failed') {
+        throw Exception(job['error_message']?.toString() ?? 'Worker failed.');
+      }
+    }
+    throw Exception('Timed out waiting for InstantSplat.');
   }
 
   Future<void> _openSingleComposer() async {
@@ -5519,6 +5903,30 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   }
 
   Widget _buildPreview(ColorScheme cs) {
+    if (_postTypeIndex >= 2) {
+      final payload = _threeDAssetPayload ?? _threeDThumbnailPayload;
+      if (payload != null) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: _SharedPresetPreview(
+            payload: payload,
+            borderRadius: BorderRadius.circular(16),
+            fit: BoxFit.contain,
+          ),
+        );
+      }
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+        ),
+        child: Center(
+          child: Icon(Icons.view_in_ar_outlined,
+              color: cs.onSurfaceVariant, size: 56),
+        ),
+      );
+    }
     final Map<String, dynamic>? payload = _postTypeIndex == 0
         ? _singlePayload
         : (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length
@@ -5551,6 +5959,9 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final bool collectionMode = _postTypeIndex == 1;
+    final bool train3dMode = _postTypeIndex == 2;
+    final bool manualSplatMode = _postTypeIndex == 3;
+    final bool threeDMode = _postTypeIndex >= 2;
     return Padding(
       padding: EdgeInsets.fromLTRB(14, widget.topInset + 14, 14, 14),
       child: Row(
@@ -5570,23 +5981,43 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       ),
                     ),
                     const Spacer(),
-                    SegmentedButton<int>(
-                      segments: const <ButtonSegment<int>>[
-                        ButtonSegment<int>(
-                          value: 0,
-                          icon: Icon(Icons.image_outlined),
-                          label: Text('Single'),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SegmentedButton<int>(
+                          segments: const <ButtonSegment<int>>[
+                            ButtonSegment<int>(
+                              value: 0,
+                              icon: Icon(Icons.image_outlined),
+                              label: Text('Single'),
+                            ),
+                            ButtonSegment<int>(
+                              value: 1,
+                              icon: Icon(Icons.collections_outlined),
+                              label: Text('Collection'),
+                            ),
+                            ButtonSegment<int>(
+                              value: 2,
+                              icon: Icon(Icons.auto_awesome_motion_outlined),
+                              label: Text('Train 3DGS'),
+                            ),
+                            ButtonSegment<int>(
+                              value: 3,
+                              icon: Icon(Icons.blur_on_rounded),
+                              label: Text('Gaussian'),
+                            ),
+                            ButtonSegment<int>(
+                              value: 4,
+                              icon: Icon(Icons.view_in_ar_outlined),
+                              label: Text('Mesh'),
+                            ),
+                          ],
+                          selected: <int>{_postTypeIndex},
+                          onSelectionChanged: (value) {
+                            setState(() => _postTypeIndex = value.first);
+                          },
                         ),
-                        ButtonSegment<int>(
-                          value: 1,
-                          icon: Icon(Icons.collections_outlined),
-                          label: Text('Collection'),
-                        ),
-                      ],
-                      selected: <int>{_postTypeIndex},
-                      onSelectionChanged: (value) {
-                        setState(() => _postTypeIndex = value.first);
-                      },
+                      ),
                     ),
                   ],
                 ),
@@ -5607,19 +6038,107 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               child: ListView(
                 padding: const EdgeInsets.all(14),
                 children: [
-                  FilledButton.icon(
-                    onPressed: _uploading ? null : _uploadImage,
-                    icon: _uploading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.upload_file_rounded),
-                    label: Text(_uploading ? 'Uploading...' : 'Upload Image'),
-                  ),
-                  const SizedBox(height: 14),
-                  if (collectionMode) ...[
+                  if (!threeDMode) ...[
+                    FilledButton.icon(
+                      onPressed: _uploading ? null : _uploadImage,
+                      icon: _uploading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.upload_file_rounded),
+                      label: Text(_uploading ? 'Uploading...' : 'Upload Image'),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  if (threeDMode) ...[
+                    TextField(
+                      controller: _threeDTitleController,
+                      decoration: const InputDecoration(labelText: 'Title'),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _threeDDescriptionController,
+                      maxLines: 2,
+                      decoration:
+                          const InputDecoration(labelText: 'Description'),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: _uploading ? null : _uploadThreeDThumbnail,
+                      icon: const Icon(Icons.image_outlined),
+                      label: Text(_threeDThumbnailPayload == null
+                          ? 'Upload Thumbnail'
+                          : 'Replace Thumbnail'),
+                    ),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: (_threeDProcessing || _uploading)
+                          ? _threeDProgress.clamp(0, 1).toDouble()
+                          : (_threeDProgress > 0
+                              ? _threeDProgress.clamp(0, 1).toDouble()
+                              : null),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _threeDStage.isEmpty
+                          ? 'Upload a thumbnail and 3D source.'
+                          : _threeDStage,
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 10),
+                    if (train3dMode) ...[
+                      FilledButton.icon(
+                        onPressed: _uploading ? null : _uploadThreeDSourceImage,
+                        icon: const Icon(Icons.add_photo_alternate_outlined),
+                        label: Text(
+                          'Add Source Image (${_threeDSourceImages.length}/3+)',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Upload 3 or more angles of the same scene.',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed:
+                            _threeDProcessing ? null : _startInstantSplatJob,
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: Text(
+                          _threeDProcessing ? 'Processing...' : 'Generate 3DGS',
+                        ),
+                      ),
+                    ] else ...[
+                      FilledButton.icon(
+                        onPressed: _uploading
+                            ? null
+                            : () => _uploadManualThreeDAsset(
+                                  mediaType: manualSplatMode
+                                      ? DeepXMediaType.gaussianSplat
+                                      : DeepXMediaType.triangleMesh,
+                                  accept: manualSplatMode
+                                      ? '.ply,.splat,.ksplat'
+                                      : '.glb,.gltf',
+                                  allowedExtensions: manualSplatMode
+                                      ? const <String>{'ply', 'splat', 'ksplat'}
+                                      : const <String>{'glb', 'gltf'},
+                                ),
+                        icon: const Icon(Icons.upload_file_rounded),
+                        label: Text(
+                            manualSplatMode ? 'Upload Splat' : 'Upload Mesh'),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed:
+                            _threeDProcessing ? null : _publishManualThreeDPost,
+                        icon: const Icon(Icons.publish_rounded),
+                        label:
+                            Text(_threeDProcessing ? 'Publishing...' : 'Post'),
+                      ),
+                    ],
+                  ] else if (collectionMode) ...[
                     TextField(
                       controller: _collectionNameController,
                       decoration: const InputDecoration(
@@ -9079,40 +9598,40 @@ class _ChatTabState extends State<_ChatTab> {
                                   horizontal: 8,
                                   vertical: 2,
                                 ),
-                                child: Material(
-                                  color: active
-                                      ? Colors.white
-                                      : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(14),
-                                  child: ListTile(
-                                    selected: active,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    selectedTileColor: Colors.transparent,
-                                    title: Text(
-                                      chat.titleFor(
-                                          _repository.currentUser?.id ?? ''),
-                                      style: TextStyle(
-                                        color: active
-                                            ? Colors.black
-                                            : cs.onSurface,
+                                child: _ParallelogramListTile(
+                                  active: active,
+                                  activeColor: Colors.white,
+                                  hoverColor:
+                                      cs.onSurface.withValues(alpha: 0.10),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: ListTile(
+                                      selected: active,
+                                      selectedTileColor: Colors.transparent,
+                                      title: Text(
+                                        chat.titleFor(
+                                            _repository.currentUser?.id ?? ''),
+                                        style: TextStyle(
+                                          color: active
+                                              ? Colors.black
+                                              : cs.onSurface,
+                                        ),
                                       ),
-                                    ),
-                                    subtitle: Text(
-                                      chat.lastMessage ??
-                                          (chat.isGroup
-                                              ? 'Group chat'
-                                              : 'Direct message'),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: active
-                                            ? Colors.black54
-                                            : cs.onSurfaceVariant,
+                                      subtitle: Text(
+                                        chat.lastMessage ??
+                                            (chat.isGroup
+                                                ? 'Group chat'
+                                                : 'Direct message'),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: active
+                                              ? Colors.black54
+                                              : cs.onSurfaceVariant,
+                                        ),
                                       ),
+                                      onTap: () => _selectChat(chat),
                                     ),
-                                    onTap: () => _selectChat(chat),
                                   ),
                                 ),
                               );
@@ -11110,26 +11629,33 @@ class _SettingsTabState extends State<_SettingsTab> {
     final bool selected = _selectedSection == section;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      child: Material(
-        color: selected ? Colors.white : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: ListTile(
-          selected: selected,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          selectedTileColor: Colors.transparent,
-          leading:
-              Icon(icon, color: selected ? Colors.black : cs.onSurfaceVariant),
-          title: Text(label,
-              style: TextStyle(color: selected ? Colors.black : cs.onSurface)),
-          subtitle: subtitle == null
-              ? null
-              : Text(
-                  subtitle,
-                  style: TextStyle(
-                      color: selected ? Colors.black54 : cs.onSurfaceVariant),
-                ),
-          onTap: () => setState(() => _selectedSection = section),
+      child: _ParallelogramListTile(
+        active: selected,
+        activeColor: Colors.white,
+        hoverColor: cs.onSurface.withValues(alpha: 0.10),
+        child: Material(
+          color: Colors.transparent,
+          child: ListTile(
+            selected: selected,
+            selectedTileColor: Colors.transparent,
+            leading: Icon(
+              icon,
+              color: selected ? Colors.black : cs.onSurfaceVariant,
+            ),
+            title: Text(
+              label,
+              style: TextStyle(color: selected ? Colors.black : cs.onSurface),
+            ),
+            subtitle: subtitle == null
+                ? null
+                : Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: selected ? Colors.black54 : cs.onSurfaceVariant,
+                    ),
+                  ),
+            onTap: () => setState(() => _selectedSection = section),
+          ),
         ),
       ),
     );

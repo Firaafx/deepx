@@ -62,15 +62,20 @@
         .light-card { background: rgba(255,255,255,0.05); padding: 8px; border: 1px solid rgba(255,255,255,0.1); margin-top: 8px; border-radius: 4px; }
         #toggle-btns { position: absolute; bottom: 20px; left: 20px; z-index: 1001; display: flex; gap: 12px; }
         #white-cursor {
-            position: absolute; width: 16px; height: 16px; background-color: white; border-radius: 50%; border: 2px solid #651fff;
-            z-index: 9999; pointer-events: none; box-shadow: 0 0 8px rgba(255,255,255,0.5); will-change: transform;
+            position: absolute; width: 26px; height: 31px;
+            z-index: 9999; pointer-events: none; will-change: transform;
+            transform: translate3d(-100px, -100px, 0);
         }
+        #white-cursor svg { display: block; width: 100%; height: 100%; overflow: visible; }
         .btn-small { width: 40px; padding: 8px 0; background: linear-gradient(135deg, #ff1744, #b71c1c); color: white; margin-left: 5px; border-radius: 4px; box-shadow: 0 4px 15px rgba(244,67,54,0.4); }
         .btn-small:hover, .btn-small.fake-hover { box-shadow: 0 6px 20px rgba(244,67,54,0.6); }
         .btn-inc { width: 28px; padding: 4px 0; background: rgba(255,255,255,0.05); color: #00b8d4; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); }
         .btn-inc:hover, .btn-inc.fake-hover { background: rgba(255,255,255,0.1); }
         .slider-wrap { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 160px; }
         .slider-wrap input[type=range] { flex: 1; }
+        .gesture-status { font-size: 11px; color: #00e5ff; line-height: 1.4; margin-top: 6px; min-height: 32px; }
+        .btn-row { display: flex; gap: 8px; }
+        .btn-row .btn { flex: 1; }
         select option { background: #242424; color: #e0e0e0; }
         #cal-dot {
             position: absolute; width: 20px; height: 20px; background: red; border-radius: 50%; z-index: 2001; display: none;
@@ -115,6 +120,7 @@
             <option value="iris">Iris Neural Link</option>
             <option value="head" selected>Head Pose Sync</option>
             <option value="hand">Hand Neural Link</option>
+            <option value="auto">Auto Head/Hand</option>
         </select>
         <label>Performance Mode</label>
         <select id="perf-mode-host">
@@ -138,19 +144,33 @@
             <label>Full Screen</label>
             <input type="checkbox" id="full-screen-host">
         </div>
-        <label>H-Sensitivity <span id="h-val" class="val-display">100</span></label>
+        <label>Head Cursor Speed <span id="head-cursor-speed-val" class="val-display">100</span></label>
         <div class="slider-wrap">
-            <input type="range" id="h-sens" min="1" max="1000" step="0.001" value="100">
-            <input type="number" id="h-sens-num" step="0.001" value="100">
-            <button class="btn-inc" id="h-sens-minus">-</button>
-            <button class="btn-inc" id="h-sens-plus">+</button>
+            <input type="range" id="head-cursor-speed" min="1" max="1000" step="0.001" value="100">
+            <input type="number" id="head-cursor-speed-num" step="0.001" value="100">
+            <button class="btn-inc" id="head-cursor-speed-minus">-</button>
+            <button class="btn-inc" id="head-cursor-speed-plus">+</button>
         </div>
-        <label>V-Sensitivity <span id="v-val" class="val-display">100</span></label>
+        <label>Head Cursor Acceleration <span id="head-cursor-accel-val" class="val-display">1.000</span></label>
         <div class="slider-wrap">
-            <input type="range" id="v-sens" min="1" max="1000" step="0.001" value="100">
-            <input type="number" id="v-sens-num" step="0.001" value="100">
-            <button class="btn-inc" id="v-sens-minus">-</button>
-            <button class="btn-inc" id="v-sens-plus">+</button>
+            <input type="range" id="head-cursor-accel" min="0.001" max="10" step="0.001" value="1">
+            <input type="number" id="head-cursor-accel-num" step="0.001" value="1">
+            <button class="btn-inc" id="head-cursor-accel-minus">-</button>
+            <button class="btn-inc" id="head-cursor-accel-plus">+</button>
+        </div>
+        <label>Hand Cursor Speed <span id="hand-cursor-speed-val" class="val-display">500</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="hand-cursor-speed" min="1" max="1000" step="0.001" value="500">
+            <input type="number" id="hand-cursor-speed-num" step="0.001" value="500">
+            <button class="btn-inc" id="hand-cursor-speed-minus">-</button>
+            <button class="btn-inc" id="hand-cursor-speed-plus">+</button>
+        </div>
+        <label>Hand Cursor Acceleration <span id="hand-cursor-accel-val" class="val-display">6.000</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="hand-cursor-accel" min="0.001" max="10" step="0.001" value="6">
+            <input type="number" id="hand-cursor-accel-num" step="0.001" value="6">
+            <button class="btn-inc" id="hand-cursor-accel-minus">-</button>
+            <button class="btn-inc" id="hand-cursor-accel-plus">+</button>
         </div>
         <label>Smoothing <span id="s-val" class="val-display">85%</span></label>
         <div class="slider-wrap">
@@ -202,129 +222,18 @@
             <button class="btn-inc" id="dz-hand-y-minus">-</button>
             <button class="btn-inc" id="dz-hand-y-plus">+</button>
         </div>
-        <div class="section-title">Head Acceleration</div>
-        <label>Head Slow X <span id="head-slow-x-val" class="val-display">0.100</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="head-slow-x" min="0.001" max="10" step="0.001" value="0.1">
-            <input type="number" id="head-slow-x-num" step="0.001" value="0.1">
-            <button class="btn-inc" id="head-slow-x-minus">-</button>
-            <button class="btn-inc" id="head-slow-x-plus">+</button>
-        </div>
-        <label>Head Fast X <span id="head-fast-x-val" class="val-display">1.000</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="head-fast-x" min="0.001" max="10" step="0.001" value="1">
-            <input type="number" id="head-fast-x-num" step="0.001" value="1">
-            <button class="btn-inc" id="head-fast-x-minus">-</button>
-            <button class="btn-inc" id="head-fast-x-plus">+</button>
-        </div>
-        <label>Head Transition X <span id="head-trans-x-val" class="val-display">5.000</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="head-trans-x" min="0.001" max="10" step="0.001" value="5">
-            <input type="number" id="head-trans-x-num" step="0.001" value="5">
-            <button class="btn-inc" id="head-trans-x-minus">-</button>
-            <button class="btn-inc" id="head-trans-x-plus">+</button>
-        </div>
-        <label>Head Slow Y <span id="head-slow-y-val" class="val-display">0.100</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="head-slow-y" min="0.001" max="10" step="0.001" value="0.1">
-            <input type="number" id="head-slow-y-num" step="0.001" value="0.1">
-            <button class="btn-inc" id="head-slow-y-minus">-</button>
-            <button class="btn-inc" id="head-slow-y-plus">+</button>
-        </div>
-        <label>Head Fast Y <span id="head-fast-y-val" class="val-display">1.000</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="head-fast-y" min="0.001" max="10" step="0.001" value="1">
-            <input type="number" id="head-fast-y-num" step="0.001" value="1">
-            <button class="btn-inc" id="head-fast-y-minus">-</button>
-            <button class="btn-inc" id="head-fast-y-plus">+</button>
-        </div>
-        <label>Head Transition Y <span id="head-trans-y-val" class="val-display">5.000</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="head-trans-y" min="0.001" max="10" step="0.001" value="5">
-            <input type="number" id="head-trans-y-num" step="0.001" value="5">
-            <button class="btn-inc" id="head-trans-y-minus">-</button>
-            <button class="btn-inc" id="head-trans-y-plus">+</button>
-        </div>
-        <div class="section-title">Hand Acceleration</div>
-        <label>Hand Slow X <span id="hand-slow-x-val" class="val-display">1.000</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="hand-slow-x" min="0.001" max="10" step="0.001" value="1">
-            <input type="number" id="hand-slow-x-num" step="0.001" value="1">
-            <button class="btn-inc" id="hand-slow-x-minus">-</button>
-            <button class="btn-inc" id="hand-slow-x-plus">+</button>
-        </div>
-        <label>Hand Fast X <span id="hand-fast-x-val" class="val-display">10.000</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="hand-fast-x" min="0.001" max="10" step="0.001" value="10">
-            <input type="number" id="hand-fast-x-num" step="0.001" value="10">
-            <button class="btn-inc" id="hand-fast-x-minus">-</button>
-            <button class="btn-inc" id="hand-fast-x-plus">+</button>
-        </div>
-        <label>Hand Transition X <span id="hand-trans-x-val" class="val-display">0.001</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="hand-trans-x" min="0.001" max="10" step="0.001" value="0.001">
-            <input type="number" id="hand-trans-x-num" step="0.001" value="0.001">
-            <button class="btn-inc" id="hand-trans-x-minus">-</button>
-            <button class="btn-inc" id="hand-trans-x-plus">+</button>
-        </div>
-        <label>Hand Slow Y <span id="hand-slow-y-val" class="val-display">1.000</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="hand-slow-y" min="0.001" max="10" step="0.001" value="1">
-            <input type="number" id="hand-slow-y-num" step="0.001" value="1">
-            <button class="btn-inc" id="hand-slow-y-minus">-</button>
-            <button class="btn-inc" id="hand-slow-y-plus">+</button>
-        </div>
-        <label>Hand Fast Y <span id="hand-fast-y-val" class="val-display">10.000</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="hand-fast-y" min="0.001" max="10" step="0.001" value="10">
-            <input type="number" id="hand-fast-y-num" step="0.001" value="10">
-            <button class="btn-inc" id="hand-fast-y-minus">-</button>
-            <button class="btn-inc" id="hand-fast-y-plus">+</button>
-        </div>
-        <label>Hand Transition Y <span id="hand-trans-y-val" class="val-display">0.001</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="hand-trans-y" min="0.001" max="10" step="0.001" value="0.001">
-            <input type="number" id="hand-trans-y-num" step="0.001" value="0.001">
-            <button class="btn-inc" id="hand-trans-y-minus">-</button>
-            <button class="btn-inc" id="hand-trans-y-plus">+</button>
-        </div>
         <div class="section-title">Wink Detection</div>
-        <label>Left Closed Thresh <span id="lct-val" class="val-display">0.180</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="left-closed-thresh" min="0" max="1" step="0.001" value="0.180">
-            <input type="number" id="left-closed-thresh-num" step="0.001" value="0.180">
-            <button class="btn-inc" id="left-closed-thresh-minus">-</button>
-            <button class="btn-inc" id="left-closed-thresh-plus">+</button>
+        <div class="btn-row">
+            <button id="record-wink" class="btn btn-capture" type="button">Record Wink</button>
+            <button id="reset-wink" class="btn btn-small" type="button">Reset</button>
         </div>
-        <label>Left Open Thresh <span id="lot-val" class="val-display">0.250</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="left-open-thresh" min="0" max="1" step="0.001" value="0.250">
-            <input type="number" id="left-open-thresh-num" step="0.001" value="0.250">
-            <button class="btn-inc" id="left-open-thresh-minus">-</button>
-            <button class="btn-inc" id="left-open-thresh-plus">+</button>
-        </div>
-        <label>Right Closed Thresh <span id="rct-val" class="val-display">0.180</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="right-closed-thresh" min="0" max="1" step="0.001" value="0.180">
-            <input type="number" id="right-closed-thresh-num" step="0.001" value="0.180">
-            <button class="btn-inc" id="right-closed-thresh-minus">-</button>
-            <button class="btn-inc" id="right-closed-thresh-plus">+</button>
-        </div>
-        <label>Right Open Thresh <span id="rot-val" class="val-display">0.250</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="right-open-thresh" min="0" max="1" step="0.001" value="0.250">
-            <input type="number" id="right-open-thresh-num" step="0.001" value="0.250">
-            <button class="btn-inc" id="right-open-thresh-minus">-</button>
-            <button class="btn-inc" id="right-open-thresh-plus">+</button>
-        </div>
+        <div id="wink-record-status" class="gesture-status">Use defaults or record both eyes for best results.</div>
         <div class="section-title">Pinch Detection</div>
-        <label>Pinch Thresh <span id="pt-val" class="val-display">0.050</span></label>
-        <div class="slider-wrap">
-            <input type="range" id="pinch-thresh" min="0.01" max="0.2" step="0.001" value="0.050">
-            <input type="number" id="pinch-thresh-num" step="0.001" value="0.050">
-            <button class="btn-inc" id="pinch-thresh-minus">-</button>
-            <button class="btn-inc" id="pinch-thresh-plus">+</button>
+        <div class="btn-row">
+            <button id="record-pinch" class="btn btn-capture" type="button">Record Pinch</button>
+            <button id="reset-pinch" class="btn btn-small" type="button">Reset</button>
         </div>
+        <div id="pinch-record-status" class="gesture-status">Use default pinch distance or record your own.</div>
         <button id="stop-connection" class="btn btn-small">Stop Connection</button>
     </div>
     <div id="client-panel">
@@ -354,7 +263,26 @@
     <div id="toggle-btns">
         <button class="btn btn-capture" id="toggle-tracker-ui" style="width:120px;">HUD UI</button>
     </div>
-    <div id="white-cursor"></div>
+    <div id="white-cursor">
+        <svg width="179" height="216" viewBox="0 0 179 216" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <foreignObject x="9.72748e-05" y="-4.90039" width="178.115" height="220.089"><div xmlns="http://www.w3.org/1999/xhtml" style="backdrop-filter:blur(6px);clip-path:url(#bgblur_0_81_4_clip_path);height:100%;width:100%"></div></foreignObject><g filter="url(#filter0_d_81_4)" data-figma-bg-blur-radius="12">
+            <path d="M30.1003 109.328V51.5087C30.1003 34.2633 30.1003 25.6406 35.5787 22.8633C41.0571 20.0861 48.0122 25.183 61.9224 35.3768L107.471 68.756C122.348 79.6582 129.786 85.1093 132.731 94.5173C135.676 103.925 133.329 110.742 128.635 124.375C125.65 133.045 121.729 141.151 116.321 150.1C112.627 156.213 110.781 159.269 107.309 161.207C103.838 163.145 100.197 163.112 92.9137 163.046C84.2678 162.968 76.6107 162.457 69.1197 161.329C52.7898 158.87 44.6249 157.64 37.3626 149.203C30.1003 140.765 30.1003 130.286 30.1003 109.328Z" fill="black" fill-opacity="0.7" shape-rendering="crispEdges"/>
+            <path d="M32.7615 15.8975C38.6918 13.1962 44.5117 15.2024 49.0945 17.626C53.8615 20.1471 59.6061 24.3812 66.3552 29.3271L111.904 62.7061C119.19 68.0451 125.233 72.4562 129.754 76.7715C134.483 81.2863 137.937 86.0421 139.888 92.2764C143.69 104.421 140.263 113.639 135.726 126.816C132.538 136.077 128.368 144.664 122.74 153.979C119.387 159.528 116.535 164.647 110.965 167.756C105.388 170.869 99.4428 170.606 92.8455 170.546C83.9391 170.465 75.9201 169.937 68.0027 168.745C52.2753 166.377 41.0615 164.997 31.6785 154.096C26.8706 148.51 24.6351 142.314 23.5847 135.031C22.5823 128.081 22.6003 119.594 22.6003 109.328V51.5088C22.6003 43.1414 22.5807 36.0053 23.365 30.6699C24.1433 25.3754 26.0596 19.2803 32.1873 16.1738L32.7615 15.8975Z" stroke="#8D8D8D" stroke-width="15" shape-rendering="crispEdges"/>
+            </g>
+            <defs>
+            <filter id="filter0_d_81_4" x="9.72748e-05" y="-4.90039" width="178.115" height="220.089" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+            <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+            <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+            <feOffset dx="7" dy="15"/>
+            <feGaussianBlur stdDeviation="11.05"/>
+            <feComposite in2="hardAlpha" operator="out"/>
+            <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.8 0"/>
+            <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_81_4"/>
+            <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_81_4" result="shape"/>
+            </filter>
+            <clipPath id="bgblur_0_81_4_clip_path" transform="translate(-9.72748e-05 4.90039)"><path d="M30.1003 109.328V51.5087C30.1003 34.2633 30.1003 25.6406 35.5787 22.8633C41.0571 20.0861 48.0122 25.183 61.9224 35.3768L107.471 68.756C122.348 79.6582 129.786 85.1093 132.731 94.5173C135.676 103.925 133.329 110.742 128.635 124.375C125.65 133.045 121.729 141.151 116.321 150.1C112.627 156.213 110.781 159.269 107.309 161.207C103.838 163.145 100.197 163.112 92.9137 163.046C84.2678 162.968 76.6107 162.457 69.1197 161.329C52.7898 158.87 44.6249 157.64 37.3626 149.203C30.1003 140.765 30.1003 130.286 30.1003 109.328Z"/></clipPath></defs>
+        </svg>
+    </div>
     <div id="cal-dot"></div>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
     <script src="tracker.js"></script>

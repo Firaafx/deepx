@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../supabase_config.dart';
 import '../models/app_user_profile.dart';
 import '../models/chat_models.dart';
 import '../models/collection_models.dart';
@@ -11,9 +14,22 @@ import '../models/notification_item.dart';
 import '../models/preset_comment.dart';
 import '../models/profile_stats.dart';
 import '../models/render_preset.dart';
+import '../models/three_d_payload.dart';
 import '../models/watch_later_item.dart';
 import '../rendering_support.dart';
 import 'cache_service.dart';
+
+class UploadedAsset {
+  const UploadedAsset({
+    required this.publicUrl,
+    required this.path,
+    required this.bucket,
+  });
+
+  final String publicUrl;
+  final String path;
+  final String bucket;
+}
 
 class AppRepository {
   AppRepository._();
@@ -22,6 +38,8 @@ class AppRepository {
 
   static const String assetsBucket = 'deepx-assets';
   static const String avatarsBucket = 'deepx-avatars';
+  static const String sourceImagesBucket = 'deepx-3d-sources';
+  static const String threeDAssetsBucket = 'deepx-3d-assets';
   static final RegExp _uuidPattern = RegExp(
     r'^[0-9a-fA-F]{8}\-'
     r'[0-9a-fA-F]{4}\-'
@@ -33,6 +51,8 @@ class AppRepository {
   SupabaseClient get _client => Supabase.instance.client;
 
   User? get currentUser => _client.auth.currentUser;
+
+  String? get currentAccessToken => _client.auth.currentSession?.accessToken;
 
   Stream<AuthState> get authChanges => _client.auth.onAuthStateChange;
 
@@ -821,6 +841,7 @@ class AppRepository {
       tags: preset.tags,
       mentionUserIds: preset.mentionUserIds,
       visibility: preset.visibility,
+      mediaType: preset.mediaType,
       thumbnailPayload: preset.thumbnailPayload,
       payload: preset.payload,
       createdAt: preset.createdAt,
@@ -931,7 +952,7 @@ class AppRepository {
     if (user == null) return;
     final String cleanName = name.trim();
     if (cleanName.isEmpty) return;
-    final Map<String, dynamic> imagePayload = normalizeImagePayload(
+    final Map<String, dynamic> imagePayload = normalizeRenderPayload(
       payload,
       editor: 'repository_save',
     );
@@ -953,6 +974,7 @@ class AppRepository {
       'tags': const <String>[],
       'mention_user_ids': const <String>[],
       'visibility': 'private',
+      'media_type': mediaTypeFromPayload(imagePayload).databaseValue,
       'payload': imagePayload,
       'thumbnail_payload': imagePayload,
       'is_paid': false,
@@ -983,7 +1005,7 @@ class AppRepository {
   }) async {
     final user = currentUser;
     if (user == null) throw Exception('Not authenticated.');
-    final Map<String, dynamic> imagePayload = normalizeImagePayload(
+    final Map<String, dynamic> imagePayload = normalizeRenderPayload(
       payload,
       editor: 'repository_publish',
     );
@@ -1003,6 +1025,7 @@ class AppRepository {
             'tags': _normalizeTags(tags),
             'mention_user_ids': _normalizeUuidList(mentionUserIds),
             'visibility': visibility == 'private' ? 'private' : 'public',
+            'media_type': mediaTypeFromPayload(imagePayload).databaseValue,
             'payload': imagePayload,
             'thumbnail_payload': imageThumbnailPayload,
             'is_paid': isPaid,
@@ -1032,7 +1055,7 @@ class AppRepository {
   }) {
     final Map<String, dynamic>? effectivePayload = payload == null
         ? null
-        : normalizeImagePayload(
+        : normalizeRenderPayload(
             payload,
             editor: 'repository_update',
           );
@@ -1110,10 +1133,13 @@ class AppRepository {
       values['mention_user_ids'] = _normalizeUuidList(mentionUserIds);
     }
     if (payload != null) {
-      values['payload'] = normalizeImagePayload(
+      final Map<String, dynamic> normalizedPayload = normalizeRenderPayload(
         payload,
         editor: 'repository_update',
       );
+      values['payload'] = normalizedPayload;
+      values['media_type'] =
+          mediaTypeFromPayload(normalizedPayload).databaseValue;
     }
     if (thumbnailPayload != null) {
       values['thumbnail_payload'] = normalizeImagePayload(
@@ -2750,6 +2776,23 @@ class AppRepository {
     required String folder,
     String bucket = assetsBucket,
   }) async {
+    final UploadedAsset asset = await uploadAssetBytesWithPath(
+      bytes: bytes,
+      fileName: fileName,
+      contentType: contentType,
+      folder: folder,
+      bucket: bucket,
+    );
+    return asset.publicUrl;
+  }
+
+  Future<UploadedAsset> uploadAssetBytesWithPath({
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+    required String folder,
+    String bucket = assetsBucket,
+  }) async {
     final user = currentUser;
     if (user == null) {
       throw Exception('Upload failed: not authenticated.');
@@ -2773,7 +2816,11 @@ class AppRepository {
                   : contentType,
             ),
           );
-      return _client.storage.from(bucket).getPublicUrl(path);
+      return UploadedAsset(
+        publicUrl: _client.storage.from(bucket).getPublicUrl(path),
+        path: path,
+        bucket: bucket,
+      );
     } on StorageException catch (e) {
       final String message = e.message.toLowerCase();
       if (message.contains('bucket') && message.contains('not found')) {
@@ -2810,6 +2857,87 @@ class AppRepository {
     );
   }
 
+  Future<String> createSplatGenerationJob({
+    required String title,
+    required String description,
+    required List<String> tags,
+    required List<String> mentionUserIds,
+    required String visibility,
+    required List<String> sourceImagePaths,
+    required Map<String, dynamic> thumbnailPayload,
+    bool isPaid = false,
+    int? priceCents,
+    String? accentColorHex,
+  }) async {
+    final user = currentUser;
+    if (user == null) throw Exception('Not authenticated.');
+    if (sourceImagePaths.length < 3) {
+      throw Exception('InstantSplat needs at least 3 source images.');
+    }
+    final Map<String, dynamic> row = await _client
+        .from('splat_generation_jobs')
+        .insert(<String, dynamic>{
+          'user_id': user.id,
+          'status': 'queued',
+          'progress': 0,
+          'stage': 'Queued',
+          'source_bucket': sourceImagesBucket,
+          'source_image_paths': sourceImagePaths,
+          'thumbnail_payload': normalizeImagePayload(
+            thumbnailPayload,
+            editor: 'splat_job_thumbnail',
+          ),
+          'post_title': title.trim().isEmpty ? 'Untitled' : title.trim(),
+          'post_description': description.trim(),
+          'post_tags': _normalizeTags(tags),
+          'post_mention_user_ids': _normalizeUuidList(mentionUserIds),
+          'post_visibility': visibility == 'private' ? 'private' : 'public',
+          'is_paid': isPaid,
+          'price_cents': isPaid ? _sanitizePriceCents(priceCents) : null,
+          'accent_color_hex': _normalizeHexOrNull(accentColorHex),
+        })
+        .select('id')
+        .single();
+    return row['id']?.toString() ?? '';
+  }
+
+  Future<Map<String, dynamic>?> fetchSplatGenerationJob(String jobId) async {
+    if (jobId.trim().isEmpty) return null;
+    final row = await _client
+        .from('splat_generation_jobs')
+        .select('*')
+        .eq('id', jobId)
+        .maybeSingle();
+    return row == null ? null : Map<String, dynamic>.from(row);
+  }
+
+  Future<void> startInstantSplatWorker(String jobId) async {
+    if (!SupabaseConfig.hasInstantSplatWorker) {
+      throw Exception('INSTANTSPLAT_WORKER_URL is not configured.');
+    }
+    final String? token = currentAccessToken;
+    if (token == null || token.isEmpty) {
+      throw Exception('Not authenticated.');
+    }
+    final Uri endpoint = Uri.parse(SupabaseConfig.instantSplatWorkerUrl);
+    final response = await http.post(
+      endpoint,
+      headers: <String, String>{
+        'content-type': 'application/json',
+        'authorization': 'Bearer $token',
+      },
+      body: jsonEncode(<String, dynamic>{
+        'job_id': jobId,
+        'supabase_url': SupabaseConfig.url,
+      }),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'InstantSplat worker rejected the job (${response.statusCode}).',
+      );
+    }
+  }
+
   Map<String, dynamic> _encodePreset(RenderPreset preset) {
     return <String, dynamic>{
       'id': preset.id,
@@ -2821,6 +2949,7 @@ class AppRepository {
       'tags': preset.tags,
       'mention_user_ids': preset.mentionUserIds,
       'visibility': preset.visibility,
+      'media_type': preset.mediaType,
       'thumbnail_payload': preset.thumbnailPayload,
       'payload': preset.payload,
       'is_paid': preset.isPaid,

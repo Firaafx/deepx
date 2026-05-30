@@ -1,4 +1,75 @@
 import 'models/image_payload.dart';
+import 'models/three_d_payload.dart';
+
+DeepXMediaType mediaTypeFromPayload(Map<String, dynamic> payload) {
+  if (payload['media'] is Map) {
+    final media = Map<String, dynamic>.from(payload['media'] as Map);
+    return mediaTypeFromString(media['type']?.toString());
+  }
+  return mediaTypeFromString(
+    payload['media_type']?.toString() ??
+        payload['mediaType']?.toString() ??
+        payload['type']?.toString(),
+  );
+}
+
+bool isThreeDPayload(Map<String, dynamic> payload) {
+  return mediaTypeFromPayload(payload) != DeepXMediaType.image;
+}
+
+ThreeDAssetPayload? threeDAssetFromPayload(Map<String, dynamic> payload) {
+  if (!isThreeDPayload(payload)) return null;
+  final asset = ThreeDAssetPayload.fromMap(payload);
+  return asset.assetUrl.trim().isEmpty ? null : asset;
+}
+
+Map<String, dynamic> simpleThreeDPayload({
+  required DeepXMediaType mediaType,
+  required String assetUrl,
+  required String format,
+  String assetPath = '',
+  String contentType = 'application/octet-stream',
+  int? byteSize,
+  String sourceKind = 'manual',
+  String? jobId,
+  int? sourceImageCount,
+  Map<String, dynamic> meta = const <String, dynamic>{},
+}) {
+  return ThreeDAssetPayload(
+    mediaType: mediaType,
+    assetUrl: assetUrl,
+    assetPath: assetPath,
+    format: format,
+    contentType: contentType,
+    byteSize: byteSize,
+    sourceKind: sourceKind,
+    jobId: jobId,
+    sourceImageCount: sourceImageCount,
+    meta: meta,
+  ).toMap();
+}
+
+Map<String, dynamic> normalizeRenderPayload(
+  Map<String, dynamic> payload, {
+  String editor = 'render_payload_normalizer',
+  String sourceKind = 'upload',
+}) {
+  if (isThreeDPayload(payload)) {
+    return <String, dynamic>{
+      ...payload,
+      'meta': <String, dynamic>{
+        'editor': editor,
+        if (payload['meta'] is Map)
+          ...Map<String, dynamic>.from(payload['meta'] as Map),
+      },
+    };
+  }
+  return normalizeImagePayload(
+    payload,
+    editor: editor,
+    sourceKind: sourceKind,
+  );
+}
 
 ImagePayloadData imagePayloadFromMap(Map<String, dynamic> payload) {
   if (payload['schemaVersion'] == ImagePayloadData.schemaVersion &&

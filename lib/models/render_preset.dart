@@ -9,6 +9,7 @@ class RenderPreset {
     required this.tags,
     required this.mentionUserIds,
     required this.visibility,
+    required this.mediaType,
     required this.thumbnailPayload,
     required this.payload,
     required this.createdAt,
@@ -28,6 +29,7 @@ class RenderPreset {
   final List<String> tags;
   final List<String> mentionUserIds;
   final String visibility;
+  final String mediaType;
   final Map<String, dynamic> thumbnailPayload;
   final Map<String, dynamic> payload;
   final DateTime createdAt;
@@ -71,6 +73,7 @@ class RenderPreset {
       tags: tags,
       mentionUserIds: mentions,
       visibility: normalizedVisibility,
+      mediaType: _normalizeMediaType(map['media_type'], payload),
       thumbnailPayload: thumbPayload,
       payload: payload,
       createdAt: DateTime.tryParse(map['created_at']?.toString() ?? '') ??
@@ -108,5 +111,39 @@ class RenderPreset {
     final RegExp hexPattern = RegExp(r'^#[0-9A-Fa-f]{6}$');
     if (!hexPattern.hasMatch(normalized)) return null;
     return normalized.toUpperCase();
+  }
+
+  static String _normalizeMediaType(
+    dynamic value,
+    Map<String, dynamic> payload,
+  ) {
+    final String raw = value?.toString().trim().toLowerCase() ?? '';
+    final String normalizedRaw = _mediaTypeAlias(raw);
+    if (normalizedRaw != 'image') return normalizedRaw;
+    final dynamic media = payload['media'];
+    if (media is Map) {
+      final String type = media['type']?.toString().trim().toLowerCase() ?? '';
+      final String normalizedType = _mediaTypeAlias(type);
+      if (normalizedType != 'image') return normalizedType;
+    }
+    return 'image';
+  }
+
+  static String _mediaTypeAlias(String raw) {
+    return switch (raw) {
+      'gaussian_splat' ||
+      'splat' ||
+      'ksplat' ||
+      'ply' ||
+      '3dgs' =>
+        'gaussian_splat',
+      'triangle_mesh' ||
+      'mesh' ||
+      'model' ||
+      'glb' ||
+      'gltf' =>
+        'triangle_mesh',
+      _ => 'image',
+    };
   }
 }

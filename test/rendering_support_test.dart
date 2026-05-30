@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:deepx/models/image_payload.dart';
+import 'package:deepx/models/render_preset.dart';
+import 'package:deepx/models/three_d_payload.dart';
 import 'package:deepx/rendering_support.dart';
 import 'package:deepx/services/appearance_settings_service.dart';
 import 'package:deepx/widgets/svg_card_shell.dart';
@@ -82,6 +84,108 @@ void main() {
     expect(ambientPayload, isNotNull);
     expect(imageUrlFromPayload(ambientPayload!),
         'https://example.com/ambient.jpg');
+  });
+
+  test('3D gaussian payload is detected without image normalization', () {
+    final Map<String, dynamic> payload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.gaussianSplat,
+      assetUrl: 'https://example.com/scene.ksplat',
+      assetPath: 'user/gaussian-splats/job/scene.ksplat',
+      format: 'ksplat',
+      byteSize: 42,
+      sourceKind: 'instantsplat',
+      jobId: 'job-1',
+      sourceImageCount: 4,
+      meta: const <String, dynamic>{'sourceName': 'scene'},
+    );
+
+    final ThreeDAssetPayload? asset = threeDAssetFromPayload(payload);
+
+    expect(isThreeDPayload(payload), isTrue);
+    expect(mediaTypeFromPayload(payload), DeepXMediaType.gaussianSplat);
+    expect(asset, isNotNull);
+    expect(asset!.assetUrl, 'https://example.com/scene.ksplat');
+    expect(asset.format, 'ksplat');
+    expect(asset.sourceKind, 'instantsplat');
+    expect(asset.sourceImageCount, 4);
+  });
+
+  test('render payload normalization preserves 3D payload contracts', () {
+    final Map<String, dynamic> payload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.triangleMesh,
+      assetUrl: 'https://example.com/model.glb',
+      format: 'glb',
+      meta: const <String, dynamic>{'keep': true},
+    );
+
+    final Map<String, dynamic> normalized = normalizeRenderPayload(
+      payload,
+      editor: 'test_editor',
+    );
+
+    expect(mediaTypeFromPayload(normalized), DeepXMediaType.triangleMesh);
+    expect(
+        (normalized['media'] as Map)['url'], 'https://example.com/model.glb');
+    expect((normalized['meta'] as Map)['editor'], 'test_editor');
+    expect((normalized['meta'] as Map)['keep'], isTrue);
+  });
+
+  test('render preset infers 3D media type while keeping image fallback', () {
+    final Map<String, dynamic> splatPayload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.gaussianSplat,
+      assetUrl: 'https://example.com/scene.ksplat',
+      format: 'ksplat',
+    );
+    final Map<String, dynamic> thumbnail = simpleImagePayload(
+      imageUrl: 'https://example.com/thumb.jpg',
+    );
+
+    final RenderPreset splatPreset = RenderPreset.fromMap(<String, dynamic>{
+      'id': 'preset-1',
+      'user_id': 'user-1',
+      'name': 'Scene',
+      'payload': splatPayload,
+      'thumbnail_payload': thumbnail,
+      'created_at': '2026-05-30T00:00:00Z',
+      'updated_at': '2026-05-30T00:00:00Z',
+    });
+    final RenderPreset imagePreset = RenderPreset.fromMap(<String, dynamic>{
+      'id': 'preset-2',
+      'user_id': 'user-1',
+      'name': 'Image',
+      'payload': thumbnail,
+      'thumbnail_payload': thumbnail,
+      'created_at': '2026-05-30T00:00:00Z',
+      'updated_at': '2026-05-30T00:00:00Z',
+    });
+
+    expect(splatPreset.mediaType, 'gaussian_splat');
+    expect(imagePreset.mediaType, 'image');
+
+    final RenderPreset aliasPreset = RenderPreset.fromMap(<String, dynamic>{
+      'id': 'preset-3',
+      'user_id': 'user-1',
+      'name': 'Alias',
+      'payload': <String, dynamic>{
+        'media': <String, dynamic>{
+          'type': 'ksplat',
+          'url': 'https://example.com/scene.ksplat',
+        },
+      },
+      'thumbnail_payload': thumbnail,
+      'created_at': '2026-05-30T00:00:00Z',
+      'updated_at': '2026-05-30T00:00:00Z',
+    });
+    expect(aliasPreset.mediaType, 'gaussian_splat');
+  });
+
+  test('3D media detection accepts supported manual upload extensions', () {
+    expect(mediaTypeFromString('ply'), DeepXMediaType.gaussianSplat);
+    expect(mediaTypeFromString('ksplat'), DeepXMediaType.gaussianSplat);
+    expect(mediaTypeFromString('splat'), DeepXMediaType.gaussianSplat);
+    expect(mediaTypeFromString('3dgs'), DeepXMediaType.gaussianSplat);
+    expect(mediaTypeFromString('glb'), DeepXMediaType.triangleMesh);
+    expect(mediaTypeFromString('gltf'), DeepXMediaType.triangleMesh);
   });
 
   test('svg card two-line title does not extend thumbnail clip downward', () {
