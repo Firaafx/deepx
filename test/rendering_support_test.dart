@@ -130,6 +130,79 @@ void main() {
     expect((normalized['meta'] as Map)['keep'], isTrue);
   });
 
+  test('render payload normalization preserves 3D camera and transform', () {
+    final Map<String, dynamic> payload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.gaussianSplat,
+      assetUrl: 'https://example.com/scene.ksplat',
+      format: 'ksplat',
+      transform: const <String, dynamic>{
+        'scale': 1.4,
+        'position': <double>[1, 2, 3],
+      },
+      camera: const <String, dynamic>{
+        'initialPosition': <double>[0.2, 1.5, 4.8],
+        'initialTarget': <double>[0.1, 0.2, 0.3],
+        'fov': 38,
+      },
+    );
+
+    final Map<String, dynamic> withCamera = payloadWithThreeDCamera(
+      normalizeRenderPayload(payload, editor: 'collection_item_snapshot'),
+      initialPosition: const <double>[0.5, 2, 5],
+      initialTarget: const <double>[0, 0.3, 0],
+      fov: 42,
+    );
+    final ThreeDAssetPayload? asset = threeDAssetFromPayload(withCamera);
+
+    expect(asset, isNotNull);
+    expect(asset!.transform['scale'], 1.4);
+    expect(asset.camera['initialPosition'], <double>[0.5, 2, 5]);
+    expect(asset.camera['initialTarget'], <double>[0, 0.3, 0]);
+    expect(asset.camera['fov'], 42);
+  });
+
+  test('collection snapshots accept 3D while thumbnails stay image payloads',
+      () {
+    final Map<String, dynamic> meshPayload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.triangleMesh,
+      assetUrl: 'https://example.com/model.glb',
+      format: 'glb',
+    );
+    final Map<String, dynamic> thumbnail = simpleImagePayload(
+      imageUrl: 'https://example.com/thumb.webp',
+    );
+
+    final Map<String, dynamic> itemSnapshot = normalizeRenderPayload(
+      meshPayload,
+      editor: 'collection_item_snapshot',
+    );
+    final Map<String, dynamic> thumbnailSnapshot = normalizeImagePayload(
+      thumbnail,
+      editor: 'collection_thumbnail',
+    );
+
+    expect(mediaTypeFromPayload(itemSnapshot), DeepXMediaType.triangleMesh);
+    expect(threeDAssetFromPayload(itemSnapshot), isNotNull);
+    expect(mediaTypeFromPayload(thumbnailSnapshot), DeepXMediaType.image);
+    expect(imageUrlFromPayload(thumbnailSnapshot),
+        'https://example.com/thumb.webp');
+  });
+
+  test('missing 3D asset fallback labels match media type', () {
+    expect(
+      missingThreeDAssetLabel(<String, dynamic>{
+        'media': <String, dynamic>{'type': 'gaussian_splat'},
+      }),
+      'No 3DGS',
+    );
+    expect(
+      missingThreeDAssetLabel(<String, dynamic>{
+        'media': <String, dynamic>{'type': 'triangle_mesh'},
+      }),
+      'No 3D mesh',
+    );
+  });
+
   test('render preset infers 3D media type while keeping image fallback', () {
     final Map<String, dynamic> splatPayload = simpleThreeDPayload(
       mediaType: DeepXMediaType.gaussianSplat,
@@ -186,6 +259,21 @@ void main() {
     expect(mediaTypeFromString('3dgs'), DeepXMediaType.gaussianSplat);
     expect(mediaTypeFromString('glb'), DeepXMediaType.triangleMesh);
     expect(mediaTypeFromString('gltf'), DeepXMediaType.triangleMesh);
+  });
+
+  test('legacy presets mode migration is guarded and idempotent', () {
+    final String sql = File(
+      'supabase/migrations/20260601120000_presets_legacy_mode_default.sql',
+    ).readAsStringSync();
+
+    expect(sql, contains('do \$\$'));
+    expect(sql, contains('if exists'));
+    expect(sql,
+        contains("alter column mode set default '2d'::public.render_mode"));
+    expect(sql, contains("set mode = '2d'::public.render_mode"));
+    expect(sql, contains('where mode is null'));
+    expect(sql, contains('alter column mode set not null'));
+    expect(sql.toLowerCase(), isNot(contains('drop column')));
   });
 
   test('svg card two-line title does not extend thumbnail clip downward', () {

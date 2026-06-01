@@ -6,6 +6,13 @@
   let pendingTrackerMove = null;
   let trackerMoveScheduled = false;
   let lastHoverTarget = null;
+  let trackerCursorAllowed = false;
+  let realCursorHideTimer = null;
+  const realMouseIdleDelayMs = 1500;
+
+  const style = document.createElement('style');
+  style.textContent = 'html.deepx-real-cursor-hidden, html.deepx-real-cursor-hidden * { cursor: none !important; }';
+  document.head.appendChild(style);
 
   function trackerFrame() {
     return document.getElementById('deepx-tracker-frame');
@@ -26,6 +33,81 @@
     const target = document.elementFromPoint(x, y) || document.body;
     if (frame) frame.style.pointerEvents = 'auto';
     return target;
+  }
+
+  function setRealCursorHidden(hidden) {
+    document.documentElement.classList.toggle('deepx-real-cursor-hidden', hidden);
+  }
+
+  function scheduleRealCursorHide() {
+    if (realCursorHideTimer) clearTimeout(realCursorHideTimer);
+    if (!trackerCursorAllowed) {
+      setRealCursorHidden(false);
+      return;
+    }
+    realCursorHideTimer = setTimeout(() => {
+      if (trackerCursorAllowed) setRealCursorHidden(true);
+    }, realMouseIdleDelayMs);
+  }
+
+  function trackerWindow() {
+    const frame = trackerFrame();
+    return frame && frame.contentWindow ? frame.contentWindow : null;
+  }
+
+  function postTrackerCommand(command, extra) {
+    const target = trackerWindow();
+    if (!target) return;
+    target.postMessage({
+      type: 'deepx-tracker-command',
+      command,
+      ...(extra || {})
+    }, '*');
+  }
+
+  function isTypingTarget(target) {
+    const elem = target && target.nodeType === Node.ELEMENT_NODE
+      ? target
+      : target && target.parentElement;
+    if (!elem) return false;
+    const tag = elem.tagName && elem.tagName.toLowerCase();
+    return tag === 'input'
+      || tag === 'textarea'
+      || tag === 'select'
+      || elem.isContentEditable === true;
+  }
+
+  function closestTarget(target, selector) {
+    if (!target || typeof target.closest !== 'function') return null;
+    try {
+      return target.closest(selector);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function classifyTarget(target) {
+    if (!target || target === document.body || target === document.documentElement) {
+      return {clickable: false, draggable: false};
+    }
+    const clickable = !!closestTarget(
+      target,
+      'a[href],button,input,select,textarea,[role="button"],[role="link"],[tabindex]:not([tabindex="-1"]),[onclick],[data-clickable="true"]'
+    );
+    const draggable = !!closestTarget(
+      target,
+      '[draggable="true"],[data-draggable="true"],[data-drag-handle="true"],[role="slider"],input[type="range"],.drag-handle,.draggable'
+    );
+    return {clickable, draggable};
+  }
+
+  function postHoverState(target) {
+    const frameWindow = trackerWindow();
+    if (!frameWindow) return;
+    frameWindow.postMessage({
+      type: 'deepx-parent-hover-state',
+      ...classifyTarget(target)
+    }, '*');
   }
 
   function pointerInit(x, y, options) {
@@ -123,12 +205,14 @@
     const action = data.action;
 
     if (action === 'mousemove') {
+      postHoverState(target);
       updateSyntheticHover(target, x, y, options);
       dispatchPointer(target, 'pointermove', x, y, options);
       return;
     }
 
     if (action === 'mousedown') {
+      postHoverState(target);
       dispatchBoth(target, 'pointerdown', 'mousedown', x, y, {
         ...options,
         buttons: 1
@@ -137,6 +221,7 @@
     }
 
     if (action === 'mouseup') {
+      postHoverState(target);
       dispatchBoth(target, 'pointerup', 'mouseup', x, y, {
         ...options,
         buttons: 0
@@ -145,11 +230,13 @@
     }
 
     if (action === 'focus') {
+      postHoverState(target);
       focusTarget(target);
       return;
     }
 
     if (action === 'click') {
+      postHoverState(target);
       focusTarget(target);
       dispatchBoth(target, 'pointerdown', 'mousedown', x, y, {
         ...options,
@@ -180,6 +267,8 @@
   }
 
   function forwardRealMouse(action, event) {
+    setRealCursorHidden(false);
+    scheduleRealCursorHide();
     if (!event.isTrusted || trackerUiVisible) return;
     const frame = trackerFrame();
     if (!frame || !frame.contentWindow) return;
@@ -209,10 +298,15 @@
 
     if (data.type === 'deepx-tracker-state') {
       trackerUiVisible = !!data.uiVisible;
+      trackerCursorAllowed = data.cursorAllowed === true;
       setFrameInteractive(trackerUiVisible);
+      scheduleRealCursorHide();
       window.postMessage(JSON.stringify({
         type: 'deepx-tracker-state',
-        uiVisible: trackerUiVisible
+        uiVisible: trackerUiVisible,
+        linkActive: data.linkActive === true,
+        showCursor: data.showCursor === true,
+        cursorEnabled: data.cursorEnabled === true
       }), window.location.origin);
       return;
     }
@@ -237,4 +331,20 @@
   window.addEventListener('wheel', (event) => {
     forwardRealMouse('wheel', event);
   }, {capture: true, passive: true});
+
+  window.addEventListener('keydown', (event) => {
+    if (isTypingTarget(event.target)) return;
+    if (event.code === 'Space') {
+      postTrackerCommand('toggle-link');
+      event.preventDefault();
+    } else if (event.code === 'KeyC') {
+      postTrackerCommand('toggle-cursor');
+      setRealCursorHidden(false);
+      event.preventDefault();
+    }
+  }, {capture: true});
+
+  window.addEventListener('pagehide', () => {
+    setRealCursorHidden(false);
+  });
 })();

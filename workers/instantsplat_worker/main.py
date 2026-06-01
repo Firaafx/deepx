@@ -232,36 +232,6 @@ def _three_d_payload(
     }
 
 
-async def _create_preset(
-    client: httpx.AsyncClient,
-    supabase_url: str,
-    job: dict[str, Any],
-    payload: dict[str, Any],
-) -> str:
-    response = await client.post(
-        f"{supabase_url}/rest/v1/presets",
-        headers={**_rest_headers(), "prefer": "return=representation"},
-        json={
-            "user_id": job["user_id"],
-            "name": job.get("post_title") or "3D Scene",
-            "title": job.get("post_title") or "3D Scene",
-            "description": job.get("post_description") or "",
-            "tags": job.get("post_tags") or [],
-            "mention_user_ids": job.get("post_mention_user_ids") or [],
-            "visibility": job.get("post_visibility") or "public",
-            "media_type": "gaussian_splat",
-            "payload": payload,
-            "thumbnail_payload": job.get("thumbnail_payload") or {},
-            "is_paid": job.get("is_paid") is True,
-            "price_cents": job.get("price_cents"),
-            "accent_color_hex": job.get("accent_color_hex"),
-        },
-    )
-    response.raise_for_status()
-    rows = response.json()
-    return rows[0]["id"]
-
-
 async def _run_job(job_id: str, supabase_url: str) -> None:
     async with httpx.AsyncClient(timeout=None) as client:
         try:
@@ -314,13 +284,12 @@ async def _run_job(job_id: str, supabase_url: str) -> None:
                     {
                         "status": "finalizing",
                         "progress": 92,
-                        "stage": "Publishing post",
+                        "stage": "Finalizing asset",
                         "output_bucket": ASSET_BUCKET,
                         "output_asset_path": storage_path,
                         "output_payload": payload,
                     },
                 )
-                preset_id = await _create_preset(client, supabase_url, job, payload)
                 await _patch_job(
                     client,
                     supabase_url,
@@ -328,8 +297,7 @@ async def _run_job(job_id: str, supabase_url: str) -> None:
                     {
                         "status": "succeeded",
                         "progress": 100,
-                        "stage": "Published",
-                        "created_preset_id": preset_id,
+                        "stage": "3DGS asset ready",
                     },
                 )
         except Exception as exc:

@@ -18,6 +18,7 @@ import '../models/three_d_payload.dart';
 import '../models/watch_later_item.dart';
 import '../rendering_support.dart';
 import 'cache_service.dart';
+import 'storage_upload.dart';
 
 class UploadedAsset {
   const UploadedAsset({
@@ -2278,7 +2279,7 @@ class AppRepository {
     final List<CollectionDraftItem> imageItems = items
         .map(
           (item) => item.copyWith(
-            snapshot: normalizeImagePayload(
+            snapshot: normalizeRenderPayload(
               item.snapshot,
               editor: 'repository_collection_item',
             ),
@@ -2775,6 +2776,7 @@ class AppRepository {
     required String contentType,
     required String folder,
     String bucket = assetsBucket,
+    UploadProgressCallback? onProgress,
   }) async {
     final UploadedAsset asset = await uploadAssetBytesWithPath(
       bytes: bytes,
@@ -2782,6 +2784,7 @@ class AppRepository {
       contentType: contentType,
       folder: folder,
       bucket: bucket,
+      onProgress: onProgress,
     );
     return asset.publicUrl;
   }
@@ -2792,6 +2795,7 @@ class AppRepository {
     required String contentType,
     required String folder,
     String bucket = assetsBucket,
+    UploadProgressCallback? onProgress,
   }) async {
     final user = currentUser;
     if (user == null) {
@@ -2806,16 +2810,36 @@ class AppRepository {
         '${user.id}/$folder/${DateTime.now().millisecondsSinceEpoch}_$safeName';
 
     try {
-      await _client.storage.from(bucket).uploadBinary(
-            path,
-            bytes,
-            fileOptions: FileOptions(
-              upsert: true,
-              contentType: contentType.isEmpty
-                  ? 'application/octet-stream'
-                  : contentType,
-            ),
-          );
+      final String? token = currentAccessToken;
+      final bool usedProgressUpload =
+          token != null && token.isNotEmpty && SupabaseConfig.isConfigured
+              ? await uploadStorageBytesWithProgress(
+                  supabaseUrl: SupabaseConfig.url,
+                  anonKey: SupabaseConfig.anonKey,
+                  accessToken: token,
+                  bucket: bucket,
+                  path: path,
+                  bytes: bytes,
+                  contentType: contentType.isEmpty
+                      ? 'application/octet-stream'
+                      : contentType,
+                  onProgress: onProgress,
+                )
+              : false;
+      if (!usedProgressUpload) {
+        onProgress?.call(0);
+        await _client.storage.from(bucket).uploadBinary(
+              path,
+              bytes,
+              fileOptions: FileOptions(
+                upsert: true,
+                contentType: contentType.isEmpty
+                    ? 'application/octet-stream'
+                    : contentType,
+              ),
+            );
+        onProgress?.call(1);
+      }
       return UploadedAsset(
         publicUrl: _client.storage.from(bucket).getPublicUrl(path),
         path: path,

@@ -133,7 +133,6 @@ let prevTime = performance.now();
 let lastTargetX = window.innerWidth / 2;
 let lastTargetY = window.innerHeight / 2;
 let dt = 0;
-let headCursorSpeed = 100;
 let headCursorAcceleration = 1;
 let handCursorSpeed = 500;
 let handCursorAcceleration = 6;
@@ -145,9 +144,15 @@ let winkRecordStage = 'idle';
 let pinchRecordStage = 'idle';
 let uiVisible = false;
 let realMouseResumeTimer = null;
+let realCursorHideTimer = null;
 let pageActive = true;
 let lastParentHoverX = Number.NaN;
 let lastParentHoverY = Number.NaN;
+let parentHoverClickable = false;
+let parentHoverDraggable = false;
+const REAL_MOUSE_IDLE_DELAY_MS = 1500;
+const HEAD_CURSOR_MIN_SPEED = 1;
+const HEAD_CURSOR_MAX_SPEED = 80;
 const MEDIAPIPE_FACE_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4';
 const MEDIAPIPE_HANDS_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4';
 const PEER_JS_URL = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
@@ -194,6 +199,78 @@ function trackingEnabled() {
 }
 function showCursorEnabled() {
     return !!el('show-cursor')?.checked;
+}
+function cursorFunctional() {
+    return trackingEnabled() && showCursorEnabled() && !isPaused && pageActive;
+}
+function setTrackerCursorVisible(visible) {
+    cursor.style.display = visible ? 'block' : 'none';
+}
+function setRealCursorHidden(hidden) {
+    document.body.classList.toggle('cursor-hidden', hidden);
+}
+function resetTrackerInteractionState() {
+    potentialClickTarget = null;
+    potentialDragTarget = null;
+    isHoverBlue = false;
+    isHoverRed = false;
+    dragging = false;
+    dragTarget = null;
+    winkDownSent = false;
+    parentHoverClickable = false;
+    parentHoverDraggable = false;
+    cursor.dataset.state = 'idle';
+}
+function scheduleRealCursorHide() {
+    if (realCursorHideTimer) clearTimeout(realCursorHideTimer);
+    if (!trackingEnabled() || !showCursorEnabled()) {
+        setRealCursorHidden(false);
+        return;
+    }
+    realCursorHideTimer = setTimeout(() => {
+        if (trackingEnabled() && showCursorEnabled()) {
+            setRealCursorHidden(true);
+        }
+    }, REAL_MOUSE_IDLE_DELAY_MS);
+}
+function setShowCursorEnabled(enabled) {
+    const toggle = el('show-cursor');
+    if (!toggle) return;
+    toggle.checked = enabled;
+    localStorage.setItem('show-cursor', String(enabled));
+    if (!enabled) {
+        setTrackerCursorVisible(false);
+        setRealCursorHidden(false);
+        resetTrackerInteractionState();
+        sendTrackerState();
+        return;
+    }
+    scheduleRealCursorHide();
+    if (trackingEnabled() && !isPaused) setTrackerCursorVisible(true);
+    sendTrackerState();
+}
+function setTrackingEnabled(enabled) {
+    const toggle = el('tracking-toggle');
+    if (!toggle || toggle.checked === enabled) return;
+    toggle.checked = enabled;
+    toggle.dispatchEvent(new Event('change', { bubbles: true }));
+}
+function toggleTrackingEnabled() {
+    setTrackingEnabled(!trackingEnabled());
+}
+function toggleCursorFunction() {
+    setShowCursorEnabled(!showCursorEnabled());
+}
+function isTypingTarget(target) {
+    const elem = target && target.nodeType === Node.ELEMENT_NODE
+        ? target
+        : target?.parentElement;
+    if (!elem) return false;
+    const tag = elem.tagName?.toLowerCase();
+    return tag === 'input'
+        || tag === 'textarea'
+        || tag === 'select'
+        || elem.isContentEditable === true;
 }
 function isAutoMode() {
     return currentMode === 'auto' || el('cursor-mode')?.value === 'auto';
@@ -649,15 +726,62 @@ function drawFaceDots(drawLm) {
     const overlay = document.getElementById('face-dots-overlay');
     const oCtx = overlay.getContext('2d');
     oCtx.clearRect(0, 0, overlay.width, overlay.height);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_TESSELATION, '#C0C0C070', 1);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_RIGHT_EYE, '#FF3030', 2);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_RIGHT_EYEBROW, '#FF3030', 2);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_LEFT_EYE, '#30FF30', 2);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_LEFT_EYEBROW, '#30FF30', 2);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_FACE_OVAL, '#E0E0E0', 2);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_LIPS, '#E0E0E0', 2);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_RIGHT_IRIS, '#FF3030', 2);
-    drawFaceConnectors(oCtx, drawLm, window.FACEMESH_LEFT_IRIS, '#30FF30', 2);
+    if (!drawLm) return;
+    const scaleFactor = Math.max(1, overlay.width / 240);
+    const lineWidth = Math.max(0.5, 0.45 * scaleFactor);
+    const dotRadius = Math.max(0.8, 0.8 * scaleFactor);
+    const chains = [
+        MESH_SILHOUETTE,
+        [33, 160, 158, 133, 153, 144, 33],
+        [362, 385, 387, 263, 373, 380, 362],
+        [70, 63, 105, 66, 107],
+        [336, 296, 334, 293, 300],
+        [168, 6, 197, 195, 5, 4, 1, 19, 94, 2],
+        MESH_LIPS
+    ];
+    oCtx.save();
+    oCtx.strokeStyle = 'rgba(255,255,255,0.82)';
+    oCtx.fillStyle = 'rgba(255,255,255,0.95)';
+    oCtx.lineWidth = lineWidth;
+    oCtx.lineCap = 'round';
+    oCtx.lineJoin = 'round';
+    const points = new Set();
+    for (const chain of chains) {
+        drawFaceChain(oCtx, drawLm, chain, points);
+    }
+    drawFaceDotsAt(oCtx, drawLm, points, dotRadius);
+    oCtx.restore();
+}
+function drawFaceChain(ctx, landmarks, chain, points) {
+    if (!Array.isArray(chain) || chain.length < 2) return;
+    ctx.beginPath();
+    let started = false;
+    for (const index of chain) {
+        const point = landmarks[index];
+        if (!point) {
+            started = false;
+            continue;
+        }
+        points.add(index);
+        const x = point.x * ctx.canvas.width;
+        const y = point.y * ctx.canvas.height;
+        if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+        } else {
+            ctx.lineTo(x, y);
+        }
+    }
+    ctx.stroke();
+}
+function drawFaceDotsAt(ctx, landmarks, indices, radius) {
+    for (const index of indices) {
+        const point = landmarks[index];
+        if (!point) continue;
+        ctx.beginPath();
+        ctx.arc(point.x * ctx.canvas.width, point.y * ctx.canvas.height, radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
 }
 function drawFaceConnectors(ctx, landmarks, connectors, color, lineWidth) {
     if (!connectors || !landmarks) return;
@@ -870,27 +994,53 @@ function setupDraggablePanel() {
     const panel = document.getElementById('tracker-panel');
     const title = document.querySelector('#tracker-panel .section-title');
     let isDragging = false;
+    let holdTimer = null;
     let startX, startY;
     panel.style.left = '10px';
     panel.style.top = '260px';
-    title.addEventListener('mousedown', (e) => {
+    function clientPoint(event) {
+        if (event.touches && event.touches.length) return event.touches[0];
+        if (event.changedTouches && event.changedTouches.length) return event.changedTouches[0];
+        return event;
+    }
+    function startDrag(event) {
+        const point = clientPoint(event);
         isDragging = true;
-        startX = e.clientX - panel.offsetLeft;
-        startY = e.clientY - panel.offsetTop;
-        e.preventDefault();
-    });
-    document.addEventListener('mousemove', (e) => {
+        startX = point.clientX - panel.offsetLeft;
+        startY = point.clientY - panel.offsetTop;
+        title.classList.add('fake-hover');
+    }
+    function cancelHold() {
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = null;
+    }
+    function beginHold(event) {
+        cancelHold();
+        holdTimer = setTimeout(() => startDrag(event), 320);
+    }
+    function movePanel(event) {
         if (!isDragging) return;
-        let newLeft = e.clientX - startX;
-        let newTop = e.clientY - startY;
+        const point = clientPoint(event);
+        let newLeft = point.clientX - startX;
+        let newTop = point.clientY - startY;
         newLeft = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, newLeft));
         newTop = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, newTop));
         panel.style.left = `${newLeft}px`;
         panel.style.top = `${newTop}px`;
-    });
-    document.addEventListener('mouseup', () => {
+        event.preventDefault();
+    }
+    function endDrag() {
+        cancelHold();
         isDragging = false;
-    });
+        title.classList.remove('fake-hover');
+    }
+    title.addEventListener('mousedown', beginHold);
+    title.addEventListener('touchstart', beginHold, {passive: true});
+    document.addEventListener('mousemove', movePanel);
+    document.addEventListener('touchmove', movePanel, {passive: false});
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('touchend', endDrag);
+    document.addEventListener('touchcancel', endDrag);
 }
 function loadSettings() {
     document.querySelectorAll('input[type=range], input[type=number], input[type=checkbox], select').forEach(el => {
@@ -1132,6 +1282,21 @@ function isClickableElement(elem) {
     }
     return false;
 }
+function hoverStateForElement(elem) {
+    return {
+        draggable: isDraggableElement(elem),
+        clickable: isClickableElement(elem)
+    };
+}
+function cursorStateFromHover() {
+    if (dragging || isWinking) return dragging ? 'dragging' : 'active';
+    const draggable = uiVisible ? isHoverRed : parentHoverDraggable;
+    const clickable = uiVisible ? isHoverBlue : parentHoverClickable;
+    if (draggable && clickable) return 'both-hover';
+    if (draggable) return 'drag-hover';
+    if (clickable) return 'click-hover';
+    return 'idle';
+}
 function isParentPointerTarget(elem) {
     return !!(elem && elem.__deepxParentPointerTarget);
 }
@@ -1215,7 +1380,11 @@ function sendTrackerState() {
     if (window.parent !== window) {
         window.parent.postMessage({
             type: 'deepx-tracker-state',
-            uiVisible
+            uiVisible,
+            linkActive: trackingEnabled(),
+            showCursor: showCursorEnabled(),
+            cursorAllowed: trackingEnabled() && showCursorEnabled() && pageActive,
+            cursorEnabled: cursorFunctional()
         }, '*');
     }
 }
@@ -1243,8 +1412,9 @@ function resumeTrackerAfterRealMouse() {
     prevHeadPitch = currentHeadPitch;
     prevHandIndexX = currentHandIndexX;
     prevHandIndexY = currentHandIndexY;
-    if (document.getElementById('tracking-toggle').checked && document.getElementById('show-cursor').checked) {
-        cursor.style.display = 'block';
+    if (trackingEnabled() && showCursorEnabled()) {
+        setTrackerCursorVisible(true);
+        scheduleRealCursorHide();
     }
     if (!uiVisible) postParentHoverMove(mouseX, mouseY, {buttons: 0}, true);
 }
@@ -1253,9 +1423,10 @@ function handleRealMouseActivity(x, y, deltaY = 0) {
     if (typeof y === 'number') mouseY = y;
     if (deltaY && isMouseTracking) mouseWheelZ += deltaY * wheelSens;
     isPaused = true;
-    cursor.style.display = 'none';
+    setTrackerCursorVisible(false);
+    setRealCursorHidden(false);
     if (realMouseResumeTimer) clearTimeout(realMouseResumeTimer);
-    realMouseResumeTimer = setTimeout(resumeTrackerAfterRealMouse, 80);
+    realMouseResumeTimer = setTimeout(resumeTrackerAfterRealMouse, REAL_MOUSE_IDLE_DELAY_MS);
 }
 async function stopLocalTrackingCamera(options = {}) {
     if (!options.keepLoop) inferenceGeneration++;
@@ -1283,13 +1454,15 @@ async function restartLocalTrackingCamera() {
 function handlePageVisibility() {
     pageActive = !document.hidden;
     if (!pageActive) {
-        cursor.style.display = 'none';
+        setTrackerCursorVisible(false);
+        setRealCursorHidden(false);
         stopLocalTrackingCamera();
         return;
     }
     restartLocalTrackingCamera();
-    if (document.getElementById('tracking-toggle').checked && document.getElementById('show-cursor').checked) {
-        cursor.style.display = 'block';
+    if (trackingEnabled() && showCursorEnabled()) {
+        setTrackerCursorVisible(true);
+        scheduleRealCursorHide();
     }
 }
 function postHeadPoseSnapshot({
@@ -1463,8 +1636,8 @@ function setupOnResults() {
             return;
         } else {
             if (currentMode === 'hand') return;
-            if (!document.getElementById('tracking-toggle').checked) { cursor.style.display = 'none'; return; }
-            cursor.style.display = (!isPaused && document.getElementById('show-cursor').checked) ? 'block' : 'none';
+            if (!document.getElementById('tracking-toggle').checked) { setTrackerCursorVisible(false); return; }
+            setTrackerCursorVisible(cursorFunctional());
             const drawOverlay = shouldDrawTrackerOverlay();
             if (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) {
                 faceLm = results.multiFaceLandmarks[0];
@@ -1563,8 +1736,12 @@ function setupHandsResults(tracker = hands) {
                     activeTracker = 'face';
                 }
                 if (drawOverlay) {
-                    const overlay = el('face-dots-overlay');
-                    oCtx.clearRect(0, 0, overlay.width, overlay.height);
+                    if (isAutoMode() && faceLm) {
+                        drawFaceDots(faceLm);
+                    } else {
+                        const overlay = el('face-dots-overlay');
+                        oCtx.clearRect(0, 0, overlay.width, overlay.height);
+                    }
                 }
             }
         }
@@ -1612,7 +1789,8 @@ function frameUpdate() {
         requestAnimationFrame(frameUpdate);
         return;
     }
-    if (document.getElementById('tracking-toggle').checked && !isPaused) {
+    const cursorIsFunctional = trackingEnabled() && showCursorEnabled() && !isPaused;
+    if (cursorIsFunctional) {
         const mode = cursorControlMode();
         const isHead = mode === 'head';
         let rawRelYaw, rawRelPitch;
@@ -1645,11 +1823,13 @@ function frameUpdate() {
             const deltaPitch = currentHeadPitch - prevHeadPitch;
             const frameDt = Math.max(dt / 1000, 0.001);
             const velocity = Math.hypot(deltaYaw, deltaPitch) / frameDt;
-            const speed = numericSetting('head-cursor-speed', headCursorSpeed);
             const accelSetting = numericSetting('head-cursor-accel', headCursorAcceleration);
-            const accel = 1 + Math.min(1, velocity / 90) * accelSetting;
-            let cursorDeltaX = deltaYaw * speed * accel * 2.5;
-            let cursorDeltaY = deltaPitch * speed * accel * 2.5;
+            const threshold = 400 / Math.max(0.001, accelSetting);
+            const t = Math.max(0, Math.min(1, velocity / threshold));
+            const eased = t * t * (3 - 2 * t);
+            const speed = HEAD_CURSOR_MIN_SPEED + (HEAD_CURSOR_MAX_SPEED - HEAD_CURSOR_MIN_SPEED) * eased;
+            let cursorDeltaX = deltaYaw * speed * 0.45;
+            let cursorDeltaY = deltaPitch * speed * 0.45;
             targetX += cursorDeltaX;
             targetY += cursorDeltaY;
             targetX = Math.max(0, Math.min(window.innerWidth, targetX));
@@ -1670,8 +1850,8 @@ function frameUpdate() {
                 const scale = 1.0;
                 rawRelYaw = currentIrisYaw;
                 rawRelPitch = currentIrisPitch;
-                targetX = (window.innerWidth / 2) + (rawRelYaw * scale * (numericSetting('head-cursor-speed', headCursorSpeed) / 10));
-                targetY = (window.innerHeight / 2) + (rawRelPitch * scale * (numericSetting('head-cursor-speed', headCursorSpeed) / 10));
+                targetX = (window.innerWidth / 2) + (rawRelYaw * scale * 4);
+                targetY = (window.innerHeight / 2) + (rawRelPitch * scale * 4);
             }
             prevHeadYaw = currentHeadYaw;
             prevHeadPitch = currentHeadPitch;
@@ -1684,6 +1864,12 @@ function frameUpdate() {
         const finalX = Math.max(0, Math.min(window.innerWidth - cursorWidth, centerX - cursorHotspotX));
         const finalY = Math.max(0, Math.min(window.innerHeight - cursorHeight, centerY - cursorHotspotY));
         cursor.style.transform = `translate3d(${finalX}px, ${finalY}px, 0)`;
+    } else {
+        setTrackerCursorVisible(false);
+        prevHeadYaw = currentHeadYaw;
+        prevHeadPitch = currentHeadPitch;
+        prevHandIndexX = currentHandIndexX;
+        prevHandIndexY = currentHandIndexY;
     }
     if (isMouseTracking && !isPaused) {
         currentFace.x = (mouseX / window.innerWidth - 0.5) * 2;
@@ -1703,6 +1889,19 @@ function frameUpdate() {
             if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }
             drawHUD();
         }
+    }
+    if (!cursorIsFunctional) {
+        if (prevHoveredElement) {
+            prevHoveredElement.classList.remove('fake-hover');
+            prevHoveredElement = null;
+        }
+        potentialClickTarget = null;
+        potentialDragTarget = null;
+        isHoverRed = false;
+        isHoverBlue = false;
+        prevWinking = false;
+        requestAnimationFrame(frameUpdate);
+        return;
     }
     const centerX = smoothX;
     const centerY = smoothY;
@@ -1738,16 +1937,22 @@ function frameUpdate() {
             if (hoveredElement) {
                 hoveredElement.classList.add('fake-hover');
                 dispatchTrackerMouseEvent(hoveredElement, 'mouseover', centerX, centerY);
-                if (isDraggableElement(hoveredElement)) {
+                const state = hoverStateForElement(hoveredElement);
+                if (state.draggable) {
                     potentialDragTarget = hoveredElement;
                     hoverRedStart = now;
                     isHoverRed = true;
-                    isHoverBlue = false;
-                    potentialClickTarget = null;
-                } else if (!isHoverRed && isClickableElement(hoveredElement)) {
+                } else {
+                    potentialDragTarget = null;
+                    isHoverRed = false;
+                }
+                if (state.clickable) {
                     potentialClickTarget = hoveredElement;
                     hoverBlueStart = now;
                     isHoverBlue = true;
+                } else {
+                    potentialClickTarget = null;
+                    isHoverBlue = false;
                 }
             }
             prevHoveredElement = hoveredElement;
@@ -1761,9 +1966,6 @@ function frameUpdate() {
         isHoverBlue = false;
         potentialClickTarget = null;
     }
-    cursor.dataset.state = dragging
-        ? 'dragging'
-        : (isHoverRed ? 'drag-hover' : (isHoverBlue ? 'click-hover' : (isWinking ? 'active' : 'idle')));
     const mode = cursorControlMode();
     if (mode === 'hand' && hasHand) {
         if (isPinching) {
@@ -1779,6 +1981,7 @@ function frameUpdate() {
             }
         }
     }
+    cursor.dataset.state = cursorStateFromHover();
     if (isWinking && !prevWinking) {
         if (now - lastDoubleDragTime < doubleDragThreshold && isHoverRed && !dragging) {
             let targetElem = getTrackerEventTarget(centerX, centerY);
@@ -1946,21 +2149,22 @@ function setupTrackerEvents() {
             localStorage.setItem('tracking-toggle', String(e.target.checked));
             if (e.target.checked) {
                 await updatePerformanceSettings();
-                if (showCursorEnabled() && !isPaused) cursor.style.display = 'block';
+                if (showCursorEnabled() && !isPaused) setTrackerCursorVisible(true);
+                scheduleRealCursorHide();
             } else {
                 await stopLocalTrackingCamera();
-                cursor.style.display = 'none';
+                setTrackerCursorVisible(false);
+                setRealCursorHidden(false);
+                resetTrackerInteractionState();
                 tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
             }
+            sendTrackerState();
         };
     }
     const showCursorToggle = el('show-cursor');
     if (showCursorToggle) {
         showCursorToggle.onchange = (e) => {
-            localStorage.setItem('show-cursor', String(e.target.checked));
-            cursor.style.display = e.target.checked && trackingEnabled() && !isPaused
-                ? 'block'
-                : 'none';
+            setShowCursorEnabled(e.target.checked);
         };
     }
     const mouseTrackingToggle = el('mouse-tracking');
@@ -1977,9 +2181,17 @@ function setupTrackerEvents() {
             if (data.command === 'show-ui') setTrackerUiVisible(true);
             if (data.command === 'hide-ui') setTrackerUiVisible(false);
             if (data.command === 'toggle-ui') toggleUI();
+            if (data.command === 'toggle-link') toggleTrackingEnabled();
+            if (data.command === 'toggle-cursor') toggleCursorFunction();
+            if (data.command === 'set-link-active') setTrackingEnabled(data.active === true);
+            if (data.command === 'set-cursor-active') setShowCursorEnabled(data.active === true);
         }
         if (data.type === 'deepx-parent-real-mouse') {
             handleRealMouseActivity(data.x, data.y, data.deltaY || 0);
+        }
+        if (data.type === 'deepx-parent-hover-state') {
+            parentHoverClickable = data.clickable === true;
+            parentHoverDraggable = data.draggable === true;
         }
     });
     document.addEventListener('dblclick', (e) => {
@@ -2125,11 +2337,6 @@ function setupTrackerEvents() {
         }
         overlay.style.display = 'none';
     };
-    document.getElementById('head-cursor-speed').oninput = (e) => {
-        headCursorSpeed = parseFloat(e.target.value);
-        document.getElementById('head-cursor-speed-val').innerText = headCursorSpeed.toFixed(0);
-        localStorage.setItem('head-cursor-speed', e.target.value);
-    };
     document.getElementById('head-cursor-accel').oninput = (e) => {
         headCursorAcceleration = parseFloat(e.target.value);
         document.getElementById('head-cursor-accel-val').innerText = headCursorAcceleration.toFixed(3);
@@ -2164,7 +2371,7 @@ function setupTrackerEvents() {
         pinchRecordStage = 'idle';
         savePinchCalibration();
     };
-    ['head-cursor-speed', 'head-cursor-accel', 'hand-cursor-speed', 'hand-cursor-accel'].forEach(id => {
+    ['head-cursor-accel', 'hand-cursor-speed', 'hand-cursor-accel'].forEach(id => {
         const range = document.getElementById(id);
         const num = document.getElementById(id + '-num');
         if (num) {
@@ -2178,8 +2385,12 @@ function setupTrackerEvents() {
     });
     document.querySelectorAll('input[type=range]').forEach(setupSlider);
     window.addEventListener('keydown', (e) => {
+        if (isTypingTarget(e.target)) return;
         if (e.code === 'Space') {
-            isPaused = !isPaused;
+            toggleTrackingEnabled();
+            e.preventDefault();
+        } else if (e.code === 'KeyC') {
+            toggleCursorFunction();
             e.preventDefault();
         }
     });

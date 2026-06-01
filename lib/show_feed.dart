@@ -663,6 +663,7 @@ const double _kDetailPanelGap = 0;
 const double _kDetailPrimaryRatio = 0.8;
 const double _kDetailSecondaryRatio = 0.2;
 const double _kDetailPreviewAspectRatio = 16 / 9;
+const Color _kNavbarGray = Color(0xFF1E1E1E);
 
 double _detailPreviewWidth({
   required double contentWidth,
@@ -1381,54 +1382,24 @@ class _StandalonePublicProfileRoutePageState
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      ChoiceChip(
+                      _ParallelogramFilterChip(
                         selected: _filter == _PublicProfileFilter.all,
-                        label: Text(
-                          'All',
-                          style: TextStyle(
-                            color: _filter == _PublicProfileFilter.all
-                                ? Colors.black
-                                : cs.onSurface,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        selectedColor: Colors.white,
-                        checkmarkColor: Colors.black,
-                        onSelected: (_) =>
+                        label: 'All',
+                        onSelected: () =>
                             setState(() => _filter = _PublicProfileFilter.all),
                       ),
                       const SizedBox(width: 8),
-                      ChoiceChip(
+                      _ParallelogramFilterChip(
                         selected: _filter == _PublicProfileFilter.posts,
-                        label: Text(
-                          'Posts',
-                          style: TextStyle(
-                            color: _filter == _PublicProfileFilter.posts
-                                ? Colors.black
-                                : cs.onSurface,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        selectedColor: Colors.white,
-                        checkmarkColor: Colors.black,
-                        onSelected: (_) => setState(
+                        label: 'Posts',
+                        onSelected: () => setState(
                             () => _filter = _PublicProfileFilter.posts),
                       ),
                       const SizedBox(width: 8),
-                      ChoiceChip(
+                      _ParallelogramFilterChip(
                         selected: _filter == _PublicProfileFilter.collections,
-                        label: Text(
-                          'Collections',
-                          style: TextStyle(
-                            color: _filter == _PublicProfileFilter.collections
-                                ? Colors.black
-                                : cs.onSurface,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        selectedColor: Colors.white,
-                        checkmarkColor: Colors.black,
-                        onSelected: (_) => setState(
+                        label: 'Collections',
+                        onSelected: () => setState(
                           () => _filter = _PublicProfileFilter.collections,
                         ),
                       ),
@@ -1480,43 +1451,46 @@ class _StandalonePublicProfileRoutePageState
                               entry['showCollectionCount'] == true;
                           final String collectionCountText =
                               entry['collectionCountText']?.toString() ?? '';
-                          return Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: () => Navigator.pushNamed(context, path),
-                              child: _GridCardPreviewSurface(
-                                heroTag: heroTag,
-                                payload: payload,
-                                title: title,
-                                verticalUsername: _verticalUsernameForCard(
-                                  profile,
-                                ),
-                                priceText:
-                                    entry['priceText']?.toString() ?? 'Free',
-                                avatarImage: profileAvatarImage,
-                                isVerified: profile.isVerified,
-                                accentColor: _cardAccentColorFromHex(
-                                  entry['accentHex']?.toString(),
-                                ),
-                                metaText: meta,
-                                showCollectionCount: showCollectionCount,
-                                collectionCountText: collectionCountText,
-                                menuItems: const <_BlurMenuEntry<String>>[],
-                                onAvatarTap: () =>
-                                    _openPublicProfileRoute(context, profile),
-                                onMenuSelected: (_) {},
-                                emptyChild: showCollectionCount
-                                    ? Container(
-                                        color: cs.surfaceContainerLow,
-                                        child: Center(
-                                          child: Icon(
-                                            Icons.collections_bookmark_outlined,
-                                            color: cs.onSurfaceVariant,
-                                            size: 34,
+                          return _SnapBackDraggableCard(
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () => Navigator.pushNamed(context, path),
+                                child: _GridCardPreviewSurface(
+                                  heroTag: heroTag,
+                                  payload: payload,
+                                  title: title,
+                                  verticalUsername: _verticalUsernameForCard(
+                                    profile,
+                                  ),
+                                  priceText:
+                                      entry['priceText']?.toString() ?? 'Free',
+                                  avatarImage: profileAvatarImage,
+                                  isVerified: profile.isVerified,
+                                  accentColor: _cardAccentColorFromHex(
+                                    entry['accentHex']?.toString(),
+                                  ),
+                                  metaText: meta,
+                                  showCollectionCount: showCollectionCount,
+                                  collectionCountText: collectionCountText,
+                                  menuItems: const <_BlurMenuEntry<String>>[],
+                                  onAvatarTap: () =>
+                                      _openPublicProfileRoute(context, profile),
+                                  onMenuSelected: (_) {},
+                                  emptyChild: showCollectionCount
+                                      ? Container(
+                                          color: cs.surfaceContainerLow,
+                                          child: Center(
+                                            child: Icon(
+                                              Icons
+                                                  .collections_bookmark_outlined,
+                                              color: cs.onSurfaceVariant,
+                                              size: 34,
+                                            ),
                                           ),
-                                        ),
-                                      )
-                                    : null,
+                                        )
+                                      : null,
+                                ),
                               ),
                             ),
                           );
@@ -2334,8 +2308,31 @@ class _NavButton extends StatefulWidget {
   State<_NavButton> createState() => _NavButtonState();
 }
 
-class _NavButtonState extends State<_NavButton> {
+class _NavButtonState extends State<_NavButton>
+    with SingleTickerProviderStateMixin {
   bool _hovered = false;
+  late final AnimationController _rippleController;
+  Offset _rippleOrigin = Offset.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _rippleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    )..addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _rippleController.dispose();
+    super.dispose();
+  }
+
+  void _startRipple(TapDownDetails details) {
+    _rippleOrigin = details.localPosition;
+    _rippleController.forward(from: 0);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2348,11 +2345,15 @@ class _NavButtonState extends State<_NavButton> {
             : Colors.transparent);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.expanded ? 8 : 0,
+        vertical: 4,
+      ),
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
         child: InkWell(
+          onTapDown: _startRipple,
           onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
@@ -2363,6 +2364,16 @@ class _NavButtonState extends State<_NavButton> {
               fit: StackFit.expand,
               children: [
                 _ParallelogramHighlight(color: bg),
+                if (_rippleController.isAnimating)
+                  ClipPath(
+                    clipper: const _ParallelogramHighlightClipper(),
+                    child: CustomPaint(
+                      painter: _NavRipplePainter(
+                        origin: _rippleOrigin,
+                        progress: _rippleController.value,
+                      ),
+                    ),
+                  ),
                 Row(
                   children: [
                     Icon(widget.icon, color: fg, size: 24),
@@ -2385,6 +2396,31 @@ class _NavButtonState extends State<_NavButton> {
         ),
       ),
     );
+  }
+}
+
+class _NavRipplePainter extends CustomPainter {
+  const _NavRipplePainter({
+    required this.origin,
+    required this.progress,
+  });
+
+  final Offset origin;
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double radius =
+        math.sqrt(size.width * size.width + size.height * size.height) *
+            Curves.easeOutCubic.transform(progress);
+    final Paint paint = Paint()
+      ..color = Colors.white.withValues(alpha: (1 - progress) * 0.28);
+    canvas.drawCircle(origin, radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _NavRipplePainter oldDelegate) {
+    return oldDelegate.origin != origin || oldDelegate.progress != progress;
   }
 }
 
@@ -2430,6 +2466,108 @@ class _ParallelogramHighlightClipper extends CustomClipper<Path> {
   @override
   bool shouldReclip(covariant _ParallelogramHighlightClipper oldClipper) {
     return false;
+  }
+}
+
+class _ParallelogramFilterChip extends StatefulWidget {
+  const _ParallelogramFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onSelected;
+
+  @override
+  State<_ParallelogramFilterChip> createState() =>
+      _ParallelogramFilterChipState();
+}
+
+class _ParallelogramFilterChipState extends State<_ParallelogramFilterChip> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    final Color background = widget.selected
+        ? Colors.white
+        : (_hovered ? _kNavbarGray.withValues(alpha: 0.92) : _kNavbarGray);
+    final Color foreground = widget.selected ? Colors.black : cs.onSurface;
+
+    return Semantics(
+      selected: widget.selected,
+      button: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onSelected,
+          child: ClipPath(
+            clipper: const _ParallelogramHighlightClipper(),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOutCubic,
+              height: 38,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              color: background,
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: foreground,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SnapBackDraggableCard extends StatelessWidget {
+  const _SnapBackDraggableCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final Size size = constraints.biggest;
+        if (!size.width.isFinite || !size.height.isFinite) return child;
+        return LongPressDraggable<Object>(
+          data: Object(),
+          dragAnchorStrategy: pointerDragAnchorStrategy,
+          feedback: SizedBox(
+            width: size.width,
+            height: size.height,
+            child: HeroMode(
+              enabled: false,
+              child: Material(
+                color: Colors.transparent,
+                child: Opacity(opacity: 0.92, child: child),
+              ),
+            ),
+          ),
+          childWhenDragging: Opacity(opacity: 0.46, child: child),
+          child: child,
+        );
+      },
+    );
   }
 }
 
@@ -2896,7 +3034,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
     return items;
   }
 
-  Widget _buildHomeChipRail(ColorScheme cs) {
+  Widget _buildHomeChipRail() {
     return SizedBox(
       height: _chipRailHeight,
       child: ListView.separated(
@@ -2906,20 +3044,10 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
         itemBuilder: (context, index) {
           final String chip = _homeFeedChips[index];
           final bool selected = chip == _selectedHomeChip;
-          return ChoiceChip(
+          return _ParallelogramFilterChip(
             selected: selected,
-            label: Text(
-              chip,
-              style: TextStyle(
-                color: selected ? Colors.black : cs.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            onSelected: (_) => setState(() => _selectedHomeChip = chip),
-            selectedColor: Colors.white,
-            backgroundColor: Colors.transparent,
-            checkmarkColor: Colors.black,
-            side: BorderSide(color: cs.outline.withValues(alpha: 0.22)),
+            label: chip,
+            onSelected: () => setState(() => _selectedHomeChip = chip),
           );
         },
       ),
@@ -3027,7 +3155,7 @@ class _HomeFeedTabState extends State<_HomeFeedTab> {
           top: _chipRailTop,
           left: 14,
           right: 14,
-          child: _buildHomeChipRail(cs),
+          child: _buildHomeChipRail(),
         ),
       ],
     );
@@ -3517,7 +3645,7 @@ class _CollectionTabState extends State<_CollectionTab> {
     return items;
   }
 
-  Widget _buildCollectionChipRail(ColorScheme cs) {
+  Widget _buildCollectionChipRail() {
     return SizedBox(
       height: _chipRailHeight,
       child: ListView.separated(
@@ -3527,20 +3655,10 @@ class _CollectionTabState extends State<_CollectionTab> {
         itemBuilder: (context, index) {
           final String chip = _collectionChips[index];
           final bool selected = chip == _selectedCollectionChip;
-          return ChoiceChip(
+          return _ParallelogramFilterChip(
             selected: selected,
-            label: Text(
-              chip,
-              style: TextStyle(
-                color: selected ? Colors.black : cs.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            onSelected: (_) => setState(() => _selectedCollectionChip = chip),
-            selectedColor: Colors.white,
-            backgroundColor: Colors.transparent,
-            checkmarkColor: Colors.black,
-            side: BorderSide(color: cs.outline.withValues(alpha: 0.22)),
+            label: chip,
+            onSelected: () => setState(() => _selectedCollectionChip = chip),
           );
         },
       ),
@@ -3652,7 +3770,7 @@ class _CollectionTabState extends State<_CollectionTab> {
           top: _chipRailTop,
           left: 14,
           right: 14,
-          child: _buildCollectionChipRail(cs),
+          child: _buildCollectionChipRail(),
         ),
       ],
     );
@@ -3731,48 +3849,51 @@ class _CollectionFeedTile extends StatelessWidget {
     final String metaText =
         '${_friendlyCount(summary.viewsCount)} views • ${_friendlyTime(summary.createdAt)} • ${summary.itemsCount} items';
     final Color accentColor = _cardAccentColorFromHex(summary.accentColorHex);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: AspectRatio(
-          aspectRatio: _kGridPreviewAspectRatio,
-          child: _GridCardPreviewSurface(
-            heroTag: heroTag,
-            payload: previewPayload,
-            title:
-                summary.name.isNotEmpty ? summary.name : 'Untitled collection',
-            verticalUsername: _verticalUsernameForCard(summary.author),
-            priceText: _cardPriceLabel(
-              isPaid: summary.isPaid,
-              priceCents: summary.priceCents,
-              viewerHasPaid: summary.viewerHasPaid,
-            ),
-            avatarImage: avatarImage,
-            isVerified: summary.author?.isVerified == true,
-            accentColor: accentColor,
-            metaText: metaText,
-            showCollectionCount: true,
-            collectionCountText: '${summary.itemsCount}',
-            menuItems: menuItems,
-            onAvatarTap: onOpenAuthorProfile,
-            onMenuSelected: (value) {
-              if (value == 'watch_later') onWatchLater();
-              if (value == 'share') onShare();
-              if (value == 'report') onReport();
-              if (value == 'not_interested') onNotInterested();
-              if (value == 'dont_recommend') onDontRecommend();
-              if (value == 'update') onUpdate?.call();
-              if (value == 'visibility') onToggleVisibility?.call();
-              if (value == 'delete') onDelete?.call();
-            },
-            emptyChild: Container(
-              color: cs.surfaceContainerLow,
-              child: Center(
-                child: Icon(
-                  Icons.collections_bookmark_outlined,
-                  color: cs.onSurfaceVariant,
-                  size: 34,
+    return _SnapBackDraggableCard(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: AspectRatio(
+            aspectRatio: _kGridPreviewAspectRatio,
+            child: _GridCardPreviewSurface(
+              heroTag: heroTag,
+              payload: previewPayload,
+              title: summary.name.isNotEmpty
+                  ? summary.name
+                  : 'Untitled collection',
+              verticalUsername: _verticalUsernameForCard(summary.author),
+              priceText: _cardPriceLabel(
+                isPaid: summary.isPaid,
+                priceCents: summary.priceCents,
+                viewerHasPaid: summary.viewerHasPaid,
+              ),
+              avatarImage: avatarImage,
+              isVerified: summary.author?.isVerified == true,
+              accentColor: accentColor,
+              metaText: metaText,
+              showCollectionCount: true,
+              collectionCountText: '${summary.itemsCount}',
+              menuItems: menuItems,
+              onAvatarTap: onOpenAuthorProfile,
+              onMenuSelected: (value) {
+                if (value == 'watch_later') onWatchLater();
+                if (value == 'share') onShare();
+                if (value == 'report') onReport();
+                if (value == 'not_interested') onNotInterested();
+                if (value == 'dont_recommend') onDontRecommend();
+                if (value == 'update') onUpdate?.call();
+                if (value == 'visibility') onToggleVisibility?.call();
+                if (value == 'delete') onDelete?.call();
+              },
+              emptyChild: Container(
+                color: cs.surfaceContainerLow,
+                child: Center(
+                  child: Icon(
+                    Icons.collections_bookmark_outlined,
+                    color: cs.onSurfaceVariant,
+                    size: 34,
+                  ),
                 ),
               ),
             ),
@@ -3816,25 +3937,27 @@ class _SuggestionGridCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: AspectRatio(
-        aspectRatio: _kGridPreviewAspectRatio,
-        child: _GridCardPreviewSurface(
-          heroTag: heroTag,
-          payload: payload,
-          title: title,
-          verticalUsername: author.replaceAll('@', '').replaceAll(' ', ''),
-          priceText: priceText,
-          avatarImage: avatarImage,
-          isVerified: isVerified,
-          accentColor: accentColor,
-          metaText: metaText,
-          showCollectionCount: showCollectionCount,
-          collectionCountText: collectionCountText,
-          menuItems: const <_BlurMenuEntry<String>>[],
-          onMenuSelected: (_) {},
-          onAvatarTap: onAvatarTap,
+    return _SnapBackDraggableCard(
+      child: InkWell(
+        onTap: onTap,
+        child: AspectRatio(
+          aspectRatio: _kGridPreviewAspectRatio,
+          child: _GridCardPreviewSurface(
+            heroTag: heroTag,
+            payload: payload,
+            title: title,
+            verticalUsername: author.replaceAll('@', '').replaceAll(' ', ''),
+            priceText: priceText,
+            avatarImage: avatarImage,
+            isVerified: isVerified,
+            accentColor: accentColor,
+            metaText: metaText,
+            showCollectionCount: showCollectionCount,
+            collectionCountText: collectionCountText,
+            menuItems: const <_BlurMenuEntry<String>>[],
+            onMenuSelected: (_) {},
+            onAvatarTap: onAvatarTap,
+          ),
         ),
       ),
     );
@@ -3913,42 +4036,44 @@ class _FeedTile extends StatelessWidget {
     final Color accentColor =
         _cardAccentColorFromHex(post.preset.accentColorHex);
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: AspectRatio(
-          aspectRatio: _kGridPreviewAspectRatio,
-          child: _GridCardPreviewSurface(
-            heroTag: heroTag,
-            payload: previewPayload,
-            title: post.preset.title.isNotEmpty
-                ? post.preset.title
-                : post.preset.name,
-            verticalUsername: _verticalUsernameForCard(post.author),
-            priceText: _cardPriceLabel(
-              isPaid: post.preset.isPaid,
-              priceCents: post.preset.priceCents,
-              viewerHasPaid: post.preset.viewerHasPaid,
+    return _SnapBackDraggableCard(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: AspectRatio(
+            aspectRatio: _kGridPreviewAspectRatio,
+            child: _GridCardPreviewSurface(
+              heroTag: heroTag,
+              payload: previewPayload,
+              title: post.preset.title.isNotEmpty
+                  ? post.preset.title
+                  : post.preset.name,
+              verticalUsername: _verticalUsernameForCard(post.author),
+              priceText: _cardPriceLabel(
+                isPaid: post.preset.isPaid,
+                priceCents: post.preset.priceCents,
+                viewerHasPaid: post.preset.viewerHasPaid,
+              ),
+              avatarImage: avatarImage,
+              isVerified: post.author?.isVerified == true,
+              accentColor: accentColor,
+              metaText: metaText,
+              showCollectionCount: false,
+              collectionCountText: '',
+              menuItems: menuItems,
+              onAvatarTap: onOpenAuthorProfile,
+              onMenuSelected: (value) {
+                if (value == 'watch_later') onWatchLater();
+                if (value == 'share') onShare();
+                if (value == 'report') onReport();
+                if (value == 'not_interested') onNotInterested();
+                if (value == 'dont_recommend') onDontRecommend();
+                if (value == 'edit') onEdit?.call();
+                if (value == 'visibility') onToggleVisibility?.call();
+                if (value == 'delete') onDelete?.call();
+              },
             ),
-            avatarImage: avatarImage,
-            isVerified: post.author?.isVerified == true,
-            accentColor: accentColor,
-            metaText: metaText,
-            showCollectionCount: false,
-            collectionCountText: '',
-            menuItems: menuItems,
-            onAvatarTap: onOpenAuthorProfile,
-            onMenuSelected: (value) {
-              if (value == 'watch_later') onWatchLater();
-              if (value == 'share') onShare();
-              if (value == 'report') onReport();
-              if (value == 'not_interested') onNotInterested();
-              if (value == 'dont_recommend') onDontRecommend();
-              if (value == 'edit') onEdit?.call();
-              if (value == 'visibility') onToggleVisibility?.call();
-              if (value == 'delete') onDelete?.call();
-            },
           ),
         ),
       ),
@@ -4242,6 +4367,26 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _openDetailPostEditor() async {
+    if (isThreeDPayload(_post.preset.payload)) {
+      final bool? updated = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          settings: const RouteSettings(name: '/post/editor/3d-update'),
+          builder: (_) => _ThreeDAssetEditorPage(
+            title: 'Update 3D Asset',
+            initialPayload: _post.preset.payload,
+            onSave: (payload) => _repository.updatePresetDetail(
+              presetId: _post.preset.id,
+              payload: payload,
+            ),
+          ),
+        ),
+      );
+      if (updated == true) {
+        await _refreshPost();
+      }
+      return;
+    }
     final bool? updated = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
@@ -5064,9 +5209,23 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
               Positioned(
                 right: 8,
                 bottom: 8,
-                child: IconButton.filledTonal(
-                  onPressed: _openFullscreenViewer,
-                  icon: const Icon(Icons.fullscreen, size: 20),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton.filledTonal(
+                      onPressed: _openFullscreenViewer,
+                      icon: const Icon(Icons.fullscreen, size: 20),
+                    ),
+                    if (_mine) ...[
+                      const SizedBox(width: 6),
+                      _detailOwnerMenuButton(
+                        isPublic: _post.preset.isPublic,
+                        onSelected: (action) {
+                          unawaited(_handleDetailOwnerAction(action));
+                        },
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
@@ -5113,19 +5272,10 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       padding: EdgeInsets.only(
                         right: index == _suggestionFilters.length - 1 ? 0 : 8,
                       ),
-                      child: ChoiceChip(
+                      child: _ParallelogramFilterChip(
                         selected: selected,
-                        label: Text(
-                          _displayFilterName(filter),
-                          style: TextStyle(
-                            color: selected ? Colors.black : Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        selectedColor: Colors.white,
-                        checkmarkColor: Colors.black,
-                        side: const BorderSide(color: Colors.white24),
-                        onSelected: (_) =>
+                        label: _displayFilterName(filter),
+                        onSelected: () =>
                             setState(() => _suggestionFilter = filter),
                       ),
                     );
@@ -5483,6 +5633,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       TextEditingController();
 
   int _postTypeIndex = 0;
+  bool _publishAsCollection = false;
   int _selectedItemIndex = -1;
   bool _uploading = false;
   bool _openingComposer = false;
@@ -5523,7 +5674,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       );
       if (!mounted) return;
       setState(() {
-        if (_postTypeIndex == 0) {
+        if (!_publishAsCollection) {
           _singlePayload = payload;
         } else {
           final item = CollectionDraftItem(
@@ -5572,6 +5723,14 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         fileName: file.name,
         contentType: file.contentType,
         folder: 'card-images',
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _threeDProgress = progress.clamp(0, 1).toDouble();
+            _threeDStage =
+                'Uploading thumbnail ${(_threeDProgress * 100).round()}%';
+          });
+        },
       );
       setState(() {
         _threeDThumbnailPayload = simpleImagePayload(
@@ -5612,6 +5771,14 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         contentType: file.contentType,
         folder: '3d-sources',
         bucket: AppRepository.sourceImagesBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _threeDProgress = progress.clamp(0, 1).toDouble();
+            _threeDStage =
+                'Uploading source image ${(_threeDProgress * 100).round()}%';
+          });
+        },
       );
       setState(() {
         _threeDSourceImages.add(asset);
@@ -5662,6 +5829,14 @@ class _PostStudioTabState extends State<_PostStudioTab> {
             ? 'gaussian-splats'
             : 'triangle-meshes',
         bucket: AppRepository.threeDAssetsBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _threeDProgress = progress.clamp(0, 1).toDouble();
+            _threeDStage =
+                'Uploading 3D asset ${(_threeDProgress * 100).round()}%';
+          });
+        },
       );
       setState(() {
         _threeDAssetPayload = simpleThreeDPayload(
@@ -5692,70 +5867,80 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     }
   }
 
-  Future<void> _publishManualThreeDPost() async {
+  Future<void> _openThreeDComposer() async {
     final messenger = ScaffoldMessenger.of(context);
     final payload = _threeDAssetPayload;
-    final thumbnail = _threeDThumbnailPayload;
     if (payload == null || threeDAssetFromPayload(payload) == null) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('Upload a 3D asset first.')),
+        const SnackBar(content: Text('Upload or generate a 3D asset first.')),
       );
       return;
     }
-    if (thumbnail == null || imageUrlFromPayload(thumbnail) == null) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Upload a thumbnail first.')),
-      );
-      return;
-    }
-    if (_threeDProcessing) return;
-    setState(() {
-      _threeDProcessing = true;
-      _threeDStage = 'Publishing...';
-      _threeDProgress = 0.8;
-    });
-    try {
-      await _repository.publishPresetPost(
-        name: _threeDTitleController.text.trim().isEmpty
-            ? '3D Scene'
-            : _threeDTitleController.text.trim(),
-        payload: payload,
-        title: _threeDTitleController.text.trim(),
-        description: _threeDDescriptionController.text.trim(),
-        tags: const <String>[],
-        mentionUserIds: const <String>[],
-        visibility: 'public',
-        thumbnailPayload: thumbnail,
-      );
-      if (!mounted) return;
+    if (_openingComposer) return;
+    setState(() => _openingComposer = true);
+    final String title = _threeDTitleController.text.trim().isEmpty
+        ? '3D Scene'
+        : _threeDTitleController.text.trim();
+    final Map<String, dynamic> initialCard =
+        _threeDThumbnailPayload ?? simpleImagePayload(imageUrl: '');
+    final bool? result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        settings: RouteSettings(
+          name: _publishAsCollection
+              ? '/post/studio/publish-collection'
+              : '/post/studio/publish-single',
+        ),
+        builder: (_) {
+          if (_publishAsCollection) {
+            return _PostCardComposerPage.collection(
+              collectionId: null,
+              collectionName: title,
+              collectionDescription: _threeDDescriptionController.text.trim(),
+              tags: const <String>[],
+              mentionUserIds: const <String>[],
+              published: true,
+              initialCardPayload: initialCard,
+              items: <CollectionDraftItem>[
+                CollectionDraftItem(name: title, snapshot: payload),
+              ],
+            );
+          }
+          return _PostCardComposerPage.single(
+            name: title,
+            payload: payload,
+            initialCardPayload: initialCard,
+          );
+        },
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _openingComposer = false);
+    if (result == true) {
       setState(() {
         _threeDAssetPayload = null;
-        _threeDProgress = 1;
-        _threeDStage = 'Published';
+        _threeDThumbnailPayload = null;
+        _threeDSourceImages.clear();
+        _threeDProgress = 0;
+        _threeDStage = '';
       });
       messenger.showSnackBar(
-        const SnackBar(content: Text('3D post published successfully.')),
+        SnackBar(
+          content: Text(
+            _publishAsCollection
+                ? '3D collection published successfully.'
+                : '3D post published successfully.',
+          ),
+        ),
       );
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(SnackBar(content: Text('Publish failed: $e')));
-    } finally {
-      if (mounted) setState(() => _threeDProcessing = false);
     }
   }
 
   Future<void> _startInstantSplatJob() async {
     final messenger = ScaffoldMessenger.of(context);
-    final thumbnail = _threeDThumbnailPayload;
     if (_threeDSourceImages.length < 3) {
       messenger.showSnackBar(
         const SnackBar(content: Text('Upload at least 3 source images.')),
-      );
-      return;
-    }
-    if (thumbnail == null || imageUrlFromPayload(thumbnail) == null) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Upload a thumbnail first.')),
       );
       return;
     }
@@ -5773,7 +5958,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         mentionUserIds: const <String>[],
         visibility: 'public',
         sourceImagePaths: _threeDSourceImages.map((e) => e.path).toList(),
-        thumbnailPayload: thumbnail,
+        thumbnailPayload:
+            _threeDThumbnailPayload ?? simpleImagePayload(imageUrl: ''),
       );
       setState(() {
         _threeDProgress = 0.12;
@@ -5804,13 +5990,20 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         _threeDStage = job['stage']?.toString() ?? status;
       });
       if (status == 'succeeded') {
+        final Map<String, dynamic>? outputPayload = job['output_payload'] is Map
+            ? Map<String, dynamic>.from(job['output_payload'] as Map)
+            : null;
         setState(() {
+          if (outputPayload != null &&
+              threeDAssetFromPayload(outputPayload) != null) {
+            _threeDAssetPayload = outputPayload;
+          }
           _threeDSourceImages.clear();
           _threeDProgress = 1;
-          _threeDStage = 'Published';
+          _threeDStage = '3DGS asset ready';
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('3DGS post published successfully.')),
+          const SnackBar(content: Text('3DGS asset is ready.')),
         );
         return;
       }
@@ -5903,7 +6096,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   }
 
   Widget _buildPreview(ColorScheme cs) {
-    if (_postTypeIndex >= 2) {
+    if (_postTypeIndex > 0) {
       final payload = _threeDAssetPayload ?? _threeDThumbnailPayload;
       if (payload != null) {
         return ClipRRect(
@@ -5927,7 +6120,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         ),
       );
     }
-    final Map<String, dynamic>? payload = _postTypeIndex == 0
+    final Map<String, dynamic>? payload = !_publishAsCollection
         ? _singlePayload
         : (_selectedItemIndex >= 0 && _selectedItemIndex < _draftItems.length
             ? _draftItems[_selectedItemIndex].snapshot
@@ -5958,10 +6151,11 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final bool collectionMode = _postTypeIndex == 1;
-    final bool train3dMode = _postTypeIndex == 2;
-    final bool manualSplatMode = _postTypeIndex == 3;
-    final bool threeDMode = _postTypeIndex >= 2;
+    final bool imageMode = _postTypeIndex == 0;
+    final bool collectionMode = imageMode && _publishAsCollection;
+    final bool train3dMode = _postTypeIndex == 1;
+    final bool manualSplatMode = _postTypeIndex == 2;
+    final bool threeDMode = _postTypeIndex > 0;
     return Padding(
       padding: EdgeInsets.fromLTRB(14, widget.topInset + 14, 14, 14),
       child: Row(
@@ -5972,15 +6166,25 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               children: [
                 Row(
                   children: [
-                    Text(
-                      'Post Studio',
-                      style: TextStyle(
-                        color: cs.onSurface,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    SegmentedButton<bool>(
+                      segments: const <ButtonSegment<bool>>[
+                        ButtonSegment<bool>(
+                          value: false,
+                          icon: Icon(Icons.image_outlined),
+                          label: Text('Single'),
+                        ),
+                        ButtonSegment<bool>(
+                          value: true,
+                          icon: Icon(Icons.collections_outlined),
+                          label: Text('Collection'),
+                        ),
+                      ],
+                      selected: <bool>{_publishAsCollection},
+                      onSelectionChanged: (value) {
+                        setState(() => _publishAsCollection = value.first);
+                      },
                     ),
-                    const Spacer(),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
@@ -5989,25 +6193,20 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                             ButtonSegment<int>(
                               value: 0,
                               icon: Icon(Icons.image_outlined),
-                              label: Text('Single'),
+                              label: Text('Image'),
                             ),
                             ButtonSegment<int>(
                               value: 1,
-                              icon: Icon(Icons.collections_outlined),
-                              label: Text('Collection'),
-                            ),
-                            ButtonSegment<int>(
-                              value: 2,
                               icon: Icon(Icons.auto_awesome_motion_outlined),
                               label: Text('Train 3DGS'),
                             ),
                             ButtonSegment<int>(
-                              value: 3,
+                              value: 2,
                               icon: Icon(Icons.blur_on_rounded),
                               label: Text('Gaussian'),
                             ),
                             ButtonSegment<int>(
-                              value: 4,
+                              value: 3,
                               icon: Icon(Icons.view_in_ar_outlined),
                               label: Text('Mesh'),
                             ),
@@ -6065,14 +6264,6 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                           const InputDecoration(labelText: 'Description'),
                     ),
                     const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: _uploading ? null : _uploadThreeDThumbnail,
-                      icon: const Icon(Icons.image_outlined),
-                      label: Text(_threeDThumbnailPayload == null
-                          ? 'Upload Thumbnail'
-                          : 'Replace Thumbnail'),
-                    ),
-                    const SizedBox(height: 8),
                     LinearProgressIndicator(
                       value: (_threeDProcessing || _uploading)
                           ? _threeDProgress.clamp(0, 1).toDouble()
@@ -6083,9 +6274,19 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                     const SizedBox(height: 6),
                     Text(
                       _threeDStage.isEmpty
-                          ? 'Upload a thumbnail and 3D source.'
+                          ? 'Upload or generate a 3D asset.'
                           : _threeDStage,
                       style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _uploading ? null : _uploadThreeDThumbnail,
+                      icon: const Icon(Icons.image_outlined),
+                      label: Text(
+                        _threeDThumbnailPayload == null
+                            ? 'Upload Thumbnail'
+                            : 'Replace Thumbnail',
+                      ),
                     ),
                     const SizedBox(height: 10),
                     if (train3dMode) ...[
@@ -6131,11 +6332,21 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       ),
                       const SizedBox(height: 12),
                       FilledButton.icon(
-                        onPressed:
-                            _threeDProcessing ? null : _publishManualThreeDPost,
-                        icon: const Icon(Icons.publish_rounded),
-                        label:
-                            Text(_threeDProcessing ? 'Publishing...' : 'Post'),
+                        onPressed: (_threeDProcessing || _openingComposer)
+                            ? null
+                            : _openThreeDComposer,
+                        icon: const Icon(Icons.arrow_forward_rounded),
+                        label: Text(_openingComposer ? 'Opening...' : 'Next'),
+                      ),
+                    ],
+                    if (train3dMode) ...[
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: (_threeDProcessing || _openingComposer)
+                            ? null
+                            : _openThreeDComposer,
+                        icon: const Icon(Icons.arrow_forward_rounded),
+                        label: Text(_openingComposer ? 'Opening...' : 'Next'),
                       ),
                     ],
                   ] else if (collectionMode) ...[
@@ -7048,6 +7259,51 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     final detail = _detail;
     final summary = _activeSummary;
     if (detail == null || summary == null) return;
+    final int activeIndex = _index.clamp(0, detail.items.length - 1).toInt();
+    if (detail.items.isNotEmpty &&
+        isThreeDPayload(detail.items[activeIndex].snapshot)) {
+      final bool? updated = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          settings:
+              const RouteSettings(name: '/post/editor/collection-3d-update'),
+          builder: (_) => _ThreeDAssetEditorPage(
+            title: 'Update 3D Asset',
+            initialPayload: detail.items[activeIndex].snapshot,
+            onSave: (payload) async {
+              final items = detail.items
+                  .map(
+                    (item) => CollectionDraftItem(
+                      name: item.name,
+                      snapshot: item.snapshot,
+                    ),
+                  )
+                  .toList();
+              items[activeIndex] = items[activeIndex].copyWith(
+                snapshot: payload,
+              );
+              await _repository.saveCollectionWithItems(
+                collectionId: summary.id,
+                name: summary.name,
+                description: summary.description,
+                tags: summary.tags,
+                mentionUserIds: summary.mentionUserIds,
+                thumbnailPayload: summary.thumbnailPayload,
+                publish: summary.published,
+                items: items,
+                isPaid: summary.isPaid,
+                priceCents: summary.priceCents,
+                accentColorHex: summary.accentColorHex,
+              );
+            },
+          ),
+        ),
+      );
+      if (updated == true) {
+        await _load();
+      }
+      return;
+    }
     final bool? updated = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
@@ -7629,9 +7885,24 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             Positioned(
               right: 8,
               bottom: 8,
-              child: IconButton.filledTonal(
-                onPressed: () => _openCollectionFullscreen(activeItem, _index),
-                icon: const Icon(Icons.fullscreen, size: 20),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton.filledTonal(
+                    onPressed: () =>
+                        _openCollectionFullscreen(activeItem, _index),
+                    icon: const Icon(Icons.fullscreen, size: 20),
+                  ),
+                  if (_mine) ...[
+                    const SizedBox(width: 6),
+                    _detailOwnerMenuButton(
+                      isPublic: summary.published,
+                      onSelected: (action) {
+                        unawaited(_handleDetailCollectionOwnerAction(action));
+                      },
+                    ),
+                  ],
+                ],
               ),
             ),
           ],
@@ -7677,19 +7948,10 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                       padding: EdgeInsets.only(
                         right: index == _suggestionFilters.length - 1 ? 0 : 8,
                       ),
-                      child: ChoiceChip(
+                      child: _ParallelogramFilterChip(
                         selected: selected,
-                        label: Text(
-                          _displayFilterName(filter),
-                          style: TextStyle(
-                            color: selected ? Colors.black : Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        selectedColor: Colors.white,
-                        checkmarkColor: Colors.black,
-                        side: const BorderSide(color: Colors.white24),
-                        onSelected: (_) =>
+                        label: _displayFilterName(filter),
+                        onSelected: () =>
                             setState(() => _suggestionFilter = filter),
                       ),
                     );
@@ -8631,39 +8893,41 @@ class _ProfileTabState extends State<_ProfileTab> {
               if (enableOwnerActions)
                 const _BlurMenuEntry.item(value: 'delete', label: 'Delete'),
             ];
-            return InkWell(
-              onTap: () => _openPost(preset),
-              child: AspectRatio(
-                aspectRatio: _kGridPreviewAspectRatio,
-                child: _GridCardPreviewSurface(
-                  heroTag: heroTag,
-                  payload: payload,
-                  title: title,
-                  verticalUsername: authorName,
-                  priceText: _cardPriceLabel(
-                    isPaid: preset.isPaid,
-                    priceCents: preset.priceCents,
-                    viewerHasPaid: preset.viewerHasPaid,
+            return _SnapBackDraggableCard(
+              child: InkWell(
+                onTap: () => _openPost(preset),
+                child: AspectRatio(
+                  aspectRatio: _kGridPreviewAspectRatio,
+                  child: _GridCardPreviewSurface(
+                    heroTag: heroTag,
+                    payload: payload,
+                    title: title,
+                    verticalUsername: authorName,
+                    priceText: _cardPriceLabel(
+                      isPaid: preset.isPaid,
+                      priceCents: preset.priceCents,
+                      viewerHasPaid: preset.viewerHasPaid,
+                    ),
+                    avatarImage:
+                        avatarUrl == null ? null : NetworkImage(avatarUrl),
+                    isVerified: _authorById[preset.userId]?.isVerified == true,
+                    accentColor: _cardAccentColorFromHex(preset.accentColorHex),
+                    metaText:
+                        '${_friendlyCount(viewsCount)} views • ${_friendlyTime(preset.createdAt)}',
+                    showCollectionCount: false,
+                    collectionCountText: '',
+                    menuItems: menuItems,
+                    onAvatarTap: () => _openPublicProfileRoute(
+                        context, _authorById[preset.userId]),
+                    onMenuSelected: (value) {
+                      if (value == 'share') _copyPostLink(preset);
+                      if (value == 'edit') _editPost(preset);
+                      if (value == 'visibility') {
+                        _togglePresetVisibility(preset);
+                      }
+                      if (value == 'delete') _deletePreset(preset);
+                    },
                   ),
-                  avatarImage:
-                      avatarUrl == null ? null : NetworkImage(avatarUrl),
-                  isVerified: _authorById[preset.userId]?.isVerified == true,
-                  accentColor: _cardAccentColorFromHex(preset.accentColorHex),
-                  metaText:
-                      '${_friendlyCount(viewsCount)} views • ${_friendlyTime(preset.createdAt)}',
-                  showCollectionCount: false,
-                  collectionCountText: '',
-                  menuItems: menuItems,
-                  onAvatarTap: () => _openPublicProfileRoute(
-                      context, _authorById[preset.userId]),
-                  onMenuSelected: (value) {
-                    if (value == 'share') _copyPostLink(preset);
-                    if (value == 'edit') _editPost(preset);
-                    if (value == 'visibility') {
-                      _togglePresetVisibility(preset);
-                    }
-                    if (value == 'delete') _deletePreset(preset);
-                  },
                 ),
               ),
             );
@@ -8690,73 +8954,33 @@ class _ProfileTabState extends State<_ProfileTab> {
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
               child: Row(
                 children: [
-                  ChoiceChip(
-                    label: Text(
-                      'All',
-                      style: TextStyle(
-                        color: _savedFilter == _SavedGridFilter.all
-                            ? Colors.black
-                            : cs.onSurface,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                  _ParallelogramFilterChip(
+                    label: 'All',
                     selected: _savedFilter == _SavedGridFilter.all,
-                    selectedColor: Colors.white,
-                    checkmarkColor: Colors.black,
-                    onSelected: (_) =>
+                    onSelected: () =>
                         setState(() => _savedFilter = _SavedGridFilter.all),
                   ),
                   const SizedBox(width: 8),
-                  ChoiceChip(
-                    label: Text(
-                      'Saved Posts',
-                      style: TextStyle(
-                        color: _savedFilter == _SavedGridFilter.savedPosts
-                            ? Colors.black
-                            : cs.onSurface,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                  _ParallelogramFilterChip(
+                    label: 'Saved Posts',
                     selected: _savedFilter == _SavedGridFilter.savedPosts,
-                    selectedColor: Colors.white,
-                    checkmarkColor: Colors.black,
-                    onSelected: (_) => setState(
+                    onSelected: () => setState(
                       () => _savedFilter = _SavedGridFilter.savedPosts,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  ChoiceChip(
-                    label: Text(
-                      'Saved Collections',
-                      style: TextStyle(
-                        color: _savedFilter == _SavedGridFilter.savedCollections
-                            ? Colors.black
-                            : cs.onSurface,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                  _ParallelogramFilterChip(
+                    label: 'Saved Collections',
                     selected: _savedFilter == _SavedGridFilter.savedCollections,
-                    selectedColor: Colors.white,
-                    checkmarkColor: Colors.black,
-                    onSelected: (_) => setState(
+                    onSelected: () => setState(
                       () => _savedFilter = _SavedGridFilter.savedCollections,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  ChoiceChip(
-                    label: Text(
-                      'Watch Later',
-                      style: TextStyle(
-                        color: _savedFilter == _SavedGridFilter.watchLater
-                            ? Colors.black
-                            : cs.onSurface,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                  _ParallelogramFilterChip(
+                    label: 'Watch Later',
                     selected: _savedFilter == _SavedGridFilter.watchLater,
-                    selectedColor: Colors.white,
-                    checkmarkColor: Colors.black,
-                    onSelected: (_) => setState(
+                    onSelected: () => setState(
                       () => _savedFilter = _SavedGridFilter.watchLater,
                     ),
                   ),
@@ -8845,91 +9069,93 @@ class _ProfileTabState extends State<_ProfileTab> {
                             label: 'Share',
                           ),
                         ];
-                        return InkWell(
-                          onTap: () {
-                            if (isCollection) {
-                              _openCollection(collection);
-                              return;
-                            }
-                            if (!isCollection && preset != null) {
-                              _openPost(preset);
-                            }
-                          },
-                          child: AspectRatio(
-                            aspectRatio: _kGridPreviewAspectRatio,
-                            child: _GridCardPreviewSurface(
-                              heroTag: heroTag,
-                              payload: payload,
-                              title: title,
-                              verticalUsername: authorName,
-                              priceText: _cardPriceLabel(
-                                isPaid: isCollection
-                                    ? collection.isPaid
-                                    : (preset?.isPaid ?? false),
-                                priceCents: isCollection
-                                    ? collection.priceCents
-                                    : preset?.priceCents,
-                                viewerHasPaid: isCollection
-                                    ? collection.viewerHasPaid
-                                    : (preset?.viewerHasPaid ?? false),
-                              ),
-                              avatarImage: (avatarUrl ?? '').trim().isNotEmpty
-                                  ? NetworkImage(avatarUrl!.trim())
-                                  : null,
-                              isVerified: isCollection
-                                  ? collection.author?.isVerified == true
-                                  : _authorById[preset?.userId ?? '']
-                                          ?.isVerified ==
-                                      true,
-                              accentColor: _cardAccentColorFromHex(
-                                isCollection
-                                    ? collection.accentColorHex
-                                    : preset?.accentColorHex,
-                              ),
-                              metaText:
-                                  '${_friendlyCount(viewsCount)} views • ${_friendlyTime(createdAt)}',
-                              showCollectionCount: isCollection,
-                              collectionCountText: isCollection
-                                  ? '${collection.itemsCount}'
-                                  : '',
-                              menuItems: menuItems,
-                              onAvatarTap: () {
-                                if (isCollection) {
-                                  _openPublicProfileRoute(
-                                    context,
-                                    collection.author,
-                                  );
-                                } else {
-                                  _openPublicProfileRoute(
-                                    context,
-                                    _authorById[preset?.userId ?? ''],
-                                  );
-                                }
-                              },
-                              onMenuSelected: (value) {
-                                if (value == 'remove') {
-                                  _removeSavedEntry(entry);
-                                }
-                                if (value == 'share') {
+                        return _SnapBackDraggableCard(
+                          child: InkWell(
+                            onTap: () {
+                              if (isCollection) {
+                                _openCollection(collection);
+                                return;
+                              }
+                              if (!isCollection && preset != null) {
+                                _openPost(preset);
+                              }
+                            },
+                            child: AspectRatio(
+                              aspectRatio: _kGridPreviewAspectRatio,
+                              child: _GridCardPreviewSurface(
+                                heroTag: heroTag,
+                                payload: payload,
+                                title: title,
+                                verticalUsername: authorName,
+                                priceText: _cardPriceLabel(
+                                  isPaid: isCollection
+                                      ? collection.isPaid
+                                      : (preset?.isPaid ?? false),
+                                  priceCents: isCollection
+                                      ? collection.priceCents
+                                      : preset?.priceCents,
+                                  viewerHasPaid: isCollection
+                                      ? collection.viewerHasPaid
+                                      : (preset?.viewerHasPaid ?? false),
+                                ),
+                                avatarImage: (avatarUrl ?? '').trim().isNotEmpty
+                                    ? NetworkImage(avatarUrl!.trim())
+                                    : null,
+                                isVerified: isCollection
+                                    ? collection.author?.isVerified == true
+                                    : _authorById[preset?.userId ?? '']
+                                            ?.isVerified ==
+                                        true,
+                                accentColor: _cardAccentColorFromHex(
+                                  isCollection
+                                      ? collection.accentColorHex
+                                      : preset?.accentColorHex,
+                                ),
+                                metaText:
+                                    '${_friendlyCount(viewsCount)} views • ${_friendlyTime(createdAt)}',
+                                showCollectionCount: isCollection,
+                                collectionCountText: isCollection
+                                    ? '${collection.itemsCount}'
+                                    : '',
+                                menuItems: menuItems,
+                                onAvatarTap: () {
                                   if (isCollection) {
-                                    _copyCollectionLink(collection);
-                                  } else if (preset != null) {
-                                    _copyPostLink(preset);
+                                    _openPublicProfileRoute(
+                                      context,
+                                      collection.author,
+                                    );
+                                  } else {
+                                    _openPublicProfileRoute(
+                                      context,
+                                      _authorById[preset?.userId ?? ''],
+                                    );
                                   }
-                                }
-                              },
-                              emptyChild: isCollection
-                                  ? Container(
-                                      color: cs.surfaceContainerLow,
-                                      child: Center(
-                                        child: Icon(
-                                          Icons.collections_bookmark_outlined,
-                                          color: cs.onSurfaceVariant,
-                                          size: 34,
+                                },
+                                onMenuSelected: (value) {
+                                  if (value == 'remove') {
+                                    _removeSavedEntry(entry);
+                                  }
+                                  if (value == 'share') {
+                                    if (isCollection) {
+                                      _copyCollectionLink(collection);
+                                    } else if (preset != null) {
+                                      _copyPostLink(preset);
+                                    }
+                                  }
+                                },
+                                emptyChild: isCollection
+                                    ? Container(
+                                        color: cs.surfaceContainerLow,
+                                        child: Center(
+                                          child: Icon(
+                                            Icons.collections_bookmark_outlined,
+                                            color: cs.onSurfaceVariant,
+                                            size: 34,
+                                          ),
                                         ),
-                                      ),
-                                    )
-                                  : null,
+                                      )
+                                    : null,
+                              ),
                             ),
                           ),
                         );
@@ -10226,6 +10452,273 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
   }
 }
 
+class _ThreeDAssetEditorPage extends StatefulWidget {
+  const _ThreeDAssetEditorPage({
+    required this.title,
+    required this.initialPayload,
+    required this.onSave,
+  });
+
+  final String title;
+  final Map<String, dynamic> initialPayload;
+  final Future<void> Function(Map<String, dynamic> payload) onSave;
+
+  @override
+  State<_ThreeDAssetEditorPage> createState() => _ThreeDAssetEditorPageState();
+}
+
+class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
+  final AppRepository _repository = AppRepository.instance;
+  late Map<String, dynamic> _payload;
+  bool _saving = false;
+  bool _uploading = false;
+  double _uploadProgress = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _payload = normalizeRenderPayload(
+      widget.initialPayload,
+      editor: 'three_d_asset_editor',
+    );
+  }
+
+  List<double> _cameraList(dynamic value, List<double> fallback) {
+    if (value is! List || value.length < 3) return fallback;
+    double item(int index) {
+      final dynamic raw = value[index];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse(raw?.toString() ?? '') ?? fallback[index];
+    }
+
+    return <double>[
+      item(0),
+      item(1),
+      item(2),
+    ];
+  }
+
+  void _applyCamera(Map<String, dynamic> camera) {
+    final List<double> position = _cameraList(
+      camera['initialPosition'],
+      const <double>[0, 0, 3],
+    );
+    final List<double> target = _cameraList(
+      camera['initialTarget'],
+      const <double>[0, 0, 0],
+    );
+    final dynamic rawFov = camera['fov'];
+    final double fov = rawFov is num
+        ? rawFov.toDouble()
+        : double.tryParse(rawFov?.toString() ?? '') ?? 45;
+    setState(() {
+      _payload = payloadWithThreeDCamera(
+        _payload,
+        initialPosition: position,
+        initialTarget: target,
+        fov: fov,
+      );
+    });
+  }
+
+  void _resetCamera() {
+    setState(() {
+      _payload = payloadWithThreeDCamera(
+        _payload,
+        initialPosition: const <double>[0, 0, 3],
+        initialTarget: const <double>[0, 0, 0],
+      );
+    });
+  }
+
+  Future<void> _replaceAsset() async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final DeepXMediaType mediaType =
+        mediaTypeFromPayload(_payload) == DeepXMediaType.triangleMesh
+            ? DeepXMediaType.triangleMesh
+            : DeepXMediaType.gaussianSplat;
+    final bool mesh = mediaType == DeepXMediaType.triangleMesh;
+    setState(() {
+      _uploading = true;
+      _uploadProgress = 0;
+    });
+    try {
+      final file = await pickDeviceFile(
+          accept: mesh ? '.glb,.gltf' : '.ply,.splat,.ksplat');
+      if (file == null) return;
+      final String ext = _extensionForFileName(file.name);
+      final Set<String> allowed = mesh
+          ? const <String>{'glb', 'gltf'}
+          : const <String>{'ply', 'splat', 'ksplat'};
+      if (!allowed.contains(ext)) {
+        throw Exception('Unsupported file type .$ext');
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType,
+        folder: mesh ? 'triangle-meshes' : 'gaussian-splats',
+        bucket: AppRepository.threeDAssetsBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress.clamp(0, 1).toDouble());
+        },
+      );
+      final old = ThreeDAssetPayload.fromMap(_payload);
+      setState(() {
+        _payload = simpleThreeDPayload(
+          mediaType: mediaType,
+          assetUrl: asset.publicUrl,
+          assetPath: asset.path,
+          format: ext,
+          contentType: file.contentType,
+          byteSize: file.bytes.length,
+          sourceKind: 'manual_update',
+          transform: old.transform,
+          camera: old.camera,
+          meta: <String, dynamic>{'sourceName': file.name},
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('3D upload failed: $e')));
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final messenger = ScaffoldMessenger.of(context);
+    if (threeDAssetFromPayload(_payload) == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Upload a valid 3D asset first.')),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await widget.onSave(_payload);
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('Update failed: $e')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: Row(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      IconButton.filledTonal(
+                        onPressed: () => Navigator.pop(context, false),
+                        icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                            size: 18),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          widget.title,
+                          style: TextStyle(
+                            color: cs.onSurface,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: ThreeDViewer(
+                        payload: _payload,
+                        editable: true,
+                        onCameraChanged: _applyCamera,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 340,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: cs.surface,
+                border: Border(
+                  left: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
+                ),
+              ),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  FilledButton.icon(
+                    onPressed: _uploading ? null : _replaceAsset,
+                    icon: _uploading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.upload_file_rounded),
+                    label: Text(_uploading ? 'Uploading...' : 'Replace Asset'),
+                  ),
+                  if (_uploading) ...[
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(value: _uploadProgress),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${(_uploadProgress * 100).round()}%',
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _resetCamera,
+                    icon: const Icon(Icons.center_focus_strong_rounded),
+                    label: const Text('Reset Camera'),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _save,
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save_rounded),
+                    label: Text(_saving ? 'Saving...' : 'Update'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PostCardComposerPage extends StatefulWidget {
   const _PostCardComposerPage.single({
     required this.name,
@@ -10234,6 +10727,7 @@ class _PostCardComposerPage extends StatefulWidget {
     this.initialIsPaid = false,
     this.initialPriceCents,
     this.initialAccentColorHex,
+    this.initialCardPayload = const <String, dynamic>{},
     this.editTarget = _ComposerEditTarget.card,
     this.startBlankCard = true,
   })  : kind = _ComposerKind.single,
@@ -10244,7 +10738,6 @@ class _PostCardComposerPage extends StatefulWidget {
         published = true,
         tags = const <String>[],
         mentionUserIds = const <String>[],
-        initialCardPayload = const <String, dynamic>{},
         initialLinkedItemPosition = 0;
 
   const _PostCardComposerPage.collection({
@@ -10325,6 +10818,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   late final List<CollectionDraftItem> _items;
 
   bool get _isCollection => widget.kind == _ComposerKind.collection;
+  bool get _postIsThreeD => isThreeDPayload(_postPayload);
 
   @override
   void initState() {
@@ -10337,17 +10831,20 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         .map(
           (item) => CollectionDraftItem(
             name: item.name,
-            snapshot: normalizeImagePayload(
+            snapshot: normalizeRenderPayload(
               item.snapshot,
               editor: 'collection_item_normalizer',
             ),
           ),
         )
         .toList();
-    _postPayload = normalizeImagePayload(
+    _postPayload = normalizeRenderPayload(
       widget.payload,
       editor: 'composer_post',
     );
+    if (!_isCollection && _postIsThreeD) {
+      _imagePane = _ComposerImagePane.card;
+    }
     if (_isCollection && _items.isNotEmpty) {
       _thumbnailIndex =
           widget.initialLinkedItemPosition.clamp(0, _items.length - 1).toInt();
@@ -10534,7 +11031,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   }
 
   Map<String, dynamic> _singlePayload() {
-    return normalizeImagePayload(_postPayload, editor: 'composer_single');
+    return normalizeRenderPayload(_postPayload, editor: 'composer_single');
   }
 
   Map<String, dynamic> _previewPayload() {
@@ -10578,8 +11075,12 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         );
       } else {
         final payload = _singlePayload();
-        if (imageUrlFromPayload(payload) == null) {
+        if (!isThreeDPayload(payload) && imageUrlFromPayload(payload) == null) {
           throw Exception('Post needs one image.');
+        }
+        if (isThreeDPayload(payload) &&
+            threeDAssetFromPayload(payload) == null) {
+          throw Exception('Post needs one 3D asset.');
         }
         final existing = widget.existingPreset;
         if (existing != null) {
@@ -10856,6 +11357,34 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
 
   Widget _buildImageControls(ColorScheme cs) {
     final Map<String, dynamic> payload = _activeEditPayload();
+    if (isThreeDPayload(payload)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '3D Asset',
+            style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: _SharedPresetPreview(
+                payload: payload,
+                borderRadius: BorderRadius.circular(12),
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Use the Card pane to upload and position the thumbnail image.',
+            style: TextStyle(color: cs.onSurfaceVariant),
+          ),
+        ],
+      );
+    }
     final ImagePayloadData data = imagePayloadFromMap(payload);
     void update({
       double? offsetX,
@@ -11092,29 +11621,34 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         ),
         showCollectionCount: _isCollection,
         collectionCountLabel: '${_items.length}',
-        child: EditableImageStage(
-          payload: payload,
-          onChanged: (next) {
-            if (widget.editTarget == _ComposerEditTarget.post) {
-              _setActiveEditPayload(next);
-              return;
-            }
-            if (_cardSourceKind != 'custom') {
-              _cardSourceKind = 'custom';
-            }
-            setState(() {
-              _cardPayload = imagePayloadFromMap(next)
-                  .copyWith(sourceKind: 'custom')
-                  .toMap();
-              _imagePane = _ComposerImagePane.card;
-            });
-          },
-          fit: BoxFit.cover,
-          backgroundColor: Colors.transparent,
-          emptyLabel: widget.editTarget == _ComposerEditTarget.post
-              ? 'Choose a post image.'
-              : 'Choose a card image.',
-        ),
+        child: isThreeDPayload(payload)
+            ? _SharedPresetPreview(
+                payload: payload,
+                fit: BoxFit.contain,
+              )
+            : EditableImageStage(
+                payload: payload,
+                onChanged: (next) {
+                  if (widget.editTarget == _ComposerEditTarget.post) {
+                    _setActiveEditPayload(next);
+                    return;
+                  }
+                  if (_cardSourceKind != 'custom') {
+                    _cardSourceKind = 'custom';
+                  }
+                  setState(() {
+                    _cardPayload = imagePayloadFromMap(next)
+                        .copyWith(sourceKind: 'custom')
+                        .toMap();
+                    _imagePane = _ComposerImagePane.card;
+                  });
+                },
+                fit: BoxFit.cover,
+                backgroundColor: Colors.transparent,
+                emptyLabel: widget.editTarget == _ComposerEditTarget.post
+                    ? 'Choose a post image.'
+                    : 'Choose a card image.',
+              ),
       ),
     );
   }
@@ -11171,10 +11705,10 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
                       spacing: 8,
                       runSpacing: 8,
                       children: List<Widget>.generate(_items.length, (index) {
-                        return ChoiceChip(
+                        return _ParallelogramFilterChip(
                           selected: index == _thumbnailIndex,
-                          label: Text('${index + 1}. ${_items[index].name}'),
-                          onSelected: (_) => setState(() {
+                          label: '${index + 1}. ${_items[index].name}',
+                          onSelected: () => setState(() {
                             _thumbnailIndex = index;
                             if (_cardSourceKind != 'custom') {
                               _syncCardFromLinkedSource();
@@ -12275,4 +12809,10 @@ String _friendlyCount(int value) {
   }
   final double b = value / 1000000000;
   return b >= 10 ? '${b.toStringAsFixed(0)}B' : '${b.toStringAsFixed(1)}B';
+}
+
+String _extensionForFileName(String name) {
+  final int dot = name.lastIndexOf('.');
+  if (dot < 0 || dot == name.length - 1) return '';
+  return name.substring(dot + 1).toLowerCase();
 }

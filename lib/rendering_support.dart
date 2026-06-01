@@ -33,6 +33,8 @@ Map<String, dynamic> simpleThreeDPayload({
   String sourceKind = 'manual',
   String? jobId,
   int? sourceImageCount,
+  Map<String, dynamic> transform = const <String, dynamic>{},
+  Map<String, dynamic> camera = const <String, dynamic>{},
   Map<String, dynamic> meta = const <String, dynamic>{},
 }) {
   return ThreeDAssetPayload(
@@ -45,8 +47,18 @@ Map<String, dynamic> simpleThreeDPayload({
     sourceKind: sourceKind,
     jobId: jobId,
     sourceImageCount: sourceImageCount,
+    transform: transform,
+    camera: camera,
     meta: meta,
   ).toMap();
+}
+
+String missingThreeDAssetLabel(Map<String, dynamic> payload) {
+  return switch (mediaTypeFromPayload(payload)) {
+    DeepXMediaType.gaussianSplat => 'No 3DGS',
+    DeepXMediaType.triangleMesh => 'No 3D mesh',
+    DeepXMediaType.image => '3D asset is missing',
+  };
 }
 
 Map<String, dynamic> normalizeRenderPayload(
