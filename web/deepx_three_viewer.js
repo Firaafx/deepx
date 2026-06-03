@@ -13,27 +13,109 @@
     return modulePromise;
   }
 
+  function parseJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    try {
+      const decoded = JSON.parse(String(value));
+      return decoded && typeof decoded === 'object' ? decoded : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function normalizeType(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (['splat', 'ksplat', 'ply', '3dgs'].includes(raw)) return 'gaussian_splat';
+    if (['mesh', 'model', 'glb', 'gltf'].includes(raw)) return 'triangle_mesh';
+    if (['missing_3d', 'missing3d', 'missing', 'no_3d'].includes(raw)) return 'missing_3d';
+    return raw || 'image';
+  }
+
   function payloadAsset(payload) {
     const media = payload && typeof payload.media === 'object' ? payload.media : payload;
     return {
-      type: String(media.type || payload.media_type || payload.mediaType || 'image'),
+      type: normalizeType(media.type || payload.media_type || payload.mediaType || 'image'),
       url: String(media.url || media.assetUrl || ''),
-      format: String(media.format || '').toLowerCase()
+      path: String(media.path || media.assetPath || ''),
+      format: String(media.format || '').trim().toLowerCase()
     };
   }
 
   function numberList(value, fallback) {
     if (!Array.isArray(value) || value.length < 3) return fallback.slice();
-    return [Number(value[0]) || 0, Number(value[1]) || 0, Number(value[2]) || 0];
+    return [
+      Number.isFinite(Number(value[0])) ? Number(value[0]) : fallback[0],
+      Number.isFinite(Number(value[1])) ? Number(value[1]) : fallback[1],
+      Number.isFinite(Number(value[2])) ? Number(value[2]) : fallback[2]
+    ];
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function degToRad(value) {
+    return Number(value || 0) * Math.PI / 180;
+  }
+
+  function radToDeg(value) {
+    return value * 180 / Math.PI;
+  }
+
+  function safeRotation(value) {
+    const raw = value && typeof value === 'object' ? value : {};
+    return {
+      yaw: Number.isFinite(Number(raw.yaw)) ? Number(raw.yaw) : 0,
+      pitch: Number.isFinite(Number(raw.pitch)) ? Number(raw.pitch) : 0,
+      roll: Number.isFinite(Number(raw.roll)) ? Number(raw.roll) : 0
+    };
+  }
+
+  function positionFromRotation(THREE, target, rotation, distance) {
+    const yaw = degToRad(rotation.yaw);
+    const pitch = degToRad(rotation.pitch);
+    const cosPitch = Math.cos(pitch);
+    const offset = new THREE.Vector3(
+      Math.sin(yaw) * cosPitch * distance,
+      Math.sin(pitch) * distance,
+      Math.cos(yaw) * cosPitch * distance
+    );
+    return target.clone().add(offset);
+  }
+
+  function rotationFromPosition(position, target) {
+    const dx = position.x - target.x;
+    const dy = position.y - target.y;
+    const dz = position.z - target.z;
+    const distance = Math.max(0.0001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+    return {
+      yaw: radToDeg(Math.atan2(dx, dz)),
+      pitch: radToDeg(Math.asin(clamp(dy / distance, -1, 1))),
+      roll: 0
+    };
   }
 
   function cameraConfig(payload) {
     const camera = payload && typeof payload.camera === 'object' ? payload.camera : {};
+    const position = numberList(camera.initialPosition, [0, 0, 3]);
+    const target = numberList(camera.initialTarget, [0, 0, 0]);
+    const fov = clamp(Number(camera.fov) || 45, 10, 100);
+    const distance = Math.max(0.01, Number(camera.distance) || Math.hypot(
+      position[0] - target[0],
+      position[1] - target[1],
+      position[2] - target[2]
+    ) || 3);
     return {
-      position: numberList(camera.initialPosition, [0, 0, 3]),
-      target: numberList(camera.initialTarget, [0, 0, 0]),
-      fov: Number(camera.fov) || 45,
-      custom: Array.isArray(camera.initialPosition) || Array.isArray(camera.initialTarget)
+      position,
+      target,
+      rotationDegrees: safeRotation(camera.rotationDegrees),
+      fov,
+      distance,
+      custom: Array.isArray(camera.initialPosition)
+        || Array.isArray(camera.initialTarget)
+        || !!camera.rotationDegrees
+        || Number.isFinite(Number(camera.distance))
     };
   }
 
@@ -67,7 +149,10 @@
     if (asset.type === 'triangle_mesh' || asset.format === 'glb' || asset.format === 'gltf') {
       return 'No 3D mesh';
     }
-    return 'No 3DGS';
+    if (asset.type === 'gaussian_splat' || ['ply', 'splat', 'ksplat'].includes(asset.format)) {
+      return 'No 3DGS';
+    }
+    return 'No 3D';
   }
 
   async function addGaussianSplat(ctx, asset) {
@@ -102,17 +187,51 @@
     return root;
   }
 
-  function setBaseCamera(ctx, position, target, fov) {
+  function syncRotationFromBase(ctx, keepRoll = true) {
+    const computed = rotationFromPosition(ctx.basePosition, ctx.baseTarget);
+    ctx.rotationDegrees = {
+      yaw: computed.yaw,
+      pitch: computed.pitch,
+      roll: keepRoll ? (ctx.rotationDegrees?.roll || 0) : 0
+    };
+    ctx.distance = ctx.basePosition.distanceTo(ctx.baseTarget);
+  }
+
+  function applyCameraTransform(ctx, position, target, fov, rotationDegrees, distance) {
     const THREE = ctx.modules.three;
-    ctx.basePosition = new THREE.Vector3(position[0], position[1], position[2]);
-    ctx.baseTarget = new THREE.Vector3(target[0], target[1], target[2]);
-    ctx.camera.fov = fov;
-    ctx.camera.position.copy(ctx.basePosition);
+    const targetVec = new THREE.Vector3(target[0], target[1], target[2]);
+    const rotation = safeRotation(rotationDegrees);
+    const useRotationPosition = rotationDegrees
+      && Number.isFinite(Number(distance))
+      && (!Array.isArray(position) || position.length < 3);
+    const positionVec = useRotationPosition
+      ? positionFromRotation(THREE, targetVec, rotation, Number(distance))
+      : new THREE.Vector3(position[0], position[1], position[2]);
+
+    ctx.basePosition = positionVec;
+    ctx.baseTarget = targetVec;
+    ctx.camera.fov = clamp(Number(fov) || 45, 10, 100);
+    ctx.rotationDegrees = rotationDegrees ? rotation : rotationFromPosition(positionVec, targetVec);
+    ctx.distance = Math.max(0.01, Number(distance) || positionVec.distanceTo(targetVec) || 3);
+    renderBaseCamera(ctx);
+  }
+
+  function renderBaseCamera(ctx, headOffset) {
+    const offset = headOffset || new ctx.modules.three.Vector3(0, 0, 0);
+    ctx.camera.up.set(0, 1, 0);
+    ctx.camera.position.copy(ctx.basePosition).add(offset);
     ctx.camera.lookAt(ctx.baseTarget);
+    const roll = degToRad(ctx.rotationDegrees?.roll || 0);
+    if (roll) ctx.camera.rotateZ(roll);
     ctx.camera.updateProjectionMatrix();
   }
 
+  function setBaseCamera(ctx, position, target, fov, rotationDegrees, distance) {
+    applyCameraTransform(ctx, position, target, fov, rotationDegrees, distance);
+  }
+
   function cameraSnapshot(ctx) {
+    syncRotationFromBase(ctx);
     return {
       initialPosition: [
         Number(ctx.basePosition.x.toFixed(5)),
@@ -124,7 +243,13 @@
         Number(ctx.baseTarget.y.toFixed(5)),
         Number(ctx.baseTarget.z.toFixed(5))
       ],
-      fov: Number(ctx.camera.fov.toFixed(3))
+      rotationDegrees: {
+        yaw: Number((ctx.rotationDegrees?.yaw || 0).toFixed(3)),
+        pitch: Number((ctx.rotationDegrees?.pitch || 0).toFixed(3)),
+        roll: Number((ctx.rotationDegrees?.roll || 0).toFixed(3))
+      },
+      fov: Number(ctx.camera.fov.toFixed(3)),
+      distance: Number((ctx.distance || ctx.basePosition.distanceTo(ctx.baseTarget)).toFixed(5))
     };
   }
 
@@ -137,8 +262,8 @@
     }), window.location.origin);
   }
 
-  function autoFitObject(ctx, object) {
-    if (!object || ctx.hasCustomCamera) return;
+  function autoFitObject(ctx, object, force = false) {
+    if (!object || (!force && ctx.hasCustomCamera)) return;
     const THREE = ctx.modules.three;
     const box = new THREE.Box3().setFromObject(object);
     if (box.isEmpty()) return;
@@ -147,37 +272,36 @@
     const maxDim = Math.max(size.x, size.y, size.z, 0.1);
     const fov = ctx.camera.fov * Math.PI / 180;
     let distance = Math.abs(maxDim / (2 * Math.tan(fov / 2)));
-    distance *= 1.35;
+    distance = Math.max(distance * 1.45, 0.35);
     setBaseCamera(
       ctx,
       [center.x, center.y, center.z + distance],
       [center.x, center.y, center.z],
-      ctx.camera.fov
+      ctx.camera.fov,
+      { yaw: 0, pitch: 0, roll: ctx.rotationDegrees?.roll || 0 },
+      distance
     );
+    ctx.hasCustomCamera = true;
+    notifyCameraChanged(ctx);
   }
 
   function recenter(ctx) {
     ctx.center = { ...ctx.head };
-    ctx.camera.position.copy(ctx.basePosition);
-    ctx.camera.lookAt(ctx.baseTarget);
+    renderBaseCamera(ctx);
   }
 
   function applyHeadCamera(ctx) {
     if (ctx.editable) {
-      ctx.camera.position.copy(ctx.basePosition);
-      ctx.camera.lookAt(ctx.baseTarget);
+      renderBaseCamera(ctx);
       return;
     }
     const THREE = ctx.modules.three;
     const head = ctx.head || { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
     const center = ctx.center || { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
-    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
     const x = clamp((head.x - center.x) * 0.9 + ((head.yaw || 0) - (center.yaw || 0)) / 90, -0.9, 0.9);
     const y = clamp((head.y - center.y) * -0.7 + ((head.pitch || 0) - (center.pitch || 0)) / 70, -0.7, 0.7);
     const z = clamp(((center.z || head.z || 0) - (head.z || 0)) * 2.5, -0.9, 0.9);
-    const offset = new THREE.Vector3(x, y, z);
-    ctx.camera.position.copy(ctx.basePosition).add(offset);
-    ctx.camera.lookAt(ctx.baseTarget);
+    renderBaseCamera(ctx, new THREE.Vector3(x, y, z));
   }
 
   function animate(ctx) {
@@ -196,7 +320,6 @@
   }
 
   function installPointerControls(ctx) {
-    if (!ctx.editable) return;
     const THREE = ctx.modules.three;
     const canvas = ctx.renderer.domElement;
     let dragging = false;
@@ -208,9 +331,11 @@
       const offset = ctx.basePosition.clone().sub(ctx.baseTarget);
       const spherical = new THREE.Spherical().setFromVector3(offset);
       spherical.theta -= dx * 0.006;
-      spherical.phi = Math.max(0.08, Math.min(Math.PI - 0.08, spherical.phi - dy * 0.006));
+      spherical.phi = clamp(spherical.phi - dy * 0.006, 0.08, Math.PI - 0.08);
       offset.setFromSpherical(spherical);
       ctx.basePosition.copy(ctx.baseTarget).add(offset);
+      syncRotationFromBase(ctx);
+      renderBaseCamera(ctx);
       notifyCameraChanged(ctx);
     }
 
@@ -223,19 +348,22 @@
       const move = right.multiplyScalar(-dx * scale).add(up.multiplyScalar(dy * scale));
       ctx.basePosition.add(move);
       ctx.baseTarget.add(move);
+      renderBaseCamera(ctx);
       notifyCameraChanged(ctx);
     }
 
-    canvas.addEventListener('pointerdown', (event) => {
+    function onPointerDown(event) {
+      if (!ctx.editable) return;
       dragging = true;
       mode = event.button === 2 || event.shiftKey ? 'pan' : 'orbit';
       lastX = event.clientX;
       lastY = event.clientY;
       canvas.setPointerCapture(event.pointerId);
       event.preventDefault();
-    });
-    canvas.addEventListener('pointermove', (event) => {
-      if (!dragging) return;
+    }
+
+    function onPointerMove(event) {
+      if (!dragging || !ctx.editable) return;
       const dx = event.clientX - lastX;
       const dy = event.clientY - lastY;
       lastX = event.clientX;
@@ -246,36 +374,53 @@
         orbit(dx, dy);
       }
       event.preventDefault();
-    });
-    canvas.addEventListener('pointerup', (event) => {
+    }
+
+    function onPointerUp(event) {
       dragging = false;
       try {
         canvas.releasePointerCapture(event.pointerId);
       } catch (_) {}
-    });
-    canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-    canvas.addEventListener('wheel', (event) => {
-      const direction = event.deltaY > 0 ? 1 : -1;
-      const factor = direction > 0 ? 1.12 : 0.88;
+    }
+
+    function onWheel(event) {
+      if (!ctx.editable) return;
+      const factor = event.deltaY > 0 ? 1.12 : 0.88;
       const offset = ctx.basePosition.clone().sub(ctx.baseTarget).multiplyScalar(factor);
       ctx.basePosition.copy(ctx.baseTarget).add(offset);
+      syncRotationFromBase(ctx);
+      renderBaseCamera(ctx);
       notifyCameraChanged(ctx);
       event.preventDefault();
-    }, { passive: false });
+    }
+
+    function onContextMenu(event) {
+      if (ctx.editable) event.preventDefault();
+    }
+
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointerleave', onPointerUp);
+    canvas.addEventListener('contextmenu', onContextMenu);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    ctx.cleanup.push(() => canvas.removeEventListener('pointerdown', onPointerDown));
+    ctx.cleanup.push(() => canvas.removeEventListener('pointermove', onPointerMove));
+    ctx.cleanup.push(() => canvas.removeEventListener('pointerup', onPointerUp));
+    ctx.cleanup.push(() => canvas.removeEventListener('pointerleave', onPointerUp));
+    ctx.cleanup.push(() => canvas.removeEventListener('contextmenu', onContextMenu));
+    ctx.cleanup.push(() => canvas.removeEventListener('wheel', onWheel));
   }
 
   async function mount(elementId, payloadJson, optionsJson) {
     const root = document.getElementById(elementId);
     if (!root) return;
-    dispose(elementId);
-    let payload = {};
-    let options = {};
-    try {
-      payload = JSON.parse(payloadJson || '{}');
-    } catch (_) {}
-    try {
-      options = JSON.parse(optionsJson || '{}');
-    } catch (_) {}
+    const token = (root.__deepxThreeMountToken || 0) + 1;
+    root.__deepxThreeMountToken = token;
+    dispose(elementId, { keepRootMessage: true });
+
+    const payload = parseJson(payloadJson);
+    const options = parseJson(optionsJson);
     const asset = payloadAsset(payload);
     if (!asset.url) {
       setMessage(root, missingLabel(asset));
@@ -288,6 +433,7 @@
     setMessage(root, 'Loading 3D asset...');
     try {
       const modules = await loadModules();
+      if (root.__deepxThreeMountToken !== token) return;
       const THREE = modules.three;
       root.innerHTML = '';
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -312,20 +458,34 @@
         renderer,
         scene,
         camera,
+        object: null,
         editable: options.editable === true,
         hasCustomCamera: config.custom,
         head: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 },
         center: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 },
         disposed: false,
         resizeObserver: null,
-        raf: 0
+        raf: 0,
+        cleanup: []
       };
-      setBaseCamera(ctx, config.position, config.target, config.fov);
+      setBaseCamera(
+        ctx,
+        config.position,
+        config.target,
+        config.fov,
+        config.rotationDegrees,
+        config.distance
+      );
       viewers.set(elementId, ctx);
       const object = supportedMesh(asset)
         ? await addTriangleMesh(ctx, asset)
         : await addGaussianSplat(ctx, asset);
-      autoFitObject(ctx, object);
+      if (root.__deepxThreeMountToken !== token || ctx.disposed) {
+        disposeObject(object);
+        return;
+      }
+      ctx.object = object;
+      autoFitObject(ctx, object, false);
       resize(ctx);
       installPointerControls(ctx);
       ctx.resizeObserver = new ResizeObserver(() => resize(ctx));
@@ -334,18 +494,75 @@
       notifyCameraChanged(ctx);
     } catch (error) {
       console.error(error);
-      setMessage(root, error && error.message ? error.message : 'Unable to load 3D asset.');
+      if (root.__deepxThreeMountToken === token) {
+        setMessage(root, error && error.message ? error.message : 'Unable to load 3D asset.');
+      }
     }
   }
 
-  function dispose(elementId) {
+  function disposeMaterial(material) {
+    if (!material) return;
+    for (const key of Object.keys(material)) {
+      const value = material[key];
+      if (value && value.isTexture && typeof value.dispose === 'function') {
+        value.dispose();
+      }
+    }
+    if (typeof material.dispose === 'function') material.dispose();
+  }
+
+  function disposeObject(object) {
+    if (!object) return;
+    if (typeof object.dispose === 'function') {
+      try {
+        object.dispose();
+      } catch (_) {}
+    }
+    if (typeof object.traverse === 'function') {
+      object.traverse((node) => {
+        if (node.geometry && typeof node.geometry.dispose === 'function') {
+          node.geometry.dispose();
+        }
+        if (Array.isArray(node.material)) {
+          node.material.forEach(disposeMaterial);
+        } else {
+          disposeMaterial(node.material);
+        }
+      });
+    }
+  }
+
+  function dispose(elementId, options = {}) {
     const ctx = viewers.get(elementId);
-    if (!ctx) return;
+    if (!ctx) {
+      if (!options.keepRootMessage) {
+        const root = document.getElementById(elementId);
+        if (root) root.innerHTML = '';
+      }
+      return;
+    }
     ctx.disposed = true;
     if (ctx.raf) cancelAnimationFrame(ctx.raf);
     if (ctx.resizeObserver) ctx.resizeObserver.disconnect();
-    if (ctx.renderer) ctx.renderer.dispose();
+    for (const cleanup of ctx.cleanup || []) {
+      try {
+        cleanup();
+      } catch (_) {}
+    }
+    disposeObject(ctx.scene);
+    if (ctx.renderer) {
+      try {
+        ctx.renderer.renderLists?.dispose?.();
+      } catch (_) {}
+      try {
+        ctx.renderer.dispose();
+      } catch (_) {}
+      try {
+        ctx.renderer.forceContextLoss?.();
+      } catch (_) {}
+    }
     viewers.delete(elementId);
+    if (!options.keepRootMessage && ctx.root) ctx.root.innerHTML = '';
   }
 
   function recenterViewer(elementId) {
@@ -353,9 +570,40 @@
     if (ctx) recenter(ctx);
   }
 
+  function setEditable(elementId, editable) {
+    const ctx = viewers.get(elementId);
+    if (!ctx) return;
+    ctx.editable = editable === true;
+    renderBaseCamera(ctx);
+  }
+
+  function setCamera(elementId, cameraJson) {
+    const ctx = viewers.get(elementId);
+    if (!ctx) return;
+    const camera = parseJson(cameraJson);
+    const current = cameraSnapshot(ctx);
+    const position = Array.isArray(camera.initialPosition)
+      ? numberList(camera.initialPosition, current.initialPosition)
+      : current.initialPosition;
+    const target = Array.isArray(camera.initialTarget)
+      ? numberList(camera.initialTarget, current.initialTarget)
+      : current.initialTarget;
+    const rotationDegrees = camera.rotationDegrees && typeof camera.rotationDegrees === 'object'
+      ? safeRotation(camera.rotationDegrees)
+      : current.rotationDegrees;
+    const fov = Number.isFinite(Number(camera.fov)) ? Number(camera.fov) : current.fov;
+    const distance = Number.isFinite(Number(camera.distance)) ? Number(camera.distance) : current.distance;
+    setBaseCamera(ctx, position, target, fov, rotationDegrees, distance);
+  }
+
   function getCamera(elementId) {
     const ctx = viewers.get(elementId);
     return ctx ? cameraSnapshot(ctx) : null;
+  }
+
+  function autoFit(elementId) {
+    const ctx = viewers.get(elementId);
+    if (ctx && ctx.object) autoFitObject(ctx, ctx.object, true);
   }
 
   window.addEventListener('message', (event) => {
@@ -376,5 +624,13 @@
     }
   });
 
-  window.DeepXThreeViewer = { mount, dispose, recenter: recenterViewer, getCamera };
+  window.DeepXThreeViewer = {
+    mount,
+    dispose,
+    setEditable,
+    setCamera,
+    getCamera,
+    recenter: recenterViewer,
+    autoFit
+  };
 })();

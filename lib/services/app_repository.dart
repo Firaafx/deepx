@@ -953,9 +953,13 @@ class AppRepository {
     if (user == null) return;
     final String cleanName = name.trim();
     if (cleanName.isEmpty) return;
-    final Map<String, dynamic> imagePayload = normalizeRenderPayload(
+    final Map<String, dynamic> renderPayload = normalizeRenderPayload(
       payload,
       editor: 'repository_save',
+    );
+    final Map<String, dynamic> imageThumbnailPayload = normalizeImagePayload(
+      payload,
+      editor: 'repository_save_thumbnail',
     );
 
     final existing = await _client
@@ -975,9 +979,9 @@ class AppRepository {
       'tags': const <String>[],
       'mention_user_ids': const <String>[],
       'visibility': 'private',
-      'media_type': mediaTypeFromPayload(imagePayload).databaseValue,
-      'payload': imagePayload,
-      'thumbnail_payload': imagePayload,
+      'media_type': mediaTypeFromPayload(renderPayload).databaseValue,
+      'payload': renderPayload,
+      'thumbnail_payload': imageThumbnailPayload,
       'is_paid': false,
       'price_cents': null,
       'accent_color_hex': null,

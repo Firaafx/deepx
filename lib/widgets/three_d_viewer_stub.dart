@@ -6,12 +6,16 @@ class ThreeDViewer extends StatelessWidget {
     required this.payload,
     this.editable = false,
     this.showRecenter = true,
+    this.cameraOverride,
+    this.autoFitRevision = 0,
     this.onCameraChanged,
   });
 
   final Map<String, dynamic> payload;
   final bool editable;
   final bool showRecenter;
+  final Map<String, dynamic>? cameraOverride;
+  final int autoFitRevision;
   final ValueChanged<Map<String, dynamic>>? onCameraChanged;
 
   @override

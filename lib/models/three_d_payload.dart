@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 enum DeepXMediaType {
   image,
   gaussianSplat,
   triangleMesh,
+  missing3d,
 }
 
 extension DeepXMediaTypeX on DeepXMediaType {
@@ -10,6 +13,7 @@ extension DeepXMediaTypeX on DeepXMediaType {
       DeepXMediaType.image => 'image',
       DeepXMediaType.gaussianSplat => 'gaussian_splat',
       DeepXMediaType.triangleMesh => 'triangle_mesh',
+      DeepXMediaType.missing3d => 'missing_3d',
     };
   }
 }
@@ -28,6 +32,11 @@ DeepXMediaType mediaTypeFromString(String? value) {
     'glb' ||
     'gltf' =>
       DeepXMediaType.triangleMesh,
+    'missing_3d' ||
+    'missing3d' ||
+    'missing' ||
+    'no_3d' =>
+      DeepXMediaType.missing3d,
     _ => DeepXMediaType.image,
   };
 }
@@ -131,7 +140,9 @@ Map<String, dynamic> payloadWithThreeDCamera(
   Map<String, dynamic> payload, {
   required List<double> initialPosition,
   required List<double> initialTarget,
+  Map<String, dynamic> rotationDegrees = const <String, dynamic>{},
   double fov = 45,
+  double? distance,
 }) {
   final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
   return asset.copyWith(
@@ -139,7 +150,13 @@ Map<String, dynamic> payloadWithThreeDCamera(
       ...asset.camera,
       'initialPosition': initialPosition,
       'initialTarget': initialTarget,
+      'rotationDegrees': <String, dynamic>{
+        'yaw': _safeDouble(rotationDegrees['yaw'], 0),
+        'pitch': _safeDouble(rotationDegrees['pitch'], 0),
+        'roll': _safeDouble(rotationDegrees['roll'], 0),
+      },
       'fov': fov,
+      'distance': distance ?? _distance(initialPosition, initialTarget),
     },
   ).toMap();
 }
@@ -197,8 +214,29 @@ Map<String, dynamic> _defaultCamera() {
   return <String, dynamic>{
     'initialPosition': <double>[0, 0, 3],
     'initialTarget': <double>[0, 0, 0],
+    'rotationDegrees': <String, double>{
+      'yaw': 0,
+      'pitch': 0,
+      'roll': 0,
+    },
     'fov': 45,
+    'distance': 3,
   };
+}
+
+double _safeDouble(dynamic value, double fallback) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+double _distance(List<double> a, List<double> b) {
+  if (a.length < 3 || b.length < 3) return 3;
+  final double dx = a[0] - b[0];
+  final double dy = a[1] - b[1];
+  final double dz = a[2] - b[2];
+  final double value = (dx * dx + dy * dy + dz * dz);
+  if (value <= 0) return 3;
+  return double.parse(math.sqrt(value).toStringAsFixed(5));
 }
 
 Map<String, dynamic> _deepCopyMap(Map<String, dynamic> map) {

@@ -143,6 +143,7 @@ class RenderPreset {
       'glb' ||
       'gltf' =>
         'triangle_mesh',
+      'missing_3d' || 'missing3d' || 'missing' || 'no_3d' => 'missing_3d',
       _ => 'image',
     };
   }

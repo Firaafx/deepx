@@ -57,8 +57,33 @@ String missingThreeDAssetLabel(Map<String, dynamic> payload) {
   return switch (mediaTypeFromPayload(payload)) {
     DeepXMediaType.gaussianSplat => 'No 3DGS',
     DeepXMediaType.triangleMesh => 'No 3D mesh',
-    DeepXMediaType.image => '3D asset is missing',
+    DeepXMediaType.missing3d || DeepXMediaType.image => 'No 3D',
   };
+}
+
+Map<String, dynamic> simpleMissingThreeDPayload({
+  DeepXMediaType preferredType = DeepXMediaType.missing3d,
+  String reason = 'missing_3d_asset',
+  String migratedFrom = '',
+  String editor = 'missing_3d_payload',
+}) {
+  final DeepXMediaType mediaType = preferredType == DeepXMediaType.image
+      ? DeepXMediaType.missing3d
+      : preferredType;
+  return ThreeDAssetPayload(
+    mediaType: mediaType,
+    assetUrl: '',
+    assetPath: '',
+    format: '',
+    contentType: 'application/octet-stream',
+    sourceKind: 'missing_3d',
+    meta: <String, dynamic>{
+      'editor': editor,
+      'reason': reason,
+      if (migratedFrom.trim().isNotEmpty) 'migratedFrom': migratedFrom.trim(),
+      'preferredType': mediaType.databaseValue,
+    },
+  ).toMap();
 }
 
 Map<String, dynamic> normalizeRenderPayload(
@@ -76,10 +101,10 @@ Map<String, dynamic> normalizeRenderPayload(
       },
     };
   }
-  return normalizeImagePayload(
-    payload,
+  return simpleMissingThreeDPayload(
+    reason: 'image_payload_not_detail_content',
+    migratedFrom: 'image',
     editor: editor,
-    sourceKind: sourceKind,
   );
 }
 

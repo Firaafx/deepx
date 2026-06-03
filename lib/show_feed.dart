@@ -2446,20 +2446,42 @@ class _ParallelogramHighlightClipper extends CustomClipper<Path> {
 
   @override
   Path getClip(Size size) {
-    double sx(double value) => value / _source.width * size.width;
+    final double scale = size.height / _source.height;
+    double sxLeft(double value) => value * scale;
+    double sxRight(double sourceX) =>
+        size.width - (_source.width - sourceX) * scale;
     double sy(double value) => value / _source.height * size.height;
     return Path()
-      ..moveTo(sx(63.064), sy(38.47))
-      ..cubicTo(sx(71.974), sy(15.293), sx(94.24), sy(0), sx(119.068), sy(0))
-      ..lineTo(sx(965.679), sy(0))
+      ..moveTo(sxLeft(63.064), sy(38.47))
+      ..cubicTo(sxLeft(71.974), sy(15.293), sxLeft(94.24), sy(0),
+          sxLeft(119.068), sy(0))
+      ..lineTo(sxRight(965.679), sy(0))
       ..cubicTo(
-          sx(986.731), sy(0), sx(1001.24), sy(21.116), sx(993.681), sy(40.765))
-      ..lineTo(sx(932.643), sy(199.531))
+        sxRight(986.731),
+        sy(0),
+        sxRight(1001.24),
+        sy(21.116),
+        sxRight(993.681),
+        sy(40.765),
+      )
+      ..lineTo(sxRight(932.643), sy(199.531))
       ..cubicTo(
-          sx(923.733), sy(222.707), sx(901.469), sy(238), sx(876.64), sy(238))
-      ..lineTo(sx(30.028), sy(238))
+        sxRight(923.733),
+        sy(222.707),
+        sxRight(901.469),
+        sy(238),
+        sxRight(876.64),
+        sy(238),
+      )
+      ..lineTo(sxLeft(30.028), sy(238))
       ..cubicTo(
-          sx(8.977), sy(238), sx(-5.528), sy(216.884), sx(2.026), sy(197.235))
+        sxLeft(8.977),
+        sy(238),
+        sxLeft(-5.528),
+        sy(216.884),
+        sxLeft(2.026),
+        sy(197.235),
+      )
       ..close();
   }
 
@@ -2467,6 +2489,24 @@ class _ParallelogramHighlightClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant _ParallelogramHighlightClipper oldClipper) {
     return false;
   }
+}
+
+Path parallelogramHighlightPathForTesting(Size size) {
+  return const _ParallelogramHighlightClipper().getClip(size);
+}
+
+List<Offset> parallelogramHighlightAnglePointsForTesting(Size size) {
+  const Size source = Size(996, 238);
+  final double scale = size.height / source.height;
+  Offset left(double x, double y) => Offset(x * scale, y * scale);
+  Offset right(double x, double y) =>
+      Offset(size.width - (source.width - x) * scale, y * scale);
+  return <Offset>[
+    left(63.064, 38.47),
+    left(119.068, 0),
+    right(965.679, 0),
+    right(932.643, 199.531),
+  ];
 }
 
 class _ParallelogramFilterChip extends StatefulWidget {
@@ -4088,6 +4128,7 @@ class _SharedPresetPreview extends StatelessWidget {
     this.clipper,
     this.emptyChild,
     this.fit = BoxFit.cover,
+    this.allowImage = true,
   });
 
   final Map<String, dynamic> payload;
@@ -4095,6 +4136,7 @@ class _SharedPresetPreview extends StatelessWidget {
   final CustomClipper<Path>? clipper;
   final Widget? emptyChild;
   final BoxFit fit;
+  final bool allowImage;
 
   @override
   Widget build(BuildContext context) {
@@ -4108,6 +4150,11 @@ class _SharedPresetPreview extends StatelessWidget {
         );
       }
       return ClipRRect(borderRadius: borderRadius, child: viewer);
+    }
+    if (!allowImage) {
+      return _clipPreview(
+        _MissingThreeDPreview(label: missingThreeDAssetLabel(payload)),
+      );
     }
     final String imageUrl = imageUrlFromPayload(payload)?.trim() ?? '';
     final Widget base = imageUrl.isEmpty
@@ -4129,6 +4176,10 @@ class _SharedPresetPreview extends StatelessWidget {
             payload: payload,
             fit: fit,
           );
+    return _clipPreview(base);
+  }
+
+  Widget _clipPreview(Widget base) {
     if (clipper != null) {
       return ClipPath(
         clipper: clipper!,
@@ -4137,6 +4188,29 @@ class _SharedPresetPreview extends StatelessWidget {
       );
     }
     return ClipRRect(borderRadius: borderRadius, child: base);
+  }
+}
+
+class _MissingThreeDPreview extends StatelessWidget {
+  const _MissingThreeDPreview({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: Color(0xFF050505)),
+      child: Center(
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -4235,6 +4309,7 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                       payload: payload,
                       borderRadius: BorderRadius.zero,
                       fit: BoxFit.contain,
+                      allowImage: false,
                     ),
                   ),
                 ),
@@ -4367,39 +4442,20 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
   }
 
   Future<void> _openDetailPostEditor() async {
-    if (isThreeDPayload(_post.preset.payload)) {
-      final bool? updated = await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(
-          settings: const RouteSettings(name: '/post/editor/3d-update'),
-          builder: (_) => _ThreeDAssetEditorPage(
-            title: 'Update 3D Asset',
-            initialPayload: _post.preset.payload,
-            onSave: (payload) => _repository.updatePresetDetail(
-              presetId: _post.preset.id,
-              payload: payload,
-            ),
-          ),
-        ),
-      );
-      if (updated == true) {
-        await _refreshPost();
-      }
-      return;
-    }
     final bool? updated = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        settings: const RouteSettings(name: '/post/editor/detail-update'),
-        builder: (_) => _PostCardComposerPage.single(
-          name: _post.preset.name,
-          payload: _post.preset.payload,
-          existingPreset: _post.preset,
-          initialIsPaid: _post.preset.isPaid,
-          initialPriceCents: _post.preset.priceCents,
-          initialAccentColorHex: _post.preset.accentColorHex,
-          editTarget: _ComposerEditTarget.post,
-          startBlankCard: false,
+        settings: const RouteSettings(name: '/post/editor/3d-update'),
+        builder: (_) => _ThreeDAssetEditorPage(
+          title: 'Update 3D Asset',
+          initialPayload: normalizeRenderPayload(
+            _post.preset.payload,
+            editor: 'detail_update_seed',
+          ),
+          onSave: (payload) => _repository.updatePresetDetail(
+            presetId: _post.preset.id,
+            payload: payload,
+          ),
         ),
       ),
     );
@@ -5185,6 +5241,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                     bottomRight: Radius.circular(16),
                   ),
                   fit: BoxFit.contain,
+                  allowImage: false,
                 ),
               ),
               Positioned(
@@ -5638,11 +5695,15 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   bool _uploading = false;
   bool _openingComposer = false;
   bool _threeDProcessing = false;
+  bool _threeDEditCamera = false;
   double _threeDProgress = 0;
   String _threeDStage = '';
   Map<String, dynamic>? _singlePayload;
+  Map<String, dynamic>? _collectionImageThumbnailPayload;
   Map<String, dynamic>? _threeDAssetPayload;
+  Map<String, dynamic> _threeDCameraDraft = _normalizedThreeDCamera(null);
   Map<String, dynamic>? _threeDThumbnailPayload;
+  int _threeDAutoFitRevision = 0;
   final List<UploadedAsset> _threeDSourceImages = <UploadedAsset>[];
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
 
@@ -5681,10 +5742,15 @@ class _PostStudioTabState extends State<_PostStudioTab> {
             name: file.name.trim().isEmpty
                 ? 'Image ${_draftItems.length + 1}'
                 : file.name.trim(),
-            snapshot: payload,
+            snapshot: simpleMissingThreeDPayload(
+              reason: 'image_thumbnail_only_collection_item',
+              migratedFrom: 'image',
+              editor: 'post_studio_collection',
+            ),
           );
           _draftItems.add(item);
           _selectedItemIndex = _draftItems.length - 1;
+          _collectionImageThumbnailPayload ??= payload;
         }
       });
     } catch (e) {
@@ -5847,8 +5913,10 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           contentType: file.contentType,
           byteSize: file.bytes.length,
           sourceKind: 'manual',
+          camera: _threeDCameraDraft,
           meta: <String, dynamic>{'sourceName': file.name},
         );
+        _threeDCameraDraft = _cameraFromThreeDPayload(_threeDAssetPayload!);
         _threeDProgress = 1;
         _threeDStage = '3D asset ready';
       });
@@ -5869,7 +5937,10 @@ class _PostStudioTabState extends State<_PostStudioTab> {
 
   Future<void> _openThreeDComposer() async {
     final messenger = ScaffoldMessenger.of(context);
-    final payload = _threeDAssetPayload;
+    final rawPayload = _threeDAssetPayload;
+    final payload = rawPayload == null
+        ? null
+        : _payloadWithThreeDCameraSnapshot(rawPayload, _threeDCameraDraft);
     if (payload == null || threeDAssetFromPayload(payload) == null) {
       messenger.showSnackBar(
         const SnackBar(content: Text('Upload or generate a 3D asset first.')),
@@ -5921,6 +5992,9 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         _threeDAssetPayload = null;
         _threeDThumbnailPayload = null;
         _threeDSourceImages.clear();
+        _threeDEditCamera = false;
+        _threeDCameraDraft = _normalizedThreeDCamera(null);
+        _threeDAutoFitRevision = 0;
         _threeDProgress = 0;
         _threeDStage = '';
       });
@@ -5996,7 +6070,11 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         setState(() {
           if (outputPayload != null &&
               threeDAssetFromPayload(outputPayload) != null) {
-            _threeDAssetPayload = outputPayload;
+            _threeDAssetPayload = _payloadWithThreeDCameraSnapshot(
+              outputPayload,
+              _cameraFromThreeDPayload(outputPayload),
+            );
+            _threeDCameraDraft = _cameraFromThreeDPayload(_threeDAssetPayload!);
           }
           _threeDSourceImages.clear();
           _threeDProgress = 1;
@@ -6032,7 +6110,12 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         builder: (_) => _PostCardComposerPage.single(
           name:
               'Image ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}',
-          payload: payload,
+          payload: simpleMissingThreeDPayload(
+            reason: 'image_thumbnail_only_post',
+            migratedFrom: 'image',
+            editor: 'post_studio',
+          ),
+          initialCardPayload: payload,
         ),
       ),
     );
@@ -6066,6 +6149,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           tags: const <String>[],
           mentionUserIds: const <String>[],
           published: true,
+          initialCardPayload: _collectionImageThumbnailPayload ??
+              simpleImagePayload(imageUrl: ''),
           items: List<CollectionDraftItem>.from(_draftItems),
         ),
       ),
@@ -6076,6 +6161,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       setState(() {
         _draftItems.clear();
         _selectedItemIndex = -1;
+        _collectionImageThumbnailPayload = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Collection published successfully.')),
@@ -6101,11 +6187,30 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       if (payload != null) {
         return ClipRRect(
           borderRadius: BorderRadius.circular(16),
-          child: _SharedPresetPreview(
-            payload: payload,
-            borderRadius: BorderRadius.circular(16),
-            fit: BoxFit.contain,
-          ),
+          child: isThreeDPayload(payload)
+              ? ThreeDViewer(
+                  payload: payload,
+                  editable: _threeDEditCamera,
+                  cameraOverride: _threeDCameraDraft,
+                  autoFitRevision: _threeDAutoFitRevision,
+                  onCameraChanged: (camera) {
+                    final normalized = _normalizedThreeDCamera(camera);
+                    setState(() {
+                      _threeDCameraDraft = normalized;
+                      if (_threeDAssetPayload != null) {
+                        _threeDAssetPayload = _payloadWithThreeDCameraSnapshot(
+                          _threeDAssetPayload!,
+                          normalized,
+                        );
+                      }
+                    });
+                  },
+                )
+              : _SharedPresetPreview(
+                  payload: payload,
+                  borderRadius: BorderRadius.circular(16),
+                  fit: BoxFit.contain,
+                ),
         );
       }
       return DecoratedBox(
@@ -6288,6 +6393,53 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                             : 'Replace Thumbnail',
                       ),
                     ),
+                    if (_threeDAssetPayload != null) ...[
+                      const SizedBox(height: 14),
+                      _ThreeDCameraControlPanel(
+                        camera: _threeDCameraDraft,
+                        editMode: _threeDEditCamera,
+                        onEditModeChanged: (value) =>
+                            setState(() => _threeDEditCamera = value),
+                        onCameraChanged: (camera) {
+                          final normalized = _normalizedThreeDCamera(camera);
+                          setState(() {
+                            _threeDCameraDraft = normalized;
+                            _threeDAssetPayload =
+                                _payloadWithThreeDCameraSnapshot(
+                              _threeDAssetPayload!,
+                              normalized,
+                            );
+                          });
+                        },
+                        onReset: () {
+                          final reset = _normalizedThreeDCamera(
+                            const <String, dynamic>{
+                              'initialPosition': <double>[0, 0, 3],
+                              'initialTarget': <double>[0, 0, 0],
+                              'rotationDegrees': <String, dynamic>{
+                                'yaw': 0,
+                                'pitch': 0,
+                                'roll': 0,
+                              },
+                              'fov': 45,
+                              'distance': 3,
+                            },
+                          );
+                          setState(() {
+                            _threeDCameraDraft = reset;
+                            _threeDAssetPayload =
+                                _payloadWithThreeDCameraSnapshot(
+                              _threeDAssetPayload!,
+                              reset,
+                            );
+                          });
+                        },
+                        onAutoFit: () => setState(() {
+                          _threeDEditCamera = true;
+                          _threeDAutoFitRevision++;
+                        }),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     if (train3dMode) ...[
                       FilledButton.icon(
@@ -7260,78 +7412,44 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     final summary = _activeSummary;
     if (detail == null || summary == null) return;
     final int activeIndex = _index.clamp(0, detail.items.length - 1).toInt();
-    if (detail.items.isNotEmpty &&
-        isThreeDPayload(detail.items[activeIndex].snapshot)) {
-      final bool? updated = await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(
-          settings:
-              const RouteSettings(name: '/post/editor/collection-3d-update'),
-          builder: (_) => _ThreeDAssetEditorPage(
-            title: 'Update 3D Asset',
-            initialPayload: detail.items[activeIndex].snapshot,
-            onSave: (payload) async {
-              final items = detail.items
-                  .map(
-                    (item) => CollectionDraftItem(
-                      name: item.name,
-                      snapshot: item.snapshot,
-                    ),
-                  )
-                  .toList();
-              items[activeIndex] = items[activeIndex].copyWith(
-                snapshot: payload,
-              );
-              await _repository.saveCollectionWithItems(
-                collectionId: summary.id,
-                name: summary.name,
-                description: summary.description,
-                tags: summary.tags,
-                mentionUserIds: summary.mentionUserIds,
-                thumbnailPayload: summary.thumbnailPayload,
-                publish: summary.published,
-                items: items,
-                isPaid: summary.isPaid,
-                priceCents: summary.priceCents,
-                accentColorHex: summary.accentColorHex,
-              );
-            },
-          ),
-        ),
-      );
-      if (updated == true) {
-        await _load();
-      }
-      return;
-    }
+    if (detail.items.isEmpty) return;
     final bool? updated = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         settings:
-            const RouteSettings(name: '/post/editor/collection-detail-update'),
-        builder: (_) => _PostCardComposerPage.collection(
-          collectionId: summary.id,
-          collectionName: summary.name,
-          collectionDescription: summary.description,
-          tags: summary.tags,
-          mentionUserIds: summary.mentionUserIds,
-          published: summary.published,
-          initialIsPaid: summary.isPaid,
-          initialPriceCents: summary.priceCents,
-          initialAccentColorHex: summary.accentColorHex,
-          initialCardPayload: summary.thumbnailPayload,
-          initialLinkedItemPosition:
-              linkedItemPositionFromPayload(summary.thumbnailPayload),
-          editTarget: _ComposerEditTarget.card,
-          startBlankCard: false,
-          items: detail.items
-              .map(
-                (item) => CollectionDraftItem(
-                  name: item.name,
-                  snapshot: item.snapshot,
-                ),
-              )
-              .toList(),
+            const RouteSettings(name: '/post/editor/collection-3d-update'),
+        builder: (_) => _ThreeDAssetEditorPage(
+          title: 'Update 3D Asset',
+          initialPayload: normalizeRenderPayload(
+            detail.items[activeIndex].snapshot,
+            editor: 'collection_detail_update_seed',
+          ),
+          onSave: (payload) async {
+            final items = detail.items
+                .map(
+                  (item) => CollectionDraftItem(
+                    name: item.name,
+                    snapshot: item.snapshot,
+                  ),
+                )
+                .toList();
+            items[activeIndex] = items[activeIndex].copyWith(
+              snapshot: payload,
+            );
+            await _repository.saveCollectionWithItems(
+              collectionId: summary.id,
+              name: summary.name,
+              description: summary.description,
+              tags: summary.tags,
+              mentionUserIds: summary.mentionUserIds,
+              thumbnailPayload: summary.thumbnailPayload,
+              publish: summary.published,
+              items: items,
+              isPaid: summary.isPaid,
+              priceCents: summary.priceCents,
+              accentColorHex: summary.accentColorHex,
+            );
+          },
         ),
       ),
     );
@@ -7457,6 +7575,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
             bottomRight: Radius.circular(16),
           ),
           fit: BoxFit.contain,
+          allowImage: false,
         ),
       ],
     );
@@ -10452,6 +10571,440 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
   }
 }
 
+List<double> _threeDCameraVector(dynamic value, List<double> fallback) {
+  if (value is! List || value.length < 3) return List<double>.from(fallback);
+  double item(int index) {
+    final dynamic raw = value[index];
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw?.toString() ?? '') ?? fallback[index];
+  }
+
+  return <double>[item(0), item(1), item(2)];
+}
+
+double _threeDCameraNumber(dynamic value, double fallback) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+Map<String, dynamic> _threeDCameraRotation(dynamic value) {
+  final Map<String, dynamic> raw = value is Map
+      ? Map<String, dynamic>.from(value)
+      : const <String, dynamic>{};
+  return <String, dynamic>{
+    'yaw': _threeDCameraNumber(raw['yaw'], 0),
+    'pitch': _threeDCameraNumber(raw['pitch'], 0),
+    'roll': _threeDCameraNumber(raw['roll'], 0),
+  };
+}
+
+double _threeDCameraDistance(List<double> position, List<double> target) {
+  final double dx = position[0] - target[0];
+  final double dy = position[1] - target[1];
+  final double dz = position[2] - target[2];
+  return math.max(0.1, math.sqrt(dx * dx + dy * dy + dz * dz));
+}
+
+Map<String, dynamic> _normalizedThreeDCamera(dynamic value) {
+  final Map<String, dynamic> raw = value is Map
+      ? Map<String, dynamic>.from(value)
+      : const <String, dynamic>{};
+  final List<double> target = _threeDCameraVector(
+    raw['initialTarget'],
+    const <double>[0, 0, 0],
+  );
+  final List<double> position = _threeDCameraVector(
+    raw['initialPosition'],
+    const <double>[0, 0, 3],
+  );
+  return <String, dynamic>{
+    'initialPosition': position,
+    'initialTarget': target,
+    'rotationDegrees': _threeDCameraRotation(raw['rotationDegrees']),
+    'fov': _threeDCameraNumber(raw['fov'], 45).clamp(10, 100).toDouble(),
+    'distance': _threeDCameraNumber(
+      raw['distance'],
+      _threeDCameraDistance(position, target),
+    ).clamp(0.1, 50).toDouble(),
+  };
+}
+
+Map<String, dynamic> _cameraFromThreeDPayload(Map<String, dynamic> payload) {
+  final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
+  return _normalizedThreeDCamera(asset.camera);
+}
+
+List<double> _positionFromCameraAngles(
+  List<double> target,
+  Map<String, dynamic> rotation,
+  double distance,
+) {
+  final double yaw = _threeDCameraNumber(rotation['yaw'], 0) * math.pi / 180;
+  final double pitch =
+      _threeDCameraNumber(rotation['pitch'], 0).clamp(-89, 89).toDouble() *
+          math.pi /
+          180;
+  final double cosPitch = math.cos(pitch);
+  return <double>[
+    target[0] + math.sin(yaw) * cosPitch * distance,
+    target[1] + math.sin(pitch) * distance,
+    target[2] + math.cos(yaw) * cosPitch * distance,
+  ];
+}
+
+Map<String, dynamic> _rotationFromCameraVectors(
+  List<double> position,
+  List<double> target,
+  double roll,
+) {
+  final double dx = position[0] - target[0];
+  final double dy = position[1] - target[1];
+  final double dz = position[2] - target[2];
+  final double distance =
+      math.max(0.0001, math.sqrt(dx * dx + dy * dy + dz * dz));
+  return <String, dynamic>{
+    'yaw': math.atan2(dx, dz) * 180 / math.pi,
+    'pitch': math.asin((dy / distance).clamp(-1, 1).toDouble()) * 180 / math.pi,
+    'roll': roll,
+  };
+}
+
+Map<String, dynamic> _cameraWithPosition(
+  Map<String, dynamic> camera,
+  int index,
+  double value,
+) {
+  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
+  final List<double> position =
+      List<double>.from(next['initialPosition'] as List);
+  position[index] = value;
+  final List<double> target = List<double>.from(next['initialTarget'] as List);
+  final Map<String, dynamic> oldRotation =
+      Map<String, dynamic>.from(next['rotationDegrees'] as Map);
+  return <String, dynamic>{
+    ...next,
+    'initialPosition': position,
+    'rotationDegrees': _rotationFromCameraVectors(
+      position,
+      target,
+      _threeDCameraNumber(oldRotation['roll'], 0),
+    ),
+    'distance': _threeDCameraDistance(position, target),
+  };
+}
+
+Map<String, dynamic> _cameraWithTarget(
+  Map<String, dynamic> camera,
+  int index,
+  double value,
+) {
+  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
+  final List<double> target = List<double>.from(next['initialTarget'] as List);
+  target[index] = value;
+  final Map<String, dynamic> rotation =
+      Map<String, dynamic>.from(next['rotationDegrees'] as Map);
+  final double distance = _threeDCameraNumber(next['distance'], 3);
+  return <String, dynamic>{
+    ...next,
+    'initialTarget': target,
+    'initialPosition': _positionFromCameraAngles(target, rotation, distance),
+  };
+}
+
+Map<String, dynamic> _cameraWithRotation(
+  Map<String, dynamic> camera,
+  String key,
+  double value,
+) {
+  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
+  final Map<String, dynamic> rotation =
+      Map<String, dynamic>.from(next['rotationDegrees'] as Map);
+  rotation[key] = key == 'pitch' ? value.clamp(-89, 89).toDouble() : value;
+  final List<double> target = List<double>.from(next['initialTarget'] as List);
+  final double distance = _threeDCameraNumber(next['distance'], 3);
+  return <String, dynamic>{
+    ...next,
+    'rotationDegrees': rotation,
+    'initialPosition': _positionFromCameraAngles(target, rotation, distance),
+  };
+}
+
+Map<String, dynamic> _cameraWithDistance(
+  Map<String, dynamic> camera,
+  double value,
+) {
+  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
+  final List<double> target = List<double>.from(next['initialTarget'] as List);
+  final Map<String, dynamic> rotation =
+      Map<String, dynamic>.from(next['rotationDegrees'] as Map);
+  final double distance = value.clamp(0.1, 50).toDouble();
+  return <String, dynamic>{
+    ...next,
+    'distance': distance,
+    'initialPosition': _positionFromCameraAngles(target, rotation, distance),
+  };
+}
+
+Map<String, dynamic> _cameraWithFov(Map<String, dynamic> camera, double value) {
+  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
+  return <String, dynamic>{
+    ...next,
+    'fov': value.clamp(10, 100).toDouble(),
+  };
+}
+
+Map<String, dynamic> _payloadWithThreeDCameraSnapshot(
+  Map<String, dynamic> payload,
+  Map<String, dynamic> camera,
+) {
+  final Map<String, dynamic> normalized = _normalizedThreeDCamera(camera);
+  return payloadWithThreeDCamera(
+    payload,
+    initialPosition: List<double>.from(normalized['initialPosition'] as List),
+    initialTarget: List<double>.from(normalized['initialTarget'] as List),
+    rotationDegrees:
+        Map<String, dynamic>.from(normalized['rotationDegrees'] as Map),
+    fov: _threeDCameraNumber(normalized['fov'], 45),
+    distance: _threeDCameraNumber(normalized['distance'], 3),
+  );
+}
+
+class _ThreeDCameraControlPanel extends StatelessWidget {
+  const _ThreeDCameraControlPanel({
+    required this.camera,
+    required this.editMode,
+    required this.onEditModeChanged,
+    required this.onCameraChanged,
+    required this.onReset,
+    required this.onAutoFit,
+  });
+
+  final Map<String, dynamic> camera;
+  final bool editMode;
+  final ValueChanged<bool> onEditModeChanged;
+  final ValueChanged<Map<String, dynamic>> onCameraChanged;
+  final VoidCallback onReset;
+  final VoidCallback onAutoFit;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    final Map<String, dynamic> normalized = _normalizedThreeDCamera(camera);
+    final List<double> position =
+        List<double>.from(normalized['initialPosition'] as List);
+    final List<double> target =
+        List<double>.from(normalized['initialTarget'] as List);
+    final Map<String, dynamic> rotation =
+        Map<String, dynamic>.from(normalized['rotationDegrees'] as Map);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          value: editMode,
+          onChanged: onEditModeChanged,
+          title: Text(
+            'Edit Camera',
+            style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700),
+          ),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Camera X',
+          value: position[0],
+          min: -20,
+          max: 20,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithPosition(normalized, 0, value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Camera Y',
+          value: position[1],
+          min: -20,
+          max: 20,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithPosition(normalized, 1, value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Camera Z',
+          value: position[2],
+          min: -20,
+          max: 20,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithPosition(normalized, 2, value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Target X',
+          value: target[0],
+          min: -20,
+          max: 20,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithTarget(normalized, 0, value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Target Y',
+          value: target[1],
+          min: -20,
+          max: 20,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithTarget(normalized, 1, value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Target Z',
+          value: target[2],
+          min: -20,
+          max: 20,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithTarget(normalized, 2, value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Yaw',
+          value: _threeDCameraNumber(rotation['yaw'], 0),
+          min: -180,
+          max: 180,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithRotation(normalized, 'yaw', value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Pitch',
+          value: _threeDCameraNumber(rotation['pitch'], 0),
+          min: -89,
+          max: 89,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithRotation(normalized, 'pitch', value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Roll',
+          value: _threeDCameraNumber(rotation['roll'], 0),
+          min: -180,
+          max: 180,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithRotation(normalized, 'roll', value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'FOV',
+          value: _threeDCameraNumber(normalized['fov'], 45),
+          min: 10,
+          max: 100,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithFov(normalized, value)),
+        ),
+        _ThreeDCameraNumberControl(
+          label: 'Distance',
+          value: _threeDCameraNumber(normalized['distance'], 3),
+          min: 0.1,
+          max: 50,
+          enabled: editMode,
+          onChanged: (value) =>
+              onCameraChanged(_cameraWithDistance(normalized, value)),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: editMode ? onReset : null,
+              icon: const Icon(Icons.center_focus_strong_rounded),
+              label: const Text('Reset'),
+            ),
+            OutlinedButton.icon(
+              onPressed: editMode ? onAutoFit : null,
+              icon: const Icon(Icons.fit_screen_rounded),
+              label: const Text('Auto-fit'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ThreeDCameraNumberControl extends StatelessWidget {
+  const _ThreeDCameraNumberControl({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    final double safeValue = value.clamp(min, max).toDouble();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: enabled ? cs.onSurface : cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 82,
+                child: TextFormField(
+                  key: ValueKey<String>(
+                    '$label-${safeValue.toStringAsFixed(3)}-$enabled',
+                  ),
+                  enabled: enabled,
+                  initialValue: safeValue.toStringAsFixed(2),
+                  textAlign: TextAlign.end,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onFieldSubmitted: (raw) {
+                    final double? parsed = double.tryParse(raw.trim());
+                    if (parsed != null) {
+                      onChanged(parsed.clamp(min, max).toDouble());
+                    }
+                  },
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: safeValue,
+            min: min,
+            max: max,
+            onChanged: enabled ? onChanged : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ThreeDAssetEditorPage extends StatefulWidget {
   const _ThreeDAssetEditorPage({
     required this.title,
@@ -10470,9 +11023,13 @@ class _ThreeDAssetEditorPage extends StatefulWidget {
 class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
   final AppRepository _repository = AppRepository.instance;
   late Map<String, dynamic> _payload;
+  late Map<String, dynamic> _cameraDraft;
+  late DeepXMediaType _selectedMediaType;
+  bool _editCamera = false;
   bool _saving = false;
   bool _uploading = false;
   double _uploadProgress = 0;
+  int _autoFitRevision = 0;
 
   @override
   void initState() {
@@ -10481,63 +11038,58 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
       widget.initialPayload,
       editor: 'three_d_asset_editor',
     );
-  }
-
-  List<double> _cameraList(dynamic value, List<double> fallback) {
-    if (value is! List || value.length < 3) return fallback;
-    double item(int index) {
-      final dynamic raw = value[index];
-      if (raw is num) return raw.toDouble();
-      return double.tryParse(raw?.toString() ?? '') ?? fallback[index];
-    }
-
-    return <double>[
-      item(0),
-      item(1),
-      item(2),
-    ];
+    _cameraDraft = _cameraFromThreeDPayload(_payload);
+    _selectedMediaType =
+        mediaTypeFromPayload(_payload) == DeepXMediaType.triangleMesh
+            ? DeepXMediaType.triangleMesh
+            : DeepXMediaType.gaussianSplat;
   }
 
   void _applyCamera(Map<String, dynamic> camera) {
-    final List<double> position = _cameraList(
-      camera['initialPosition'],
-      const <double>[0, 0, 3],
-    );
-    final List<double> target = _cameraList(
-      camera['initialTarget'],
-      const <double>[0, 0, 0],
-    );
-    final dynamic rawFov = camera['fov'];
-    final double fov = rawFov is num
-        ? rawFov.toDouble()
-        : double.tryParse(rawFov?.toString() ?? '') ?? 45;
+    final Map<String, dynamic> normalized = _normalizedThreeDCamera(camera);
     setState(() {
-      _payload = payloadWithThreeDCamera(
-        _payload,
-        initialPosition: position,
-        initialTarget: target,
-        fov: fov,
-      );
+      _cameraDraft = normalized;
+      _payload = _payloadWithThreeDCameraSnapshot(_payload, normalized);
     });
   }
 
   void _resetCamera() {
+    _applyCamera(const <String, dynamic>{
+      'initialPosition': <double>[0, 0, 3],
+      'initialTarget': <double>[0, 0, 0],
+      'rotationDegrees': <String, dynamic>{'yaw': 0, 'pitch': 0, 'roll': 0},
+      'fov': 45,
+      'distance': 3,
+    });
+  }
+
+  void _autoFitCamera() {
     setState(() {
-      _payload = payloadWithThreeDCamera(
-        _payload,
-        initialPosition: const <double>[0, 0, 3],
-        initialTarget: const <double>[0, 0, 0],
-      );
+      _editCamera = true;
+      _autoFitRevision++;
+    });
+  }
+
+  void _setMediaType(DeepXMediaType mediaType) {
+    setState(() {
+      _selectedMediaType = mediaType;
+      if (threeDAssetFromPayload(_payload) == null) {
+        _payload = _payloadWithThreeDCameraSnapshot(
+          simpleMissingThreeDPayload(
+            preferredType: mediaType,
+            reason: 'awaiting_replacement_asset',
+            editor: 'three_d_asset_editor',
+          ),
+          _cameraDraft,
+        );
+      }
     });
   }
 
   Future<void> _replaceAsset() async {
     if (_uploading) return;
     final messenger = ScaffoldMessenger.of(context);
-    final DeepXMediaType mediaType =
-        mediaTypeFromPayload(_payload) == DeepXMediaType.triangleMesh
-            ? DeepXMediaType.triangleMesh
-            : DeepXMediaType.gaussianSplat;
+    final DeepXMediaType mediaType = _selectedMediaType;
     final bool mesh = mediaType == DeepXMediaType.triangleMesh;
     setState(() {
       _uploading = true;
@@ -10576,7 +11128,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
           byteSize: file.bytes.length,
           sourceKind: 'manual_update',
           transform: old.transform,
-          camera: old.camera,
+          camera: _cameraDraft,
           meta: <String, dynamic>{'sourceName': file.name},
         );
       });
@@ -10591,7 +11143,8 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
   Future<void> _save() async {
     if (_saving) return;
     final messenger = ScaffoldMessenger.of(context);
-    if (threeDAssetFromPayload(_payload) == null) {
+    if (threeDAssetFromPayload(_payload) == null &&
+        mediaTypeFromPayload(_payload) != DeepXMediaType.missing3d) {
       messenger.showSnackBar(
         const SnackBar(content: Text('Upload a valid 3D asset first.')),
       );
@@ -10650,7 +11203,9 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                       borderRadius: BorderRadius.circular(12),
                       child: ThreeDViewer(
                         payload: _payload,
-                        editable: true,
+                        editable: _editCamera,
+                        cameraOverride: _cameraDraft,
+                        autoFitRevision: _autoFitRevision,
                         onCameraChanged: _applyCamera,
                       ),
                     ),
@@ -10671,6 +11226,23 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  SegmentedButton<DeepXMediaType>(
+                    segments: const <ButtonSegment<DeepXMediaType>>[
+                      ButtonSegment<DeepXMediaType>(
+                        value: DeepXMediaType.gaussianSplat,
+                        icon: Icon(Icons.blur_on_rounded),
+                        label: Text('Gaussian'),
+                      ),
+                      ButtonSegment<DeepXMediaType>(
+                        value: DeepXMediaType.triangleMesh,
+                        icon: Icon(Icons.view_in_ar_outlined),
+                        label: Text('Mesh'),
+                      ),
+                    ],
+                    selected: <DeepXMediaType>{_selectedMediaType},
+                    onSelectionChanged: (value) => _setMediaType(value.first),
+                  ),
+                  const SizedBox(height: 12),
                   FilledButton.icon(
                     onPressed: _uploading ? null : _replaceAsset,
                     icon: _uploading
@@ -10691,11 +11263,15 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                       style: TextStyle(color: cs.onSurfaceVariant),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _resetCamera,
-                    icon: const Icon(Icons.center_focus_strong_rounded),
-                    label: const Text('Reset Camera'),
+                  const SizedBox(height: 16),
+                  _ThreeDCameraControlPanel(
+                    camera: _cameraDraft,
+                    editMode: _editCamera,
+                    onEditModeChanged: (value) =>
+                        setState(() => _editCamera = value),
+                    onCameraChanged: _applyCamera,
+                    onReset: _resetCamera,
+                    onAutoFit: _autoFitCamera,
                   ),
                   const SizedBox(height: 18),
                   FilledButton.icon(
@@ -10855,13 +11431,21 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
             : (existing?.thumbnailPayload.isNotEmpty == true
                 ? existing!.thumbnailPayload
                 : const <String, dynamic>{});
+    final bool hasExplicitInitialCard = initialCard.isNotEmpty;
     _cardPayload = initialCard.isNotEmpty
         ? normalizeImagePayload(initialCard, editor: 'composer_card')
         : _linkedCardPayload();
     _cardSourceKind = sourceKindFromPayload(_cardPayload);
     if (_cardSourceKind != 'custom') {
-      _cardSourceKind = _isCollection ? 'collection_item' : 'post';
-      _syncCardFromLinkedSource();
+      if (hasExplicitInitialCard && imageUrlFromPayload(_cardPayload) != null) {
+        _cardPayload = imagePayloadFromMap(_cardPayload)
+            .copyWith(sourceKind: 'custom')
+            .toMap();
+        _cardSourceKind = 'custom';
+      } else {
+        _cardSourceKind = _isCollection ? 'collection_item' : 'post';
+        _syncCardFromLinkedSource();
+      }
     }
     _titleController = TextEditingController(
       text: _isCollection
@@ -11058,7 +11642,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       _syncCardFromLinkedSource();
       if (_isCollection) {
         if (_items.isEmpty) {
-          throw Exception('Collection needs at least one image.');
+          throw Exception('Collection needs at least one item.');
         }
         await _repository.saveCollectionWithItems(
           collectionId: widget.collectionId,
@@ -11075,10 +11659,10 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         );
       } else {
         final payload = _singlePayload();
-        if (!isThreeDPayload(payload) && imageUrlFromPayload(payload) == null) {
-          throw Exception('Post needs one image.');
+        if (!isThreeDPayload(payload)) {
+          throw Exception('Post detail content must be 3D.');
         }
-        if (isThreeDPayload(payload) &&
+        if (mediaTypeFromPayload(payload) != DeepXMediaType.missing3d &&
             threeDAssetFromPayload(payload) == null) {
           throw Exception('Post needs one 3D asset.');
         }

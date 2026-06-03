@@ -54,6 +54,7 @@ let mouseY = window.innerHeight / 2;
 let mouseWheelZ = 0;
 const wheelSens = 0.0005;
 let isPaused = false;
+let cursorPausedByRealMouse = false;
 let coeffX = [];
 let coeffY = [];
 let isIrisCalibrated = false;
@@ -201,7 +202,7 @@ function showCursorEnabled() {
     return !!el('show-cursor')?.checked;
 }
 function cursorFunctional() {
-    return trackingEnabled() && showCursorEnabled() && !isPaused && pageActive;
+    return trackingEnabled() && showCursorEnabled() && !cursorPausedByRealMouse && pageActive;
 }
 function setTrackerCursorVisible(visible) {
     cursor.style.display = visible ? 'block' : 'none';
@@ -246,7 +247,7 @@ function setShowCursorEnabled(enabled) {
         return;
     }
     scheduleRealCursorHide();
-    if (trackingEnabled() && !isPaused) setTrackerCursorVisible(true);
+    if (cursorFunctional()) setTrackerCursorVisible(true);
     sendTrackerState();
 }
 function setTrackingEnabled(enabled) {
@@ -728,29 +729,40 @@ function drawFaceDots(drawLm) {
     oCtx.clearRect(0, 0, overlay.width, overlay.height);
     if (!drawLm) return;
     const scaleFactor = Math.max(1, overlay.width / 240);
-    const lineWidth = Math.max(0.5, 0.45 * scaleFactor);
-    const dotRadius = Math.max(0.8, 0.8 * scaleFactor);
-    const chains = [
-        MESH_SILHOUETTE,
-        [33, 160, 158, 133, 153, 144, 33],
-        [362, 385, 387, 263, 373, 380, 362],
-        [70, 63, 105, 66, 107],
-        [336, 296, 334, 293, 300],
-        [168, 6, 197, 195, 5, 4, 1, 19, 94, 2],
-        MESH_LIPS
-    ];
+    const lineWidth = Math.max(0.35, 0.34 * scaleFactor);
+    const dotRadius = Math.max(0.55, 0.58 * scaleFactor);
+    const tessellation = faceMeshConnectorsFor(drawLm);
     oCtx.save();
-    oCtx.strokeStyle = 'rgba(255,255,255,0.82)';
-    oCtx.fillStyle = 'rgba(255,255,255,0.95)';
+    oCtx.strokeStyle = 'rgba(255,255,255,0.46)';
+    oCtx.fillStyle = 'rgba(255,255,255,0.82)';
     oCtx.lineWidth = lineWidth;
     oCtx.lineCap = 'round';
     oCtx.lineJoin = 'round';
+    oCtx.shadowColor = 'rgba(255,255,255,0.34)';
+    oCtx.shadowBlur = Math.max(1, 1.8 * scaleFactor);
     const points = new Set();
-    for (const chain of chains) {
-        drawFaceChain(oCtx, drawLm, chain, points);
+    for (const pair of tessellation) {
+        const a = drawLm[pair[0]];
+        const b = drawLm[pair[1]];
+        if (!a || !b) continue;
+        points.add(pair[0]);
+        points.add(pair[1]);
+        oCtx.beginPath();
+        oCtx.moveTo(a.x * overlay.width, a.y * overlay.height);
+        oCtx.lineTo(b.x * overlay.width, b.y * overlay.height);
+        oCtx.stroke();
     }
     drawFaceDotsAt(oCtx, drawLm, points, dotRadius);
     oCtx.restore();
+}
+
+function faceMeshConnectorsFor(landmarks) {
+    const connectors = globalThis.FACEMESH_TESSELATION;
+    const hasFullFace = Array.isArray(landmarks) && landmarks.length >= 468;
+    if (hasFullFace && Array.isArray(connectors) && connectors.length > 0) {
+        return connectors;
+    }
+    return FACE_REFERENCE_CONNECTORS;
 }
 function drawFaceChain(ctx, landmarks, chain, points) {
     if (!Array.isArray(chain) || chain.length < 2) return;
@@ -946,7 +958,7 @@ function runInferenceLoop(now) {
     inferenceRaf = 0;
     if (!pageActive || isRemote || !trackingEnabled()) return;
     const profile = currentPerformanceProfile();
-    if (!isPaused && !inferenceInFlight && now - lastInferenceTime >= profile.intervalMs) {
+    if (!inferenceInFlight && now - lastInferenceTime >= profile.intervalMs) {
         const generation = inferenceGeneration;
         const video = el('webcam-small');
         if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -1401,7 +1413,7 @@ function setTrackerUiVisible(visible) {
     sendTrackerState();
 }
 function resumeTrackerAfterRealMouse() {
-    isPaused = false;
+    cursorPausedByRealMouse = false;
     targetX = mouseX;
     targetY = mouseY;
     smoothX = mouseX;
@@ -1422,9 +1434,10 @@ function handleRealMouseActivity(x, y, deltaY = 0) {
     if (typeof x === 'number') mouseX = x;
     if (typeof y === 'number') mouseY = y;
     if (deltaY && isMouseTracking) mouseWheelZ += deltaY * wheelSens;
-    isPaused = true;
+    cursorPausedByRealMouse = true;
     setTrackerCursorVisible(false);
     setRealCursorHidden(false);
+    if (realCursorHideTimer) clearTimeout(realCursorHideTimer);
     if (realMouseResumeTimer) clearTimeout(realMouseResumeTimer);
     realMouseResumeTimer = setTimeout(resumeTrackerAfterRealMouse, REAL_MOUSE_IDLE_DELAY_MS);
 }
@@ -1461,7 +1474,7 @@ function handlePageVisibility() {
     }
     restartLocalTrackingCamera();
     if (trackingEnabled() && showCursorEnabled()) {
-        setTrackerCursorVisible(true);
+        setTrackerCursorVisible(cursorFunctional());
         scheduleRealCursorHide();
     }
 }
@@ -1783,13 +1796,12 @@ function frameUpdate() {
     }
     if ((currentMode === 'hand' || isAutoMode()) && (now - lastHandDataTime > 350)) {
         clearHandState();
-        if (isAutoMode()) activeTracker = 'face';
+        if (isAutoMode()) {
+            activeTracker = 'face';
+            if (faceLm && shouldDrawTrackerOverlay()) drawFaceDots(faceLm);
+        }
     }
-    if (isPaused) {
-        requestAnimationFrame(frameUpdate);
-        return;
-    }
-    const cursorIsFunctional = trackingEnabled() && showCursorEnabled() && !isPaused;
+    const cursorIsFunctional = cursorFunctional();
     if (cursorIsFunctional) {
         const mode = cursorControlMode();
         const isHead = mode === 'head';
@@ -1871,7 +1883,7 @@ function frameUpdate() {
         prevHandIndexX = currentHandIndexX;
         prevHandIndexY = currentHandIndexY;
     }
-    if (isMouseTracking && !isPaused) {
+    if (isMouseTracking) {
         currentFace.x = (mouseX / window.innerWidth - 0.5) * 2;
         currentFace.y = (mouseY / window.innerHeight - 0.5) * 2;
         currentFace.z = anchorFace.z - mouseWheelZ;
@@ -2149,7 +2161,7 @@ function setupTrackerEvents() {
             localStorage.setItem('tracking-toggle', String(e.target.checked));
             if (e.target.checked) {
                 await updatePerformanceSettings();
-                if (showCursorEnabled() && !isPaused) setTrackerCursorVisible(true);
+                if (cursorFunctional()) setTrackerCursorVisible(true);
                 scheduleRealCursorHide();
             } else {
                 await stopLocalTrackingCamera();
@@ -2474,9 +2486,25 @@ const MESH_IRIS = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
 const MESH_EYEBROWS = [70, 63, 105, 66, 107, 336, 296, 334, 293, 300];
 const MESH_LIPS = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146];
 const MESH_NOSE = [168, 6, 197, 195, 5, 4, 1, 19, 94, 2, 98, 97, 326, 327];
+const FACE_REFERENCE_CONNECTORS = [
+    ...chainPairs(MESH_SILHOUETTE),
+    ...chainPairs([33, 160, 158, 133, 153, 144, 33]),
+    ...chainPairs([362, 385, 387, 263, 373, 380, 362]),
+    ...chainPairs([70, 63, 105, 66, 107]),
+    ...chainPairs([336, 296, 334, 293, 300]),
+    ...chainPairs(MESH_NOSE),
+    ...chainPairs(MESH_LIPS)
+];
 const FILTERED_INDICES = [...MESH_SILHOUETTE, ...MESH_EYELASHES, ...MESH_IRIS, ...MESH_EYEBROWS, ...MESH_LIPS, ...MESH_NOSE];
 const IRIS_INDICES = [33, 133, 159, 145, 158, 153, 362, 263, 386, 374, 385, 380, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
 const YAW_PITCH_INDICES = [1, 10, 152, 234, 454];
+function chainPairs(indices) {
+    const pairs = [];
+    for (let i = 1; i < indices.length; i++) {
+        pairs.push([indices[i - 1], indices[i]]);
+    }
+    return pairs;
+}
 init();
 window.addEventListener('resize', () => {
     if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }

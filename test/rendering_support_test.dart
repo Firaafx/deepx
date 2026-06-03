@@ -6,6 +6,7 @@ import 'package:deepx/models/render_preset.dart';
 import 'package:deepx/models/three_d_payload.dart';
 import 'package:deepx/rendering_support.dart';
 import 'package:deepx/services/appearance_settings_service.dart';
+import 'package:deepx/show_feed.dart';
 import 'package:deepx/widgets/svg_card_shell.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -188,6 +189,29 @@ void main() {
         'https://example.com/thumb.webp');
   });
 
+  test('image render payloads become missing 3D while thumbnails stay image',
+      () {
+    final Map<String, dynamic> imagePayload = simpleImagePayload(
+      imageUrl: 'https://example.com/thumb.webp',
+    );
+
+    final Map<String, dynamic> renderPayload = normalizeRenderPayload(
+      imagePayload,
+      editor: 'detail_content',
+    );
+    final Map<String, dynamic> thumbnailPayload = normalizeImagePayload(
+      imagePayload,
+      editor: 'card_thumbnail',
+    );
+
+    expect(mediaTypeFromPayload(renderPayload), DeepXMediaType.missing3d);
+    expect(threeDAssetFromPayload(renderPayload), isNull);
+    expect(missingThreeDAssetLabel(renderPayload), 'No 3D');
+    expect(mediaTypeFromPayload(thumbnailPayload), DeepXMediaType.image);
+    expect(imageUrlFromPayload(thumbnailPayload),
+        'https://example.com/thumb.webp');
+  });
+
   test('missing 3D asset fallback labels match media type', () {
     expect(
       missingThreeDAssetLabel(<String, dynamic>{
@@ -200,6 +224,12 @@ void main() {
         'media': <String, dynamic>{'type': 'triangle_mesh'},
       }),
       'No 3D mesh',
+    );
+    expect(
+      missingThreeDAssetLabel(<String, dynamic>{
+        'media': <String, dynamic>{'type': 'missing_3d'},
+      }),
+      'No 3D',
     );
   });
 
@@ -259,6 +289,37 @@ void main() {
     expect(mediaTypeFromString('3dgs'), DeepXMediaType.gaussianSplat);
     expect(mediaTypeFromString('glb'), DeepXMediaType.triangleMesh);
     expect(mediaTypeFromString('gltf'), DeepXMediaType.triangleMesh);
+    expect(mediaTypeFromString('missing_3d'), DeepXMediaType.missing3d);
+  });
+
+  test('3D camera payload preserves rotation, fov, and distance', () {
+    final Map<String, dynamic> payload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.triangleMesh,
+      assetUrl: 'https://example.com/model.glb',
+      format: 'glb',
+    );
+
+    final Map<String, dynamic> withCamera = payloadWithThreeDCamera(
+      payload,
+      initialPosition: const <double>[1, 2, 6],
+      initialTarget: const <double>[0.5, 0.2, 0],
+      rotationDegrees: const <String, dynamic>{
+        'yaw': 12,
+        'pitch': -8,
+        'roll': 3,
+      },
+      fov: 41,
+      distance: 6.3,
+    );
+    final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(withCamera);
+
+    expect(asset.camera['initialPosition'], <double>[1, 2, 6]);
+    expect(asset.camera['initialTarget'], <double>[0.5, 0.2, 0]);
+    expect((asset.camera['rotationDegrees'] as Map)['yaw'], 12);
+    expect((asset.camera['rotationDegrees'] as Map)['pitch'], -8);
+    expect((asset.camera['rotationDegrees'] as Map)['roll'], 3);
+    expect(asset.camera['fov'], 41);
+    expect(asset.camera['distance'], 6.3);
   });
 
   test('legacy presets mode migration is guarded and idempotent', () {
@@ -274,6 +335,35 @@ void main() {
     expect(sql, contains('where mode is null'));
     expect(sql, contains('alter column mode set not null'));
     expect(sql.toLowerCase(), isNot(contains('drop column')));
+  });
+
+  test('missing 3D migration converts image content and preserves thumbnails',
+      () {
+    final String sql = File(
+      'supabase/migrations/20260604120000_3d_only_missing_payloads.sql',
+    ).readAsStringSync();
+    final String lower = sql.toLowerCase();
+
+    expect(lower, contains('missing_3d'));
+    expect(lower, contains('public.presets'));
+    expect(lower, contains('public.collection_items'));
+    expect(lower, contains('preset_snapshot = missing_payload'));
+    expect(lower, isNot(contains('thumbnail_payload =')));
+    expect(
+        lower,
+        contains(
+            "media_type in ('image', 'gaussian_splat', 'triangle_mesh', 'missing_3d')"));
+  });
+
+  test('parallelogram highlight slant angle does not change with width', () {
+    double slope(Offset a, Offset b) => (b.dx - a.dx) / (b.dy - a.dy);
+    final List<Offset> short =
+        parallelogramHighlightAnglePointsForTesting(const Size(120, 38));
+    final List<Offset> long =
+        parallelogramHighlightAnglePointsForTesting(const Size(420, 38));
+
+    expect(slope(short[0], short[1]), closeTo(slope(long[0], long[1]), 0.0001));
+    expect(slope(short[2], short[3]), closeTo(slope(long[2], long[3]), 0.0001));
   });
 
   test('svg card two-line title does not extend thumbnail clip downward', () {
