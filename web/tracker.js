@@ -293,6 +293,8 @@ function clearHandState() {
 }
 function shouldDrawTrackerOverlay() {
     if (!uiVisible) return false;
+    const now = performance.now();
+    if (now - lastOverlayDrawTime < 66) return false;
     lastOverlayDrawTime = performance.now();
     return true;
 }
@@ -760,9 +762,52 @@ function faceMeshConnectorsFor(landmarks) {
     const connectors = globalThis.FACEMESH_TESSELATION;
     const hasFullFace = Array.isArray(landmarks) && landmarks.length >= 468;
     if (hasFullFace && Array.isArray(connectors) && connectors.length > 0) {
-        return connectors;
+        return sparseFaceTessellation(connectors);
     }
     return FACE_REFERENCE_CONNECTORS;
+}
+
+let sparseFaceTessellationCache = null;
+function sparseFaceTessellation(connectors) {
+    if (sparseFaceTessellationCache) return sparseFaceTessellationCache;
+    const selected = new Set();
+    for (let i = 0; i < 478; i += 4) selected.add(i);
+    const graph = new Map();
+    for (const pair of connectors) {
+        const a = pair[0];
+        const b = pair[1];
+        if (!graph.has(a)) graph.set(a, []);
+        if (!graph.has(b)) graph.set(b, []);
+        graph.get(a).push(b);
+        graph.get(b).push(a);
+    }
+    const pairs = [];
+    const seenPairs = new Set();
+    for (const start of selected) {
+        const queue = [{ index: start, depth: 0 }];
+        const seen = new Set([start]);
+        while (queue.length) {
+            const current = queue.shift();
+            if (current.depth >= 4) continue;
+            for (const next of graph.get(current.index) || []) {
+                if (seen.has(next)) continue;
+                seen.add(next);
+                if (selected.has(next)) {
+                    const lo = Math.min(start, next);
+                    const hi = Math.max(start, next);
+                    const key = `${lo}:${hi}`;
+                    if (lo !== hi && !seenPairs.has(key)) {
+                        seenPairs.add(key);
+                        pairs.push([lo, hi]);
+                    }
+                } else {
+                    queue.push({ index: next, depth: current.depth + 1 });
+                }
+            }
+        }
+    }
+    sparseFaceTessellationCache = pairs.length > 60 ? pairs : connectors.filter((_, index) => index % 4 === 0);
+    return sparseFaceTessellationCache;
 }
 function drawFaceChain(ctx, landmarks, chain, points) {
     if (!Array.isArray(chain) || chain.length < 2) return;
@@ -1496,6 +1541,7 @@ function postHeadPoseSnapshot({
         pitch,
         yawNorm,
         pitchNorm,
+        cameraSpeed: numericSetting('three-d-camera-speed', 1),
         timestamp: performance.now()
     };
     try {
@@ -2364,6 +2410,10 @@ function setupTrackerEvents() {
         document.getElementById('hand-cursor-accel-val').innerText = handCursorAcceleration.toFixed(3);
         localStorage.setItem('hand-cursor-accel', e.target.value);
     };
+    document.getElementById('three-d-camera-speed').oninput = (e) => {
+        document.getElementById('three-d-camera-speed-val').innerText = parseFloat(e.target.value).toFixed(3);
+        localStorage.setItem('three-d-camera-speed', e.target.value);
+    };
     document.getElementById('s-sens').oninput = (e) => { document.getElementById('s-val').innerText = e.target.value + '%'; localStorage.setItem('s-sens', e.target.value); };
     document.getElementById('dz-ix').oninput = (e) => { document.getElementById('dz-ix-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-ix', e.target.value); };
     document.getElementById('dz-iy').oninput = (e) => { document.getElementById('dz-iy-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-iy', e.target.value); };
@@ -2383,7 +2433,7 @@ function setupTrackerEvents() {
         pinchRecordStage = 'idle';
         savePinchCalibration();
     };
-    ['head-cursor-accel', 'hand-cursor-speed', 'hand-cursor-accel'].forEach(id => {
+    ['head-cursor-accel', 'three-d-camera-speed', 'hand-cursor-speed', 'hand-cursor-accel'].forEach(id => {
         const range = document.getElementById(id);
         const num = document.getElementById(id + '-num');
         if (num) {

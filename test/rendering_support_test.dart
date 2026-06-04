@@ -263,7 +263,7 @@ void main() {
     });
 
     expect(splatPreset.mediaType, 'gaussian_splat');
-    expect(imagePreset.mediaType, 'image');
+    expect(imagePreset.mediaType, 'missing_3d');
 
     final RenderPreset aliasPreset = RenderPreset.fromMap(<String, dynamic>{
       'id': 'preset-3',
@@ -352,7 +352,18 @@ void main() {
     expect(
         lower,
         contains(
-            "media_type in ('image', 'gaussian_splat', 'triangle_mesh', 'missing_3d')"));
+            "media_type in ('gaussian_splat', 'triangle_mesh', 'missing_3d')"));
+  });
+
+  test('legacy render mode cleanup migration removes mode storage', () {
+    final String sql = File(
+      'supabase/migrations/20260604123000_drop_legacy_render_mode_columns.sql',
+    ).readAsStringSync().toLowerCase();
+
+    expect(sql, contains('drop column if exists mode'));
+    expect(sql, contains('drop column if exists thumbnail_mode'));
+    expect(sql, contains('drop table if exists public.mode_states cascade'));
+    expect(sql, contains('drop type if exists public.render_mode'));
   });
 
   test('parallelogram highlight slant angle does not change with width', () {

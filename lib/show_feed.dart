@@ -5689,7 +5689,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   final TextEditingController _threeDDescriptionController =
       TextEditingController();
 
-  int _postTypeIndex = 0;
+  int _postTypeIndex = 1;
   bool _publishAsCollection = false;
   int _selectedItemIndex = -1;
   bool _uploading = false;
@@ -5917,6 +5917,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           meta: <String, dynamic>{'sourceName': file.name},
         );
         _threeDCameraDraft = _cameraFromThreeDPayload(_threeDAssetPayload!);
+        _threeDAutoFitRevision++;
         _threeDProgress = 1;
         _threeDStage = '3D asset ready';
       });
@@ -6075,6 +6076,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               _cameraFromThreeDPayload(outputPayload),
             );
             _threeDCameraDraft = _cameraFromThreeDPayload(_threeDAssetPayload!);
+            _threeDAutoFitRevision++;
           }
           _threeDSourceImages.clear();
           _threeDProgress = 1;
@@ -6193,6 +6195,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   editable: _threeDEditCamera,
                   cameraOverride: _threeDCameraDraft,
                   autoFitRevision: _threeDAutoFitRevision,
+                  autoFitOnMount: _threeDAutoFitRevision > 0,
                   onCameraChanged: (camera) {
                     final normalized = _normalizedThreeDCamera(camera);
                     setState(() {
@@ -6256,8 +6259,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final bool imageMode = _postTypeIndex == 0;
-    final bool collectionMode = imageMode && _publishAsCollection;
+    final bool thumbnailMode = _postTypeIndex == 0;
+    final bool collectionMode = thumbnailMode && _publishAsCollection;
     final bool train3dMode = _postTypeIndex == 1;
     final bool manualSplatMode = _postTypeIndex == 2;
     final bool threeDMode = _postTypeIndex > 0;
@@ -6298,7 +6301,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                             ButtonSegment<int>(
                               value: 0,
                               icon: Icon(Icons.image_outlined),
-                              label: Text('Image'),
+                              label: Text('Thumbnail'),
                             ),
                             ButtonSegment<int>(
                               value: 1,
@@ -6352,7 +6355,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.upload_file_rounded),
-                      label: Text(_uploading ? 'Uploading...' : 'Upload Image'),
+                      label: Text(
+                          _uploading ? 'Uploading...' : 'Upload Thumbnail'),
                     ),
                     const SizedBox(height: 14),
                   ],
@@ -10626,6 +10630,9 @@ Map<String, dynamic> _normalizedThreeDCamera(dynamic value) {
       raw['distance'],
       _threeDCameraDistance(position, target),
     ).clamp(0.1, 50).toDouble(),
+    if (raw['modelCenter'] is List)
+      'modelCenter': _threeDCameraVector(raw['modelCenter'], target),
+    'modelRadius': math.max(0.1, _threeDCameraNumber(raw['modelRadius'], 1)),
   };
 }
 
@@ -10796,6 +10803,17 @@ class _ThreeDCameraControlPanel extends StatelessWidget {
         List<double>.from(normalized['initialTarget'] as List);
     final Map<String, dynamic> rotation =
         Map<String, dynamic>.from(normalized['rotationDegrees'] as Map);
+    final List<double> modelCenter = normalized['modelCenter'] is List
+        ? List<double>.from(normalized['modelCenter'] as List)
+        : target;
+    final double radius =
+        math.max(0.1, _threeDCameraNumber(normalized['modelRadius'], 1));
+    final double distance = _threeDCameraNumber(normalized['distance'], 3);
+    final double positionRange =
+        math.max(20, math.max(radius * 5, distance * 3));
+    final double targetRange = math.max(10, radius * 3);
+    final double distanceMax =
+        math.max(50, math.max(radius * 12, distance * 4));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -10812,8 +10830,8 @@ class _ThreeDCameraControlPanel extends StatelessWidget {
         _ThreeDCameraNumberControl(
           label: 'Camera X',
           value: position[0],
-          min: -20,
-          max: 20,
+          min: modelCenter[0] - positionRange,
+          max: modelCenter[0] + positionRange,
           enabled: editMode,
           onChanged: (value) =>
               onCameraChanged(_cameraWithPosition(normalized, 0, value)),
@@ -10821,8 +10839,8 @@ class _ThreeDCameraControlPanel extends StatelessWidget {
         _ThreeDCameraNumberControl(
           label: 'Camera Y',
           value: position[1],
-          min: -20,
-          max: 20,
+          min: modelCenter[1] - positionRange,
+          max: modelCenter[1] + positionRange,
           enabled: editMode,
           onChanged: (value) =>
               onCameraChanged(_cameraWithPosition(normalized, 1, value)),
@@ -10830,8 +10848,8 @@ class _ThreeDCameraControlPanel extends StatelessWidget {
         _ThreeDCameraNumberControl(
           label: 'Camera Z',
           value: position[2],
-          min: -20,
-          max: 20,
+          min: modelCenter[2] - positionRange,
+          max: modelCenter[2] + positionRange,
           enabled: editMode,
           onChanged: (value) =>
               onCameraChanged(_cameraWithPosition(normalized, 2, value)),
@@ -10839,8 +10857,8 @@ class _ThreeDCameraControlPanel extends StatelessWidget {
         _ThreeDCameraNumberControl(
           label: 'Target X',
           value: target[0],
-          min: -20,
-          max: 20,
+          min: modelCenter[0] - targetRange,
+          max: modelCenter[0] + targetRange,
           enabled: editMode,
           onChanged: (value) =>
               onCameraChanged(_cameraWithTarget(normalized, 0, value)),
@@ -10848,8 +10866,8 @@ class _ThreeDCameraControlPanel extends StatelessWidget {
         _ThreeDCameraNumberControl(
           label: 'Target Y',
           value: target[1],
-          min: -20,
-          max: 20,
+          min: modelCenter[1] - targetRange,
+          max: modelCenter[1] + targetRange,
           enabled: editMode,
           onChanged: (value) =>
               onCameraChanged(_cameraWithTarget(normalized, 1, value)),
@@ -10857,8 +10875,8 @@ class _ThreeDCameraControlPanel extends StatelessWidget {
         _ThreeDCameraNumberControl(
           label: 'Target Z',
           value: target[2],
-          min: -20,
-          max: 20,
+          min: modelCenter[2] - targetRange,
+          max: modelCenter[2] + targetRange,
           enabled: editMode,
           onChanged: (value) =>
               onCameraChanged(_cameraWithTarget(normalized, 2, value)),
@@ -10901,9 +10919,9 @@ class _ThreeDCameraControlPanel extends StatelessWidget {
         ),
         _ThreeDCameraNumberControl(
           label: 'Distance',
-          value: _threeDCameraNumber(normalized['distance'], 3),
+          value: distance,
           min: 0.1,
-          max: 50,
+          max: distanceMax,
           enabled: editMode,
           onChanged: (value) =>
               onCameraChanged(_cameraWithDistance(normalized, value)),
@@ -11131,6 +11149,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
           camera: _cameraDraft,
           meta: <String, dynamic>{'sourceName': file.name},
         );
+        _autoFitRevision++;
       });
     } catch (e) {
       if (!mounted) return;
@@ -11206,6 +11225,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                         editable: _editCamera,
                         cameraOverride: _cameraDraft,
                         autoFitRevision: _autoFitRevision,
+                        autoFitOnMount: _autoFitRevision > 0,
                         onCameraChanged: _applyCamera,
                       ),
                     ),

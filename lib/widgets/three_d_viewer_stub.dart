@@ -8,6 +8,7 @@ class ThreeDViewer extends StatelessWidget {
     this.showRecenter = true,
     this.cameraOverride,
     this.autoFitRevision = 0,
+    this.autoFitOnMount = false,
     this.onCameraChanged,
   });
 
@@ -16,6 +17,7 @@ class ThreeDViewer extends StatelessWidget {
   final bool showRecenter;
   final Map<String, dynamic>? cameraOverride;
   final int autoFitRevision;
+  final bool autoFitOnMount;
   final ValueChanged<Map<String, dynamic>>? onCameraChanged;
 
   @override

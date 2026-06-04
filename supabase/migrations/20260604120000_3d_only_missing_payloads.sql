@@ -4,10 +4,6 @@
 alter table if exists public.presets
   drop constraint if exists presets_media_type_check;
 
-alter table if exists public.presets
-  add constraint presets_media_type_check
-    check (media_type in ('image', 'gaussian_splat', 'triangle_mesh', 'missing_3d'));
-
 do $$
 declare
   missing_payload jsonb := jsonb_build_object(
@@ -70,3 +66,10 @@ begin
       );
   end if;
 end $$;
+
+alter table if exists public.presets
+  alter column media_type set default 'missing_3d';
+
+alter table if exists public.presets
+  add constraint presets_media_type_check
+    check (media_type in ('gaussian_splat', 'triangle_mesh', 'missing_3d'));

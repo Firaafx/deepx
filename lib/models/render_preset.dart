@@ -119,14 +119,14 @@ class RenderPreset {
   ) {
     final String raw = value?.toString().trim().toLowerCase() ?? '';
     final String normalizedRaw = _mediaTypeAlias(raw);
-    if (normalizedRaw != 'image') return normalizedRaw;
+    if (normalizedRaw != 'missing_3d') return normalizedRaw;
     final dynamic media = payload['media'];
     if (media is Map) {
       final String type = media['type']?.toString().trim().toLowerCase() ?? '';
       final String normalizedType = _mediaTypeAlias(type);
-      if (normalizedType != 'image') return normalizedType;
+      if (normalizedType != 'missing_3d') return normalizedType;
     }
-    return 'image';
+    return 'missing_3d';
   }
 
   static String _mediaTypeAlias(String raw) {
@@ -143,8 +143,13 @@ class RenderPreset {
       'glb' ||
       'gltf' =>
         'triangle_mesh',
-      'missing_3d' || 'missing3d' || 'missing' || 'no_3d' => 'missing_3d',
-      _ => 'image',
+      'missing_3d' ||
+      'missing3d' ||
+      'missing' ||
+      'no_3d' ||
+      'image' =>
+        'missing_3d',
+      _ => 'missing_3d',
     };
   }
 }

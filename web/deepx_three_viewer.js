@@ -112,11 +112,27 @@
       rotationDegrees: safeRotation(camera.rotationDegrees),
       fov,
       distance,
-      custom: Array.isArray(camera.initialPosition)
-        || Array.isArray(camera.initialTarget)
-        || !!camera.rotationDegrees
-        || Number.isFinite(Number(camera.distance))
+      custom: !isDefaultCamera(camera, position, target, fov, distance)
     };
+  }
+
+  function nearly(value, expected, epsilon = 0.0001) {
+    return Math.abs(Number(value || 0) - expected) <= epsilon;
+  }
+
+  function isDefaultCamera(camera, position, target, fov, distance) {
+    const rotation = safeRotation(camera && camera.rotationDegrees);
+    return nearly(position[0], 0)
+      && nearly(position[1], 0)
+      && nearly(position[2], 3)
+      && nearly(target[0], 0)
+      && nearly(target[1], 0)
+      && nearly(target[2], 0)
+      && nearly(fov, 45)
+      && nearly(distance, 3)
+      && nearly(rotation.yaw, 0)
+      && nearly(rotation.pitch, 0)
+      && nearly(rotation.roll, 0);
   }
 
   function setMessage(root, text) {
@@ -249,12 +265,20 @@
         roll: Number((ctx.rotationDegrees?.roll || 0).toFixed(3))
       },
       fov: Number(ctx.camera.fov.toFixed(3)),
-      distance: Number((ctx.distance || ctx.basePosition.distanceTo(ctx.baseTarget)).toFixed(5))
+      distance: Number((ctx.distance || ctx.basePosition.distanceTo(ctx.baseTarget)).toFixed(5)),
+      modelCenter: ctx.modelCenter
+        ? [
+            Number(ctx.modelCenter.x.toFixed(5)),
+            Number(ctx.modelCenter.y.toFixed(5)),
+            Number(ctx.modelCenter.z.toFixed(5))
+          ]
+        : undefined,
+      modelRadius: Number((ctx.modelRadius || 1).toFixed(5))
     };
   }
 
-  function notifyCameraChanged(ctx) {
-    if (!ctx.editable) return;
+  function notifyCameraChanged(ctx, force = false) {
+    if (!ctx.editable && !force) return;
     window.postMessage(JSON.stringify({
       type: 'deepx-three-camera-changed',
       elementId: ctx.elementId,
@@ -270,6 +294,8 @@
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 0.1);
+    ctx.modelCenter = center.clone();
+    ctx.modelRadius = Math.max(maxDim / 2, 0.1);
     const fov = ctx.camera.fov * Math.PI / 180;
     let distance = Math.abs(maxDim / (2 * Math.tan(fov / 2)));
     distance = Math.max(distance * 1.45, 0.35);
@@ -282,7 +308,7 @@
       distance
     );
     ctx.hasCustomCamera = true;
-    notifyCameraChanged(ctx);
+    notifyCameraChanged(ctx, true);
   }
 
   function recenter(ctx) {
@@ -300,8 +326,15 @@
     const center = ctx.center || { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
     const x = clamp((head.x - center.x) * 0.9 + ((head.yaw || 0) - (center.yaw || 0)) / 90, -0.9, 0.9);
     const y = clamp((head.y - center.y) * -0.7 + ((head.pitch || 0) - (center.pitch || 0)) / 70, -0.7, 0.7);
-    const z = clamp(((center.z || head.z || 0) - (head.z || 0)) * 2.5, -0.9, 0.9);
-    renderBaseCamera(ctx, new THREE.Vector3(x, y, z));
+    const rawSpeed = Number(head.cameraSpeed);
+    const speed = clamp(Number.isFinite(rawSpeed) ? rawSpeed : 1, 0, 50);
+    const lateralLimit = 0.9 * Math.max(1, speed);
+    const verticalLimit = 0.7 * Math.max(1, speed);
+    const depthLimit = 0.9 * Math.max(1, speed);
+    const z = clamp(((center.z || head.z || 0) - (head.z || 0)) * 2.5 * speed, -depthLimit, depthLimit);
+    const scaledX = clamp(x * speed, -lateralLimit, lateralLimit);
+    const scaledY = clamp(y * speed, -verticalLimit, verticalLimit);
+    renderBaseCamera(ctx, new THREE.Vector3(scaledX, scaledY, z));
   }
 
   function animate(ctx) {
@@ -439,6 +472,7 @@
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.domElement.style.cssText = 'width:100%;height:100%;display:block;touch-action:none;pointer-events:auto;cursor:grab';
       root.appendChild(renderer.domElement);
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x050505);
@@ -466,7 +500,9 @@
         disposed: false,
         resizeObserver: null,
         raf: 0,
-        cleanup: []
+        cleanup: [],
+        modelCenter: null,
+        modelRadius: 1
       };
       setBaseCamera(
         ctx,
@@ -485,7 +521,7 @@
         return;
       }
       ctx.object = object;
-      autoFitObject(ctx, object, false);
+      autoFitObject(ctx, object, options.autoFitOnMount === true);
       resize(ctx);
       installPointerControls(ctx);
       ctx.resizeObserver = new ResizeObserver(() => resize(ctx));
@@ -615,7 +651,8 @@
         y: Number(data.y) || 0,
         z: Number(data.z) || 0,
         yaw: Number(data.yaw) || 0,
-        pitch: Number(data.pitch) || 0
+        pitch: Number(data.pitch) || 0,
+        cameraSpeed: Number.isFinite(Number(data.cameraSpeed)) ? Number(data.cameraSpeed) : 1
       };
       if (!ctx.centeredOnce) {
         ctx.centeredOnce = true;

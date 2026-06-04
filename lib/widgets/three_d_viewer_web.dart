@@ -16,6 +16,7 @@ class ThreeDViewer extends StatefulWidget {
     this.showRecenter = true,
     this.cameraOverride,
     this.autoFitRevision = 0,
+    this.autoFitOnMount = false,
     this.onCameraChanged,
   });
 
@@ -24,6 +25,7 @@ class ThreeDViewer extends StatefulWidget {
   final bool showRecenter;
   final Map<String, dynamic>? cameraOverride;
   final int autoFitRevision;
+  final bool autoFitOnMount;
   final ValueChanged<Map<String, dynamic>>? onCameraChanged;
 
   @override
@@ -82,6 +84,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       final payloadJson = jsonEncode(widget.payload);
       final optionsJson = jsonEncode(<String, dynamic>{
         'editable': widget.editable,
+        'autoFitOnMount': widget.autoFitOnMount,
       });
       viewer
           .callMethod('mount', <Object>[_elementId, payloadJson, optionsJson]);
