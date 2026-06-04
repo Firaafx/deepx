@@ -1,6 +1,7 @@
 (function () {
   const viewers = new Map();
   let modulePromise = null;
+  const loadingMessages = new WeakMap();
 
   function loadModules() {
     if (!modulePromise) {
@@ -151,6 +152,38 @@
       'background:#050505'
     ].join(';');
     root.appendChild(node);
+    loadingMessages.set(root, node);
+  }
+
+  function setRootLoadingMessage(root, label, progress) {
+    const node = loadingMessages.get(root);
+    if (!node) return;
+    if (Number.isFinite(progress)) {
+      node.textContent = `${label} ${Math.round(clamp(progress, 0, 1) * 100)}%`;
+    } else {
+      node.textContent = label;
+    }
+  }
+
+  function notifyLoadState(elementId, status, progress, label) {
+    const safeProgress = Number.isFinite(Number(progress))
+      ? clamp(Number(progress), 0, 1)
+      : null;
+    try {
+      window.postMessage(JSON.stringify({
+        type: 'deepx-three-load-state',
+        elementId,
+        status,
+        progress: safeProgress,
+        label: String(label || '')
+      }), window.location.origin);
+    } catch (_) {}
+  }
+
+  function updateLoading(ctx, label, progress = null) {
+    if (!ctx || ctx.disposed) return;
+    notifyLoadState(ctx.elementId, 'loading', progress, label);
+    setRootLoadingMessage(ctx.root, label, progress);
   }
 
   function supportedMesh(asset) {
@@ -171,6 +204,53 @@
     return 'No 3D';
   }
 
+  function assetLooksLike(asset, extension) {
+    const format = String(asset.format || '').toLowerCase();
+    const url = String(asset.url || '').split('?')[0].toLowerCase();
+    return format === extension || url.endsWith(`.${extension}`);
+  }
+
+  async function fetchObjectUrl(ctx, url, label) {
+    updateLoading(ctx, label);
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Unable to load 3D asset (${response.status}).`);
+    }
+    const type = response.headers.get('content-type') || 'application/octet-stream';
+    const total = Number(response.headers.get('content-length'));
+    if (!response.body || !Number.isFinite(total) || total <= 0) {
+      const blob = await response.blob();
+      if (ctx.disposed) throw new Error('3D viewer was disposed while loading.');
+      const objectUrl = URL.createObjectURL(blob);
+      ctx.objectUrls.push(objectUrl);
+      return objectUrl;
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    let lastProgressAt = 0;
+    for (;;) {
+      if (ctx.disposed) throw new Error('3D viewer was disposed while loading.');
+      const result = await reader.read();
+      if (result.done) break;
+      chunks.push(result.value);
+      loaded += result.value.byteLength;
+      const now = performance.now();
+      if (now - lastProgressAt > 80 || loaded >= total) {
+        lastProgressAt = now;
+        updateLoading(ctx, label, loaded / total);
+      }
+    }
+
+    const blob = new Blob(chunks, { type });
+    if (ctx.disposed) throw new Error('3D viewer was disposed while loading.');
+    const objectUrl = URL.createObjectURL(blob);
+    ctx.objectUrls.push(objectUrl);
+    updateLoading(ctx, label, 1);
+    return objectUrl;
+  }
+
   async function addGaussianSplat(ctx, asset) {
     const spark = ctx.modules.spark;
     if (!spark) throw new Error('Spark module failed to load.');
@@ -179,11 +259,12 @@
     if (!Candidate) {
       throw new Error('Spark loaded, but no supported splat mesh export was found.');
     }
+    const loadUrl = await fetchObjectUrl(ctx, asset.url, 'Loading 3D asset');
     let object;
     try {
-      object = new Candidate({ url: asset.url, fileType: asset.format || undefined });
+      object = new Candidate({ url: loadUrl, fileType: asset.format || undefined });
     } catch (_) {
-      object = new Candidate(asset.url);
+      object = new Candidate(loadUrl);
     }
     ctx.scene.add(object);
     if (object?.initialized && typeof object.initialized.then === 'function') {
@@ -194,7 +275,17 @@
 
   async function addTriangleMesh(ctx, asset) {
     const loader = new ctx.modules.GLTFLoader();
-    const gltf = await loader.loadAsync(asset.url);
+    let loadUrl = asset.url;
+    if (assetLooksLike(asset, 'glb')) {
+      loadUrl = await fetchObjectUrl(ctx, asset.url, 'Loading 3D mesh');
+    } else {
+      updateLoading(ctx, 'Loading 3D mesh');
+    }
+    const gltf = await loader.loadAsync(loadUrl, (event) => {
+      if (event && Number.isFinite(event.total) && event.total > 0) {
+        updateLoading(ctx, 'Loading 3D mesh', event.loaded / event.total);
+      }
+    });
     const root = gltf.scene;
     root.traverse((node) => {
       if (node.isMesh) {
@@ -353,7 +444,7 @@
     const lateralLimit = radius * Math.max(1, speed) * 0.75;
     const verticalLimit = radius * Math.max(1, speed) * 0.75;
     const depthLimit = radius * Math.max(1, speed) * 1.25;
-    const scaledX = clamp((head.x - center.x) * radius * speed, -lateralLimit, lateralLimit);
+    const scaledX = clamp((center.x - head.x) * radius * speed, -lateralLimit, lateralLimit);
     const scaledY = clamp((head.y - center.y) * -radius * speed, -verticalLimit, verticalLimit);
     const z = clamp((center.z - head.z) * radius * speed, -depthLimit, depthLimit);
     renderBaseCamera(ctx, new THREE.Vector3(scaledX, scaledY, z));
@@ -361,17 +452,73 @@
 
   function animate(ctx) {
     if (ctx.disposed) return;
+    const currentRoot = document.getElementById(ctx.elementId);
+    if (!ctx.root?.isConnected) {
+      if (currentRoot && currentRoot !== ctx.root && currentRoot.isConnected) {
+        scheduleRemount(ctx, 'viewer root replaced');
+      } else {
+        dispose(ctx.elementId, { keepRootMessage: true });
+      }
+      return;
+    }
+    if (!isContextHealthy(ctx) || !ctx.renderer?.domElement?.isConnected) {
+      scheduleRemount(ctx, 'viewer context lost');
+      return;
+    }
     ctx.raf = requestAnimationFrame(() => animate(ctx));
     applyHeadCamera(ctx);
-    ctx.renderer.render(ctx.scene, ctx.camera);
+    try {
+      ctx.renderer.render(ctx.scene, ctx.camera);
+    } catch (error) {
+      console.warn('Three.js render failed; remounting viewer.', error);
+      scheduleRemount(ctx, 'render failed');
+    }
   }
 
   function resize(ctx) {
+    if (!ctx || ctx.disposed || !ctx.root?.isConnected || !ctx.renderer) return false;
     const width = Math.max(1, ctx.root.clientWidth);
     const height = Math.max(1, ctx.root.clientHeight);
     ctx.camera.aspect = width / height;
     ctx.camera.updateProjectionMatrix();
     ctx.renderer.setSize(width, height, false);
+    return true;
+  }
+
+  function isContextHealthy(ctx) {
+    if (!ctx || ctx.disposed || !ctx.renderer) return false;
+    const canvas = ctx.renderer.domElement;
+    if (!canvas || !canvas.isConnected) return false;
+    try {
+      const gl = ctx.renderer.getContext?.();
+      if (!gl) return false;
+      return typeof gl.isContextLost === 'function' ? !gl.isContextLost() : true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isAliveViewer(elementId) {
+    const ctx = viewers.get(elementId);
+    if (!ctx || ctx.disposed) return false;
+    const root = document.getElementById(elementId);
+    return !!root
+      && root === ctx.root
+      && root.isConnected
+      && isContextHealthy(ctx)
+      && ctx.renderer?.domElement?.parentNode === root;
+  }
+
+  function scheduleRemount(ctx, reason) {
+    if (!ctx || ctx.disposed || ctx.remountScheduled) return;
+    const root = document.getElementById(ctx.elementId);
+    if (!root || !root.isConnected) return;
+    ctx.remountScheduled = true;
+    console.warn(`Remounting 3D viewer: ${reason}`);
+    requestAnimationFrame(() => {
+      if (ctx.disposed) return;
+      mount(ctx.elementId, ctx.payloadJson, ctx.optionsJson);
+    });
   }
 
   function installPointerControls(ctx) {
@@ -480,19 +627,23 @@
     const options = parseJson(optionsJson);
     const asset = payloadAsset(payload);
     if (!asset.url) {
+      notifyLoadState(elementId, 'missing', null, missingLabel(asset));
       setMessage(root, missingLabel(asset));
       return;
     }
     if (!supportedMesh(asset) && !supportedSplat(asset)) {
+      notifyLoadState(elementId, 'missing', null, missingLabel(asset));
       setMessage(root, missingLabel(asset));
       return;
     }
     setMessage(root, 'Loading 3D asset...');
+    notifyLoadState(elementId, 'loading', null, 'Loading 3D asset');
     try {
       const modules = await loadModules();
       if (root.__deepxThreeMountToken !== token) return;
       const THREE = modules.three;
       root.innerHTML = '';
+      loadingMessages.delete(root);
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -521,6 +672,8 @@
       const ctx = {
         elementId,
         root,
+        payloadJson,
+        optionsJson,
         modules,
         renderer,
         scene,
@@ -534,9 +687,17 @@
         resizeObserver: null,
         raf: 0,
         cleanup: [],
+        objectUrls: [],
+        remountScheduled: false,
         modelCenter: null,
         modelRadius: 1
       };
+      const onContextLost = (event) => {
+        event.preventDefault();
+        scheduleRemount(ctx, 'webgl context lost');
+      };
+      renderer.domElement.addEventListener('webglcontextlost', onContextLost, false);
+      ctx.cleanup.push(() => renderer.domElement.removeEventListener('webglcontextlost', onContextLost));
       setBaseCamera(
         ctx,
         config.position,
@@ -561,10 +722,13 @@
       ctx.resizeObserver.observe(root);
       animate(ctx);
       notifyCameraChanged(ctx);
+      notifyLoadState(elementId, 'ready', 1, '3D asset ready');
     } catch (error) {
       console.error(error);
       if (root.__deepxThreeMountToken === token) {
-        setMessage(root, error && error.message ? error.message : 'Unable to load 3D asset.');
+        const label = error && error.message ? error.message : 'Unable to load 3D asset.';
+        notifyLoadState(elementId, 'error', null, label);
+        setMessage(root, label);
       }
     }
   }
@@ -626,8 +790,10 @@
       try {
         ctx.renderer.dispose();
       } catch (_) {}
+    }
+    for (const objectUrl of ctx.objectUrls || []) {
       try {
-        ctx.renderer.forceContextLoss?.();
+        URL.revokeObjectURL(objectUrl);
       } catch (_) {}
     }
     viewers.delete(elementId);
@@ -678,6 +844,11 @@
     if (ctx && ctx.object) autoFitObject(ctx, ctx.object, true);
   }
 
+  function resizeViewer(elementId) {
+    const ctx = viewers.get(elementId);
+    return resize(ctx);
+  }
+
   window.addEventListener('message', (event) => {
     const data = event.data;
     if (!data || data.type !== 'deepx-head-pose') return;
@@ -704,6 +875,8 @@
     setCamera,
     getCamera,
     recenter: recenterViewer,
-    autoFit
+    autoFit,
+    resize: resizeViewer,
+    isAlive: isAliveViewer
   };
 })();

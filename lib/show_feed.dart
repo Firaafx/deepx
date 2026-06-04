@@ -4129,6 +4129,9 @@ class _SharedPresetPreview extends StatelessWidget {
     this.emptyChild,
     this.fit = BoxFit.cover,
     this.allowImage = true,
+    this.showRecenter = true,
+    this.recenterTop = 8,
+    this.recenterRight = 8,
   });
 
   final Map<String, dynamic> payload;
@@ -4137,11 +4140,19 @@ class _SharedPresetPreview extends StatelessWidget {
   final Widget? emptyChild;
   final BoxFit fit;
   final bool allowImage;
+  final bool showRecenter;
+  final double recenterTop;
+  final double recenterRight;
 
   @override
   Widget build(BuildContext context) {
     if (isThreeDPayload(payload)) {
-      final Widget viewer = ThreeDViewer(payload: payload);
+      final Widget viewer = ThreeDViewer(
+        payload: payload,
+        showRecenter: showRecenter,
+        recenterTop: recenterTop,
+        recenterRight: recenterRight,
+      );
       if (clipper != null) {
         return ClipPath(
           clipper: clipper!,
@@ -4310,6 +4321,9 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                       borderRadius: BorderRadius.zero,
                       fit: BoxFit.contain,
                       allowImage: false,
+                      showRecenter: true,
+                      recenterTop: 18,
+                      recenterRight: showOwnerMenu ? 70 : 14,
                     ),
                   ),
                 ),
@@ -5242,6 +5256,8 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   ),
                   fit: BoxFit.contain,
                   allowImage: false,
+                  showRecenter: true,
+                  recenterRight: _mine ? 56 : 8,
                 ),
               ),
               Positioned(
@@ -7580,6 +7596,8 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           ),
           fit: BoxFit.contain,
           allowImage: false,
+          showRecenter: true,
+          recenterRight: _mine ? 56 : 8,
         ),
       ],
     );

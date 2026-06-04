@@ -23,6 +23,7 @@ let handsHealthy = true;
 let handsRetryAt = 0;
 let lastHudDrawTime = 0;
 let lastOverlayDrawTime = 0;
+let overlayDrawRaf = 0;
 let lastHoverHitTestTime = 0;
 let cachedHoveredElement = null;
 const tCanvas = document.getElementById('ui-text-canvas');
@@ -160,6 +161,10 @@ const MEDIAPIPE_HANDS_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4'
 const PEER_JS_URL = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
 const scriptLoadPromises = new Map();
 let handsResultsAttached = false;
+let handFrameFailures = 0;
+const HAND_FRAME_FAILURE_COOLDOWN_MS = 1200;
+const HAND_TRACKER_RECREATE_FAILURES = 3;
+const HAND_TRACKER_RECREATE_COOLDOWN_MS = 3000;
 const elementCache = new Map();
 const numericSettingCache = new Map();
 const performanceProfiles = {
@@ -299,20 +304,32 @@ function shouldDrawTrackerOverlay() {
     lastOverlayDrawTime = performance.now();
     return true;
 }
-function resetHandsTracker(reason) {
-    if (reason) console.warn('Resetting MediaPipe Hands after failure:', reason);
+function closeHandsTracker(reason) {
+    if (reason) console.warn('Recreating MediaPipe Hands after repeated failures:', reason);
     handsHealthy = false;
-    handsRetryAt = performance.now() + 2000;
+    handsRetryAt = performance.now() + HAND_TRACKER_RECREATE_COOLDOWN_MS;
     const tracker = hands;
     hands = null;
     handsReadyPromise = null;
     handsResultsAttached = false;
+    configuredHandSignature = '';
     clearHandState();
     if (tracker && typeof tracker.close === 'function') {
         try {
             tracker.close();
         } catch (_) {}
     }
+}
+function handleHandsFrameFailure(error) {
+    handFrameFailures++;
+    handsRetryAt = performance.now() + HAND_FRAME_FAILURE_COOLDOWN_MS;
+    clearHandState();
+    if (handFrameFailures >= HAND_TRACKER_RECREATE_FAILURES) {
+        handFrameFailures = 0;
+        closeHandsTracker(error);
+        return;
+    }
+    if (error) console.warn('Skipping MediaPipe Hands temporarily after frame failure:', error);
 }
 function loadScriptOnce(src, globalName) {
     if (globalName && window[globalName]) return Promise.resolve();
@@ -342,9 +359,9 @@ async function ensurePeerJsLoaded() {
     await loadScriptOnce(PEER_JS_URL, 'Peer');
 }
 async function ensureHandsReady() {
-    if (hands && handsHealthy) return hands;
-    if (handsReadyPromise) return handsReadyPromise;
     if (performance.now() < handsRetryAt) return null;
+    if (hands) return hands;
+    if (handsReadyPromise) return handsReadyPromise;
     handsHealthy = true;
     handsReadyPromise = (async () => {
         await loadScriptOnce(`${MEDIAPIPE_HANDS_BASE}/hands.js`, 'Hands');
@@ -355,7 +372,7 @@ async function ensureHandsReady() {
         setupHandsResults(tracker);
         return tracker;
     })().catch((error) => {
-        resetHandsTracker(error);
+        closeHandsTracker(error);
         return null;
     }).finally(() => {
         handsReadyPromise = null;
@@ -570,16 +587,13 @@ async function init() {
                                 }
                             }
                             if (data.drawLm) {
-                                let drawLmObj = {};
+                                let lmArray = [];
                                 for (let pt of data.drawLm) {
-                                    drawLmObj[pt.i] = {x: pt.x, y: pt.y, z: pt.z};
+                                    lmArray[pt.i] = {x: pt.x, y: pt.y, z: pt.z};
                                 }
-                                if (shouldDrawTrackerOverlay()) drawFaceDots(drawLmObj);
+                                faceLm = lmArray;
+                                scheduleTrackerOverlayDraw();
                                 if (!data.partial && data.drawLm.length >= FILTERED_INDICES.length) {
-                                    let lmArray = [];
-                                    for (let pt of data.drawLm) {
-                                        lmArray[pt.i] = {x: pt.x, y: pt.y, z: pt.z};
-                                    }
                                     processFace(lmArray);
                                 }
                             }
@@ -623,7 +637,10 @@ async function init() {
                                 for (let pt of data.drawLm) {
                                     lmArray[pt.i] = {x: pt.x, y: pt.y, z: pt.z};
                                 }
-                                if (shouldDrawTrackerOverlay()) drawHandDots(lmArray);
+                                if (data.drawLm.length >= 21) {
+                                    handLm = lmArray;
+                                }
+                                scheduleTrackerOverlayDraw();
                                 if (!data.partial && data.drawLm.length === 21) {
                                     processHand(lmArray);
                                 }
@@ -695,6 +712,7 @@ async function init() {
     }
     frameUpdate();
     loadSettings();
+    syncClientSendSettingsFromControls();
     loadGestureCalibration();
     currentMode = document.getElementById('cursor-mode').value;
     perfMode = isClient ? document.getElementById('perf-mode-client').value : document.getElementById('perf-mode-host').value;
@@ -732,24 +750,64 @@ function connectToHost(remotePeerId) {
         }
     });
 }
-function drawFaceDots(drawLm) {
+function clearTrackerOverlay() {
     const overlay = document.getElementById('face-dots-overlay');
     const oCtx = overlay.getContext('2d');
     oCtx.clearRect(0, 0, overlay.width, overlay.height);
+}
+function connectorEndpoints(connector) {
+    if (Array.isArray(connector)) return [connector[0], connector[1]];
+    return [connector?.start, connector?.end];
+}
+function drawFaceConnectors(oCtx, landmarks, connectors, style) {
+    if (typeof drawConnectors !== 'function' || typeof connectors === 'undefined') return;
+    const filtered = Array.from(connectors).filter((connector) => {
+        const [start, end] = connectorEndpoints(connector);
+        return landmarks?.[start] && landmarks?.[end];
+    });
+    if (filtered.length) drawConnectors(oCtx, landmarks, filtered, style);
+}
+function faceMeshConnectors(name) {
+    return typeof globalThis[name] === 'undefined' ? undefined : globalThis[name];
+}
+function drawFaceDots(drawLm) {
+    clearTrackerOverlay();
     if (!drawLm) return;
-    if (typeof drawConnectors === 'function' && typeof drawLandmarks === 'function') {
-        if (typeof FACEMESH_TESSELATION !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_TESSELATION, { color: '#C0C0C070', lineWidth: 1 });
-        if (typeof FACEMESH_RIGHT_EYE !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_RIGHT_EYE, { color: '#FFFFFFA0', lineWidth: 1 });
-        if (typeof FACEMESH_RIGHT_EYEBROW !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_RIGHT_EYEBROW, { color: '#FFFFFFA0', lineWidth: 1 });
-        if (typeof FACEMESH_LEFT_EYE !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_LEFT_EYE, { color: '#FFFFFFA0', lineWidth: 1 });
-        if (typeof FACEMESH_LEFT_EYEBROW !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_LEFT_EYEBROW, { color: '#FFFFFFA0', lineWidth: 1 });
-        if (typeof FACEMESH_FACE_OVAL !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_FACE_OVAL, { color: '#FFFFFFA0', lineWidth: 1 });
-        if (typeof FACEMESH_LIPS !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_LIPS, { color: '#FFFFFFA0', lineWidth: 1 });
-        if (typeof FACEMESH_RIGHT_IRIS !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_RIGHT_IRIS, { color: '#FFFFFFA0', lineWidth: 1 });
-        if (typeof FACEMESH_LEFT_IRIS !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_LEFT_IRIS, { color: '#FFFFFFA0', lineWidth: 1 });
-        drawLandmarks(oCtx, drawLm, { color: '#FFFFFFCC', radius: 0.7 });
+    const overlay = document.getElementById('face-dots-overlay');
+    const oCtx = overlay.getContext('2d');
+    if (typeof drawConnectors === 'function') {
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_TESSELATION'), { color: '#C0C0C070', lineWidth: 1 });
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_RIGHT_EYE'), { color: '#FF3030', lineWidth: 1 });
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_RIGHT_EYEBROW'), { color: '#FF3030', lineWidth: 1 });
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_RIGHT_IRIS'), { color: '#FF3030', lineWidth: 1 });
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_LEFT_EYE'), { color: '#30FF30', lineWidth: 1 });
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_LEFT_EYEBROW'), { color: '#30FF30', lineWidth: 1 });
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_LEFT_IRIS'), { color: '#30FF30', lineWidth: 1 });
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_FACE_OVAL'), { color: '#E0E0E0', lineWidth: 1 });
+        drawFaceConnectors(oCtx, drawLm, faceMeshConnectors('FACEMESH_LIPS'), { color: '#E0E0E0', lineWidth: 1 });
         return;
     }
+}
+function scheduleTrackerOverlayDraw(force = false) {
+    if (!uiVisible) return;
+    const now = performance.now();
+    if (!force && now - lastOverlayDrawTime < 33) return;
+    if (overlayDrawRaf) return;
+    overlayDrawRaf = requestAnimationFrame(() => {
+        overlayDrawRaf = 0;
+        if (!uiVisible) return;
+        lastOverlayDrawTime = performance.now();
+        const mode = cursorControlMode();
+        if ((mode === 'hand' || activeTracker === 'hand') && hasHand && handLm) {
+            drawHandDots(handLm);
+            return;
+        }
+        if (faceLm) {
+            drawFaceDots(faceLm);
+            return;
+        }
+        clearTrackerOverlay();
+    });
 }
 function drawHandDots(lmArray) {
     const overlay = document.getElementById('face-dots-overlay');
@@ -911,7 +969,7 @@ function runInferenceLoop(now) {
                     : sendFaceFrame(video, generation));
             run.catch(error => {
                 if (mode === 'hand' || mode === 'auto') {
-                    resetHandsTracker(error);
+                    handleHandsFrameFailure(error);
                 } else {
                     console.warn('Face tracking frame failed:', error);
                 }
@@ -1004,6 +1062,32 @@ function loadSettings() {
             if (el.oninput) el.oninput({target: el});
         }
     });
+}
+function syncClientSendSettingsFromControls() {
+    if (!isClient) return;
+    const sendAllToggle = el('send-all');
+    const sendNoneToggle = el('send-none');
+    const ids = ['send-iris', 'send-nose', 'send-yaw-pitch', 'send-fingertips', 'send-full-face', 'send-full-hand'];
+    if (sendAllToggle?.checked) {
+        ids.forEach(id => {
+            const node = el(id);
+            if (node) node.checked = true;
+        });
+        if (sendNoneToggle) sendNoneToggle.checked = false;
+    } else if (sendNoneToggle?.checked) {
+        ids.forEach(id => {
+            const node = el(id);
+            if (node) node.checked = false;
+        });
+    }
+    sendIris = !!el('send-iris')?.checked;
+    sendNose = !!el('send-nose')?.checked;
+    sendYawPitch = !!el('send-yaw-pitch')?.checked;
+    sendFingertips = !!el('send-fingertips')?.checked;
+    sendFullFace = !!el('send-full-face')?.checked;
+    sendFullHand = !!el('send-full-hand')?.checked;
+    sendAll = !!sendAllToggle?.checked;
+    sendNone = !!sendNoneToggle?.checked;
 }
 function dist(p1, p2) {
     return Math.hypot(p1.x - p2.x, p1.y - p2.y, (p1.z || 0) - (p2.z || 0));
@@ -1616,7 +1700,6 @@ function processHand(lm) {
     isPinching = pinchDist <= calibratedPinchThreshold();
 }
 function setupOnResults() {
-    const oCtx = document.getElementById('face-dots-overlay').getContext('2d');
     faceMesh.onResults((results) => {
         latency = performance.now() - startTime;
         if (isClient) {
@@ -1641,7 +1724,9 @@ function setupOnResults() {
                         YAW_PITCH_INDICES.forEach(i => drawLmList.push({i, x: lm[i].x, y: lm[i].y, z: lm[i].z}));
                     }
                     if (sendFullFace) {
-                        FILTERED_INDICES.forEach(i => drawLmList.push({i, x: lm[i].x, y: lm[i].y, z: lm[i].z}));
+                        lm.forEach((point, i) => {
+                            if (point) drawLmList.push({i, x: point.x, y: point.y, z: point.z});
+                        });
                     }
                     partial.ear = {left: currentLeftEAR, right: currentRightEAR};
                     partial.z = currentFace.z;
@@ -1655,19 +1740,15 @@ function setupOnResults() {
             if (currentMode === 'hand') return;
             if (!document.getElementById('tracking-toggle').checked) { setTrackerCursorVisible(false); return; }
             setTrackerCursorVisible(cursorFunctional());
-            const drawOverlay = shouldDrawTrackerOverlay();
             if (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) {
                 faceLm = results.multiFaceLandmarks[0];
                 processFace(faceLm);
                 if (!isAutoMode() || activeTracker === 'face') {
-                    if (drawOverlay) drawFaceDots(faceLm);
+                    scheduleTrackerOverlayDraw();
                 }
             } else {
                 faceLm = null;
-                if (drawOverlay) {
-                    const overlay = el('face-dots-overlay');
-                    oCtx.clearRect(0, 0, overlay.width, overlay.height);
-                }
+                scheduleTrackerOverlayDraw(true);
             }
         }
     });
@@ -1700,7 +1781,6 @@ function isValidHandCandidate(lm, handedness) {
 function setupHandsResults(tracker = hands) {
     if (!tracker || handsResultsAttached) return;
     handsResultsAttached = true;
-    const oCtx = document.getElementById('face-dots-overlay').getContext('2d');
     tracker.onResults((results) => {
         if (tracker !== hands) return;
         latency = performance.now() - startTime;
@@ -1733,7 +1813,6 @@ function setupHandsResults(tracker = hands) {
                 clearHandState();
                 return;
             }
-            const drawOverlay = shouldDrawTrackerOverlay();
             const lm = results.multiHandLandmarks && results.multiHandLandmarks.length > 0
                 ? results.multiHandLandmarks[0]
                 : null;
@@ -1745,21 +1824,15 @@ function setupHandsResults(tracker = hands) {
                     activeTracker = 'hand';
                 }
                 processHand(handLm);
-                if (drawOverlay) drawHandDots(handLm);
+                scheduleTrackerOverlayDraw();
                 lastHandDataTime = performance.now();
+                handFrameFailures = 0;
             } else {
                 if (!isAutoMode() || performance.now() - lastHandDataTime > 350) {
                     clearHandState();
                     activeTracker = 'face';
                 }
-                if (drawOverlay) {
-                    if (isAutoMode() && faceLm) {
-                        drawFaceDots(faceLm);
-                    } else {
-                        const overlay = el('face-dots-overlay');
-                        oCtx.clearRect(0, 0, overlay.width, overlay.height);
-                    }
-                }
+                scheduleTrackerOverlayDraw(true);
             }
         }
     });
@@ -1802,7 +1875,7 @@ function frameUpdate() {
         clearHandState();
         if (isAutoMode()) {
             activeTracker = 'face';
-            if (faceLm && shouldDrawTrackerOverlay()) drawFaceDots(faceLm);
+            scheduleTrackerOverlayDraw();
         }
     }
     const cursorIsFunctional = cursorFunctional();
