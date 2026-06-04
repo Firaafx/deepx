@@ -4,6 +4,7 @@ let eyesClosed = false;
 let closedCount = 0;
 let anchorFace = { x: 0, y: 0, z: 0 };
 let currentFace = { x: 0, y: 0, z: 0 };
+let currentThreeDCamera = { x: 0, y: 0, z: 0 };
 let smoothedRel = { x: 0, y: 0, z: 0 };
 let anchorYaw = 0, anchorPitch = 0;
 let anchorHand = { x: 0.5, y: 0.5 };
@@ -294,7 +295,7 @@ function clearHandState() {
 function shouldDrawTrackerOverlay() {
     if (!uiVisible) return false;
     const now = performance.now();
-    if (now - lastOverlayDrawTime < 66) return false;
+    if (now - lastOverlayDrawTime < 33) return false;
     lastOverlayDrawTime = performance.now();
     return true;
 }
@@ -547,6 +548,12 @@ async function init() {
                                     currentFace.x = data.partial.nose.x;
                                     currentFace.y = data.partial.nose.y;
                                 }
+                                if (data.partial.camera3d) {
+                                    currentThreeDCamera.x = Number(data.partial.camera3d.x) || 0;
+                                    currentThreeDCamera.y = Number(data.partial.camera3d.y) || 0;
+                                    currentThreeDCamera.z = Number(data.partial.camera3d.z) || 0;
+                                    postHeadPoseSnapshot();
+                                }
                                 if (data.partial.yawPitch) {
                                     currentHeadYaw = data.partial.yawPitch.yaw;
                                     currentHeadPitch = data.partial.yawPitch.pitch;
@@ -730,133 +737,19 @@ function drawFaceDots(drawLm) {
     const oCtx = overlay.getContext('2d');
     oCtx.clearRect(0, 0, overlay.width, overlay.height);
     if (!drawLm) return;
-    const scaleFactor = Math.max(1, overlay.width / 240);
-    const lineWidth = Math.max(0.35, 0.34 * scaleFactor);
-    const dotRadius = Math.max(0.55, 0.58 * scaleFactor);
-    const tessellation = faceMeshConnectorsFor(drawLm);
-    oCtx.save();
-    oCtx.strokeStyle = 'rgba(255,255,255,0.46)';
-    oCtx.fillStyle = 'rgba(255,255,255,0.82)';
-    oCtx.lineWidth = lineWidth;
-    oCtx.lineCap = 'round';
-    oCtx.lineJoin = 'round';
-    oCtx.shadowColor = 'rgba(255,255,255,0.34)';
-    oCtx.shadowBlur = Math.max(1, 1.8 * scaleFactor);
-    const points = new Set();
-    for (const pair of tessellation) {
-        const a = drawLm[pair[0]];
-        const b = drawLm[pair[1]];
-        if (!a || !b) continue;
-        points.add(pair[0]);
-        points.add(pair[1]);
-        oCtx.beginPath();
-        oCtx.moveTo(a.x * overlay.width, a.y * overlay.height);
-        oCtx.lineTo(b.x * overlay.width, b.y * overlay.height);
-        oCtx.stroke();
+    if (typeof drawConnectors === 'function' && typeof drawLandmarks === 'function') {
+        if (typeof FACEMESH_TESSELATION !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_TESSELATION, { color: '#C0C0C070', lineWidth: 1 });
+        if (typeof FACEMESH_RIGHT_EYE !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_RIGHT_EYE, { color: '#FFFFFFA0', lineWidth: 1 });
+        if (typeof FACEMESH_RIGHT_EYEBROW !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_RIGHT_EYEBROW, { color: '#FFFFFFA0', lineWidth: 1 });
+        if (typeof FACEMESH_LEFT_EYE !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_LEFT_EYE, { color: '#FFFFFFA0', lineWidth: 1 });
+        if (typeof FACEMESH_LEFT_EYEBROW !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_LEFT_EYEBROW, { color: '#FFFFFFA0', lineWidth: 1 });
+        if (typeof FACEMESH_FACE_OVAL !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_FACE_OVAL, { color: '#FFFFFFA0', lineWidth: 1 });
+        if (typeof FACEMESH_LIPS !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_LIPS, { color: '#FFFFFFA0', lineWidth: 1 });
+        if (typeof FACEMESH_RIGHT_IRIS !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_RIGHT_IRIS, { color: '#FFFFFFA0', lineWidth: 1 });
+        if (typeof FACEMESH_LEFT_IRIS !== 'undefined') drawConnectors(oCtx, drawLm, FACEMESH_LEFT_IRIS, { color: '#FFFFFFA0', lineWidth: 1 });
+        drawLandmarks(oCtx, drawLm, { color: '#FFFFFFCC', radius: 0.7 });
+        return;
     }
-    drawFaceDotsAt(oCtx, drawLm, points, dotRadius);
-    oCtx.restore();
-}
-
-function faceMeshConnectorsFor(landmarks) {
-    const connectors = globalThis.FACEMESH_TESSELATION;
-    const hasFullFace = Array.isArray(landmarks) && landmarks.length >= 468;
-    if (hasFullFace && Array.isArray(connectors) && connectors.length > 0) {
-        return sparseFaceTessellation(connectors);
-    }
-    return FACE_REFERENCE_CONNECTORS;
-}
-
-let sparseFaceTessellationCache = null;
-function sparseFaceTessellation(connectors) {
-    if (sparseFaceTessellationCache) return sparseFaceTessellationCache;
-    const selected = new Set();
-    for (let i = 0; i < 478; i += 4) selected.add(i);
-    const graph = new Map();
-    for (const pair of connectors) {
-        const a = pair[0];
-        const b = pair[1];
-        if (!graph.has(a)) graph.set(a, []);
-        if (!graph.has(b)) graph.set(b, []);
-        graph.get(a).push(b);
-        graph.get(b).push(a);
-    }
-    const pairs = [];
-    const seenPairs = new Set();
-    for (const start of selected) {
-        const queue = [{ index: start, depth: 0 }];
-        const seen = new Set([start]);
-        while (queue.length) {
-            const current = queue.shift();
-            if (current.depth >= 4) continue;
-            for (const next of graph.get(current.index) || []) {
-                if (seen.has(next)) continue;
-                seen.add(next);
-                if (selected.has(next)) {
-                    const lo = Math.min(start, next);
-                    const hi = Math.max(start, next);
-                    const key = `${lo}:${hi}`;
-                    if (lo !== hi && !seenPairs.has(key)) {
-                        seenPairs.add(key);
-                        pairs.push([lo, hi]);
-                    }
-                } else {
-                    queue.push({ index: next, depth: current.depth + 1 });
-                }
-            }
-        }
-    }
-    sparseFaceTessellationCache = pairs.length > 60 ? pairs : connectors.filter((_, index) => index % 4 === 0);
-    return sparseFaceTessellationCache;
-}
-function drawFaceChain(ctx, landmarks, chain, points) {
-    if (!Array.isArray(chain) || chain.length < 2) return;
-    ctx.beginPath();
-    let started = false;
-    for (const index of chain) {
-        const point = landmarks[index];
-        if (!point) {
-            started = false;
-            continue;
-        }
-        points.add(index);
-        const x = point.x * ctx.canvas.width;
-        const y = point.y * ctx.canvas.height;
-        if (!started) {
-            ctx.moveTo(x, y);
-            started = true;
-        } else {
-            ctx.lineTo(x, y);
-        }
-    }
-    ctx.stroke();
-}
-function drawFaceDotsAt(ctx, landmarks, indices, radius) {
-    for (const index of indices) {
-        const point = landmarks[index];
-        if (!point) continue;
-        ctx.beginPath();
-        ctx.arc(point.x * ctx.canvas.width, point.y * ctx.canvas.height, radius, 0, Math.PI * 2);
-        ctx.fill();
-    }
-}
-function drawFaceConnectors(ctx, landmarks, connectors, color, lineWidth) {
-    if (!connectors || !landmarks) return;
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (const pair of connectors) {
-        const a = landmarks[pair[0]];
-        const b = landmarks[pair[1]];
-        if (!a || !b) continue;
-        ctx.beginPath();
-        ctx.moveTo(a.x * ctx.canvas.width, a.y * ctx.canvas.height);
-        ctx.lineTo(b.x * ctx.canvas.width, b.y * ctx.canvas.height);
-        ctx.stroke();
-    }
-    ctx.restore();
 }
 function drawHandDots(lmArray) {
     const overlay = document.getElementById('face-dots-overlay');
@@ -1524,9 +1417,9 @@ function handlePageVisibility() {
     }
 }
 function postHeadPoseSnapshot({
-    x = currentFace.x,
-    y = currentFace.y,
-    z = currentFace.z,
+    x = currentThreeDCamera.x,
+    y = currentThreeDCamera.y,
+    z = currentThreeDCamera.z,
     yaw = currentHeadYaw,
     pitch = currentHeadPitch,
     yawNorm = currentHeadYawNorm,
@@ -1547,6 +1440,67 @@ function postHeadPoseSnapshot({
     try {
         window.parent?.postMessage(payload, '*');
     } catch (_) {}
+}
+function landmarkOffset(point) {
+    if (!point) return { x: 0, y: 0 };
+    return { x: (point.x - 0.5) * 2, y: (point.y - 0.5) * 2 };
+}
+function averageLandmarks(lm, indices) {
+    let x = 0;
+    let y = 0;
+    let count = 0;
+    for (const index of indices) {
+        const point = lm[index];
+        if (!point) continue;
+        x += point.x;
+        y += point.y;
+        count++;
+    }
+    if (!count) return { x: 0, y: 0 };
+    return { x: (x / count - 0.5) * 2, y: (y / count - 0.5) * 2 };
+}
+function rawThreeDCameraSignal(lm, rawFaceX, rawFaceY, rawFaceZ, rawHeadYaw, rawHeadPitch) {
+    const source = el('three-d-camera-source')?.value || 'nose';
+    let xy;
+    if (source === 'left-eye') {
+        xy = averageLandmarks(lm, [33, 133, 159, 145, 160, 144, 158, 153]);
+    } else if (source === 'right-eye') {
+        xy = averageLandmarks(lm, [362, 263, 386, 374, 385, 380, 387, 373]);
+    } else if (source === 'eye-center') {
+        xy = averageLandmarks(lm, [33, 133, 159, 145, 362, 263, 386, 374]);
+    } else if (source === 'head-yaw-pitch') {
+        xy = { x: rawHeadYaw / 60, y: rawHeadPitch / 40 };
+    } else if (source === 'biased-eye') {
+        const eyes = averageLandmarks(lm, [33, 133, 159, 145, 362, 263, 386, 374]);
+        xy = {
+            x: eyes.x + currentDx * 1.8,
+            y: eyes.y + currentDy * 1.8
+        };
+    } else {
+        xy = { x: rawFaceX, y: rawFaceY };
+    }
+    return {
+        x: Math.max(-3, Math.min(3, xy.x)),
+        y: Math.max(-3, Math.min(3, xy.y)),
+        z: rawFaceZ
+    };
+}
+function filterThreeDCameraAxis(axis, rawValue) {
+    const previous = Number(currentThreeDCamera[axis]) || 0;
+    const deadZone = numericSetting(`three-d-camera-dz-${axis}`, 0.01);
+    const smoothing = Math.max(0, Math.min(0.98, numericSetting(`three-d-camera-smooth-${axis}`, 0.7)));
+    const delta = rawValue - previous;
+    const adjusted = Math.abs(delta) <= deadZone
+        ? previous
+        : previous + (Math.abs(delta) - deadZone) * Math.sign(delta);
+    return previous * smoothing + adjusted * (1 - smoothing);
+}
+function updateThreeDCameraSignal(raw) {
+    currentThreeDCamera = {
+        x: filterThreeDCameraAxis('x', raw.x),
+        y: filterThreeDCameraAxis('y', raw.y),
+        z: filterThreeDCameraAxis('z', raw.z)
+    };
 }
 function processFace(lm) {
     let rawHeadYaw = ((lm[1].x - lm[234].x) / (lm[454].x - lm[234].x) - 0.5) * -120;
@@ -1617,13 +1571,16 @@ function processFace(lm) {
     currentFace.x = rawFaceX;
     currentFace.y = rawFaceY;
     currentFace.z = rawFaceZ;
+    updateThreeDCameraSignal(
+        rawThreeDCameraSignal(lm, rawFaceX, rawFaceY, rawFaceZ, rawHeadYaw, rawHeadPitch)
+    );
     currentLeftEAR = getEAR(lm, true);
     currentRightEAR = getEAR(lm, false);
     updateWinkStateFromEAR();
     postHeadPoseSnapshot({
-        x: rawFaceX,
-        y: rawFaceY,
-        z: rawFaceZ,
+        x: currentThreeDCamera.x,
+        y: currentThreeDCamera.y,
+        z: currentThreeDCamera.z,
         yaw: rawHeadYaw,
         pitch: rawHeadPitch,
         yawNorm: rawHeadYaw / 60,
@@ -1678,6 +1635,7 @@ function setupOnResults() {
                         partial.nose = {x: currentFace.x, y: currentFace.y};
                         drawLmList.push({i: 1, x: lm[1].x, y: lm[1].y, z: lm[1].z});
                     }
+                    partial.camera3d = {...currentThreeDCamera};
                     if (sendYawPitch) {
                         partial.yawPitch = {yaw: currentHeadYaw, pitch: currentHeadPitch};
                         YAW_PITCH_INDICES.forEach(i => drawLmList.push({i, x: lm[i].x, y: lm[i].y, z: lm[i].z}));
@@ -1933,6 +1891,12 @@ function frameUpdate() {
         currentFace.x = (mouseX / window.innerWidth - 0.5) * 2;
         currentFace.y = (mouseY / window.innerHeight - 0.5) * 2;
         currentFace.z = anchorFace.z - mouseWheelZ;
+        updateThreeDCameraSignal({
+            x: currentFace.x,
+            y: currentFace.y,
+            z: currentFace.z
+        });
+        postHeadPoseSnapshot();
         updateTrackerTargets();
         if (tCanvas.style.display !== 'none' && now - lastHudDrawTime >= 100) {
             lastHudDrawTime = now;
@@ -2153,6 +2117,7 @@ function drawHUD() {
         `Depth Z: ${currentFace.z.toFixed(3)}`,
         `X Offset: ${(currentFace.x - anchorFace.x).toFixed(3)}`,
         `Y Offset: ${(currentFace.y - anchorFace.y).toFixed(3)}`,
+        `3D Cam X: ${currentThreeDCamera.x.toFixed(3)} Y: ${currentThreeDCamera.y.toFixed(3)} Z: ${currentThreeDCamera.z.toFixed(3)}`,
         `Raw Iris X: ${currentAvgYawRatio.toFixed(3)} Y: ${currentAvgPitchRatio.toFixed(3)}`,
         `Rel Iris X: ${currentDx.toFixed(3)} Y: ${currentDy.toFixed(3)}`,
         `Head Yaw: ${currentHeadYaw.toFixed(2)} Pitch: ${currentHeadPitch.toFixed(2)}`,
@@ -2187,6 +2152,7 @@ function drawMouseHUD() {
         `Depth Z: ${z.toFixed(3)}`,
         `X Offset: ${(currentFace.x - anchorFace.x).toFixed(3)}`,
         `Y Offset: ${(currentFace.y - anchorFace.y).toFixed(3)}`,
+        `3D Cam X: ${currentThreeDCamera.x.toFixed(3)} Y: ${currentThreeDCamera.y.toFixed(3)} Z: ${currentThreeDCamera.z.toFixed(3)}`,
         `Cursor X: ${targetX.toFixed(1)} Y: ${targetY.toFixed(1)}`,
         `FPS: ${fps}`
     ];
@@ -2414,6 +2380,9 @@ function setupTrackerEvents() {
         document.getElementById('three-d-camera-speed-val').innerText = parseFloat(e.target.value).toFixed(3);
         localStorage.setItem('three-d-camera-speed', e.target.value);
     };
+    document.getElementById('three-d-camera-source').onchange = (e) => {
+        localStorage.setItem('three-d-camera-source', e.target.value);
+    };
     document.getElementById('s-sens').oninput = (e) => { document.getElementById('s-val').innerText = e.target.value + '%'; localStorage.setItem('s-sens', e.target.value); };
     document.getElementById('dz-ix').oninput = (e) => { document.getElementById('dz-ix-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-ix', e.target.value); };
     document.getElementById('dz-iy').oninput = (e) => { document.getElementById('dz-iy-val').innerText = parseFloat(e.target.value).toFixed(3); localStorage.setItem('dz-iy', e.target.value); };
@@ -2446,6 +2415,13 @@ function setupTrackerEvents() {
         }
     });
     document.querySelectorAll('input[type=range]').forEach(setupSlider);
+    const cameraSource = document.getElementById('three-d-camera-source');
+    const savedCameraSource = localStorage.getItem('three-d-camera-source');
+    if (cameraSource && savedCameraSource) {
+        const hasOption = Array.from(cameraSource.options)
+            .some(option => option.value === savedCameraSource);
+        if (hasOption) cameraSource.value = savedCameraSource;
+    }
     window.addEventListener('keydown', (e) => {
         if (isTypingTarget(e.target)) return;
         if (e.code === 'Space') {
@@ -2536,25 +2512,9 @@ const MESH_IRIS = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
 const MESH_EYEBROWS = [70, 63, 105, 66, 107, 336, 296, 334, 293, 300];
 const MESH_LIPS = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146];
 const MESH_NOSE = [168, 6, 197, 195, 5, 4, 1, 19, 94, 2, 98, 97, 326, 327];
-const FACE_REFERENCE_CONNECTORS = [
-    ...chainPairs(MESH_SILHOUETTE),
-    ...chainPairs([33, 160, 158, 133, 153, 144, 33]),
-    ...chainPairs([362, 385, 387, 263, 373, 380, 362]),
-    ...chainPairs([70, 63, 105, 66, 107]),
-    ...chainPairs([336, 296, 334, 293, 300]),
-    ...chainPairs(MESH_NOSE),
-    ...chainPairs(MESH_LIPS)
-];
 const FILTERED_INDICES = [...MESH_SILHOUETTE, ...MESH_EYELASHES, ...MESH_IRIS, ...MESH_EYEBROWS, ...MESH_LIPS, ...MESH_NOSE];
 const IRIS_INDICES = [33, 133, 159, 145, 158, 153, 362, 263, 386, 374, 385, 380, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
 const YAW_PITCH_INDICES = [1, 10, 152, 234, 454];
-function chainPairs(indices) {
-    const pairs = [];
-    for (let i = 1; i < indices.length; i++) {
-        pairs.push([indices[i - 1], indices[i]]);
-    }
-    return pairs;
-}
 init();
 window.addEventListener('resize', () => {
     if(tCanvas.width !== window.innerWidth) { tCanvas.width = window.innerWidth; tCanvas.height = window.innerHeight; }

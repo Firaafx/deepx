@@ -181,11 +181,14 @@
     }
     let object;
     try {
-      object = new Candidate({ url: asset.url });
+      object = new Candidate({ url: asset.url, fileType: asset.format || undefined });
     } catch (_) {
       object = new Candidate(asset.url);
     }
     ctx.scene.add(object);
+    if (object?.initialized && typeof object.initialized.then === 'function') {
+      await object.initialized;
+    }
     return object;
   }
 
@@ -286,16 +289,36 @@
     }), window.location.origin);
   }
 
-  function autoFitObject(ctx, object, force = false) {
-    if (!object || (!force && ctx.hasCustomCamera)) return;
+  function objectBounds(ctx, object) {
     const THREE = ctx.modules.three;
-    const box = new THREE.Box3().setFromObject(object);
+    if (object && typeof object.getBoundingBox === 'function') {
+      try {
+        const box = object.getBoundingBox(true);
+        if (box && typeof box.isEmpty === 'function' && !box.isEmpty()) {
+          return box.clone ? box.clone() : box;
+        }
+      } catch (_) {}
+    }
+    return new THREE.Box3().setFromObject(object);
+  }
+
+  function autoFitObject(ctx, object, force = false) {
+    if (!object) return;
+    const THREE = ctx.modules.three;
+    const box = objectBounds(ctx, object);
     if (box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 0.1);
     ctx.modelCenter = center.clone();
     ctx.modelRadius = Math.max(maxDim / 2, 0.1);
+    ctx.camera.near = Math.max(0.001, ctx.modelRadius / 5000);
+    ctx.camera.far = Math.max(5000, ctx.modelRadius * 200);
+    ctx.camera.updateProjectionMatrix();
+    if (!force && ctx.hasCustomCamera) {
+      notifyCameraChanged(ctx, true);
+      return;
+    }
     const fov = ctx.camera.fov * Math.PI / 180;
     let distance = Math.abs(maxDim / (2 * Math.tan(fov / 2)));
     distance = Math.max(distance * 1.45, 0.35);
@@ -324,16 +347,15 @@
     const THREE = ctx.modules.three;
     const head = ctx.head || { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
     const center = ctx.center || { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
-    const x = clamp((head.x - center.x) * 0.9 + ((head.yaw || 0) - (center.yaw || 0)) / 90, -0.9, 0.9);
-    const y = clamp((head.y - center.y) * -0.7 + ((head.pitch || 0) - (center.pitch || 0)) / 70, -0.7, 0.7);
     const rawSpeed = Number(head.cameraSpeed);
     const speed = clamp(Number.isFinite(rawSpeed) ? rawSpeed : 1, 0, 50);
-    const lateralLimit = 0.9 * Math.max(1, speed);
-    const verticalLimit = 0.7 * Math.max(1, speed);
-    const depthLimit = 0.9 * Math.max(1, speed);
-    const z = clamp(((center.z || head.z || 0) - (head.z || 0)) * 2.5 * speed, -depthLimit, depthLimit);
-    const scaledX = clamp(x * speed, -lateralLimit, lateralLimit);
-    const scaledY = clamp(y * speed, -verticalLimit, verticalLimit);
+    const radius = Math.max(1, ctx.modelRadius || 1);
+    const lateralLimit = radius * Math.max(1, speed) * 0.75;
+    const verticalLimit = radius * Math.max(1, speed) * 0.75;
+    const depthLimit = radius * Math.max(1, speed) * 1.25;
+    const scaledX = clamp((head.x - center.x) * radius * speed, -lateralLimit, lateralLimit);
+    const scaledY = clamp((head.y - center.y) * -radius * speed, -verticalLimit, verticalLimit);
+    const z = clamp((center.z - head.z) * radius * speed, -depthLimit, depthLimit);
     renderBaseCamera(ctx, new THREE.Vector3(scaledX, scaledY, z));
   }
 
@@ -388,6 +410,7 @@
     function onPointerDown(event) {
       if (!ctx.editable) return;
       dragging = true;
+      canvas.style.cursor = 'grabbing';
       mode = event.button === 2 || event.shiftKey ? 'pan' : 'orbit';
       lastX = event.clientX;
       lastY = event.clientY;
@@ -411,6 +434,7 @@
 
     function onPointerUp(event) {
       dragging = false;
+      canvas.style.cursor = ctx.editable ? 'grab' : 'default';
       try {
         canvas.releasePointerCapture(event.pointerId);
       } catch (_) {}
@@ -472,7 +496,16 @@
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.outputColorSpace = THREE.SRGBColorSpace;
-      renderer.domElement.style.cssText = 'width:100%;height:100%;display:block;touch-action:none;pointer-events:auto;cursor:grab';
+      renderer.domElement.style.cssText = [
+        'width:100%',
+        'height:100%',
+        'display:block',
+        'touch-action:none',
+        'pointer-events:auto',
+        `cursor:${options.editable === true ? 'grab' : 'default'}`
+      ].join(';');
+      root.style.pointerEvents = 'auto';
+      root.style.touchAction = 'none';
       root.appendChild(renderer.domElement);
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x050505);
@@ -610,6 +643,9 @@
     const ctx = viewers.get(elementId);
     if (!ctx) return;
     ctx.editable = editable === true;
+    if (ctx.renderer?.domElement) {
+      ctx.renderer.domElement.style.cursor = ctx.editable ? 'grab' : 'default';
+    }
     renderBaseCamera(ctx);
   }
 

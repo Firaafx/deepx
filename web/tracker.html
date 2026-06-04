@@ -166,6 +166,57 @@
             <button class="btn-inc" id="three-d-camera-speed-minus">-</button>
             <button class="btn-inc" id="three-d-camera-speed-plus">+</button>
         </div>
+        <label>3D Camera XY Source</label>
+        <select id="three-d-camera-source">
+            <option value="nose">Nose X/Y</option>
+            <option value="left-eye">Left Eye X/Y</option>
+            <option value="right-eye">Right Eye X/Y</option>
+            <option value="eye-center">Eye Center X/Y</option>
+            <option value="head-yaw-pitch">Head Yaw/Pitch</option>
+            <option value="biased-eye">Biased Eye</option>
+        </select>
+        <label>3D Camera X Dead Zone <span id="three-d-camera-dz-x-val" class="val-display">0.010</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="three-d-camera-dz-x" min="0" max="1" step="0.001" value="0.010">
+            <input type="number" id="three-d-camera-dz-x-num" step="0.001" value="0.010">
+            <button class="btn-inc" id="three-d-camera-dz-x-minus">-</button>
+            <button class="btn-inc" id="three-d-camera-dz-x-plus">+</button>
+        </div>
+        <label>3D Camera Y Dead Zone <span id="three-d-camera-dz-y-val" class="val-display">0.010</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="three-d-camera-dz-y" min="0" max="1" step="0.001" value="0.010">
+            <input type="number" id="three-d-camera-dz-y-num" step="0.001" value="0.010">
+            <button class="btn-inc" id="three-d-camera-dz-y-minus">-</button>
+            <button class="btn-inc" id="three-d-camera-dz-y-plus">+</button>
+        </div>
+        <label>3D Camera Z Dead Zone <span id="three-d-camera-dz-z-val" class="val-display">0.010</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="three-d-camera-dz-z" min="0" max="1" step="0.001" value="0.010">
+            <input type="number" id="three-d-camera-dz-z-num" step="0.001" value="0.010">
+            <button class="btn-inc" id="three-d-camera-dz-z-minus">-</button>
+            <button class="btn-inc" id="three-d-camera-dz-z-plus">+</button>
+        </div>
+        <label>3D Camera X Smoothing <span id="three-d-camera-smooth-x-val" class="val-display">0.700</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="three-d-camera-smooth-x" min="0" max="0.98" step="0.001" value="0.700">
+            <input type="number" id="three-d-camera-smooth-x-num" step="0.001" value="0.700">
+            <button class="btn-inc" id="three-d-camera-smooth-x-minus">-</button>
+            <button class="btn-inc" id="three-d-camera-smooth-x-plus">+</button>
+        </div>
+        <label>3D Camera Y Smoothing <span id="three-d-camera-smooth-y-val" class="val-display">0.700</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="three-d-camera-smooth-y" min="0" max="0.98" step="0.001" value="0.700">
+            <input type="number" id="three-d-camera-smooth-y-num" step="0.001" value="0.700">
+            <button class="btn-inc" id="three-d-camera-smooth-y-minus">-</button>
+            <button class="btn-inc" id="three-d-camera-smooth-y-plus">+</button>
+        </div>
+        <label>3D Camera Z Smoothing <span id="three-d-camera-smooth-z-val" class="val-display">0.700</span></label>
+        <div class="slider-wrap">
+            <input type="range" id="three-d-camera-smooth-z" min="0" max="0.98" step="0.001" value="0.700">
+            <input type="number" id="three-d-camera-smooth-z-num" step="0.001" value="0.700">
+            <button class="btn-inc" id="three-d-camera-smooth-z-minus">-</button>
+            <button class="btn-inc" id="three-d-camera-smooth-z-plus">+</button>
+        </div>
         <label>Hand Cursor Speed <span id="hand-cursor-speed-val" class="val-display">500</span></label>
         <div class="slider-wrap">
             <input type="range" id="hand-cursor-speed" min="1" max="1000" step="0.001" value="500">
@@ -293,6 +344,7 @@
     </div>
     <div id="cal-dot"></div>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js"></script>
     <script src="tracker.js"></script>
 </body>
 </html>
