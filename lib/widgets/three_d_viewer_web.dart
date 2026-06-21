@@ -13,26 +13,20 @@ class ThreeDViewer extends StatefulWidget {
     super.key,
     required this.payload,
     this.editable = false,
-    this.showRecenter = true,
+    this.trackingEnabled = false,
+    this.showModelControls = false,
     this.showLoadingProgress = true,
-    this.recenterTop = 8,
-    this.recenterRight = 8,
-    this.cameraOverride,
-    this.autoFitRevision = 0,
-    this.autoFitOnMount = false,
-    this.onCameraChanged,
+    this.transformOverride,
+    this.onTransformChanged,
   });
 
   final Map<String, dynamic> payload;
   final bool editable;
-  final bool showRecenter;
+  final bool trackingEnabled;
+  final bool showModelControls;
   final bool showLoadingProgress;
-  final double recenterTop;
-  final double recenterRight;
-  final Map<String, dynamic>? cameraOverride;
-  final int autoFitRevision;
-  final bool autoFitOnMount;
-  final ValueChanged<Map<String, dynamic>>? onCameraChanged;
+  final Map<String, dynamic>? transformOverride;
+  final ValueChanged<Map<String, dynamic>>? onTransformChanged;
 
   @override
   State<ThreeDViewer> createState() => _ThreeDViewerState();
@@ -48,9 +42,8 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   StreamSubscription<html.Event>? _visibilitySub;
   bool _factoryRegistered = false;
   String _mountedAssetKey = '';
-  String _lastCameraJson = '';
-  bool? _lastEditable;
-  int _lastAutoFitRevision = 0;
+  String _mountedOptionsJson = '';
+  String _lastTransformJson = '';
   String _loadStatus = '';
   String _loadLabel = '';
   double? _loadProgress;
@@ -58,8 +51,8 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   @override
   void initState() {
     super.initState();
-    _elementId = 'deepx-three-viewer-${_nextId++}';
-    _viewType = 'deepx-three-viewer-view-$_elementId';
+    _elementId = 'deepx-off-axis-viewer-${_nextId++}';
+    _viewType = 'deepx-off-axis-view-$_elementId';
     _messageSub = html.window.onMessage.listen(_handleMessage);
     _resizeSub = html.window.onResize.listen((_) => _resizeOrRecover());
     _visibilitySub = html.document.onVisibilityChange.listen((_) {
@@ -78,7 +71,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
 
   @override
   void dispose() {
-    final dynamic viewer = js.context['DeepXThreeViewer'];
+    final dynamic viewer = js.context['DeepXOffAxisViewer'];
     if (viewer != null) {
       viewer.callMethod('dispose', <Object>[_elementId]);
     }
@@ -89,24 +82,26 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   }
 
   void _mountOrUpdate({bool forceMount = false}) {
-    final dynamic viewer = js.context['DeepXThreeViewer'];
+    final dynamic viewer = js.context['DeepXOffAxisViewer'];
     if (viewer == null) return;
     final String nextAssetKey = _assetKey(widget.payload);
-    final String cameraJson = jsonEncode(
-      widget.cameraOverride ?? _cameraFromPayload(widget.payload),
-    );
     final String payloadJson = jsonEncode(widget.payload);
     final String optionsJson = jsonEncode(<String, dynamic>{
       'editable': widget.editable,
-      'autoFitOnMount': widget.autoFitOnMount,
+      'trackingEnabled': widget.trackingEnabled,
+      'showModelControls': widget.showModelControls,
     });
+    final String transformJson =
+        jsonEncode(widget.transformOverride ?? _transformFromPayload());
     final bool missingViewer =
         _mountedAssetKey.isNotEmpty && !_viewerAlive(viewer);
-    if (forceMount || missingViewer || _mountedAssetKey != nextAssetKey) {
+    if (forceMount ||
+        missingViewer ||
+        _mountedAssetKey != nextAssetKey ||
+        _mountedOptionsJson != optionsJson) {
       _mountedAssetKey = nextAssetKey;
-      _lastCameraJson = cameraJson;
-      _lastEditable = widget.editable;
-      _lastAutoFitRevision = widget.autoFitRevision;
+      _mountedOptionsJson = optionsJson;
+      _lastTransformJson = transformJson;
       if (mounted) {
         setState(() {
           _loadStatus = 'loading';
@@ -118,18 +113,11 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
           .callMethod('mount', <Object>[_elementId, payloadJson, optionsJson]);
       return;
     }
-    if (_lastEditable != widget.editable) {
-      _lastEditable = widget.editable;
-      viewer.callMethod('setEditable', <Object>[_elementId, widget.editable]);
+    if (_lastTransformJson != transformJson) {
+      _lastTransformJson = transformJson;
+      viewer.callMethod('setTransform', <Object>[_elementId, transformJson]);
     }
-    if (_lastCameraJson != cameraJson) {
-      _lastCameraJson = cameraJson;
-      viewer.callMethod('setCamera', <Object>[_elementId, cameraJson]);
-    }
-    if (_lastAutoFitRevision != widget.autoFitRevision) {
-      _lastAutoFitRevision = widget.autoFitRevision;
-      viewer.callMethod('autoFit', <Object>[_elementId]);
-    }
+    viewer.callMethod('setEditable', <Object>[_elementId, widget.editable]);
   }
 
   bool _viewerAlive(dynamic viewer) {
@@ -142,7 +130,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
 
   void _resizeOrRecover() {
     if (!mounted) return;
-    final dynamic viewer = js.context['DeepXThreeViewer'];
+    final dynamic viewer = js.context['DeepXOffAxisViewer'];
     if (viewer == null) return;
     if (_viewerAlive(viewer)) {
       try {
@@ -172,17 +160,16 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     ].join('|');
   }
 
-  Map<String, dynamic> _cameraFromPayload(Map<String, dynamic> payload) {
-    final dynamic rawCamera = payload['camera'];
-    if (rawCamera is Map) return Map<String, dynamic>.from(rawCamera);
+  Map<String, dynamic> _transformFromPayload() {
+    final dynamic rawTransform = widget.payload['transform'];
+    if (rawTransform is Map) return Map<String, dynamic>.from(rawTransform);
     return const <String, dynamic>{};
   }
 
   void _handleMessage(html.MessageEvent event) {
     final Map<String, dynamic>? data = _messageMap(event.data);
-    if (data == null) return;
-    if (data['type'] == 'deepx-three-load-state') {
-      if (data['elementId'] != _elementId) return;
+    if (data == null || data['elementId'] != _elementId) return;
+    if (data['type'] == 'deepx-off-axis-load-state') {
       final dynamic rawProgress = data['progress'];
       final double? progress = rawProgress is num
           ? rawProgress.toDouble().clamp(0, 1).toDouble()
@@ -195,13 +182,13 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       });
       return;
     }
-    final callback = widget.onCameraChanged;
+    final callback = widget.onTransformChanged;
     if (callback == null) return;
-    if (data['type'] != 'deepx-three-camera-changed') return;
-    if (data['elementId'] != _elementId) return;
-    final Map<String, dynamic>? camera = _messageMap(data['camera']);
-    if (camera == null) return;
-    callback(camera);
+    if (data['type'] != 'deepx-off-axis-transform-changed') return;
+    final Map<String, dynamic>? transform = _messageMap(data['transform']);
+    if (transform == null) return;
+    _lastTransformJson = jsonEncode(transform);
+    callback(transform);
   }
 
   Widget _buildLoadingProgress(BuildContext context) {
@@ -276,12 +263,6 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     return null;
   }
 
-  void _recenter() {
-    final dynamic viewer = js.context['DeepXThreeViewer'];
-    if (viewer == null) return;
-    viewer.callMethod('recenter', <Object>[_elementId]);
-  }
-
   @override
   Widget build(BuildContext context) {
     if (!_factoryRegistered) {
@@ -300,25 +281,6 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       children: [
         HtmlElementView(viewType: _viewType),
         _buildLoadingProgress(context),
-        if (widget.showRecenter)
-          Positioned(
-            top: widget.recenterTop,
-            right: widget.recenterRight,
-            child: Tooltip(
-              message: 'Recenter view',
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.46),
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.center_focus_strong_rounded),
-                  color: Colors.white,
-                  onPressed: _recenter,
-                ),
-              ),
-            ),
-          ),
       ],
     );
   }

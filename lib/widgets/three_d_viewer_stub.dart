@@ -5,26 +5,20 @@ class ThreeDViewer extends StatelessWidget {
     super.key,
     required this.payload,
     this.editable = false,
-    this.showRecenter = true,
+    this.trackingEnabled = false,
+    this.showModelControls = false,
     this.showLoadingProgress = true,
-    this.recenterTop = 8,
-    this.recenterRight = 8,
-    this.cameraOverride,
-    this.autoFitRevision = 0,
-    this.autoFitOnMount = false,
-    this.onCameraChanged,
+    this.transformOverride,
+    this.onTransformChanged,
   });
 
   final Map<String, dynamic> payload;
   final bool editable;
-  final bool showRecenter;
+  final bool trackingEnabled;
+  final bool showModelControls;
   final bool showLoadingProgress;
-  final double recenterTop;
-  final double recenterRight;
-  final Map<String, dynamic>? cameraOverride;
-  final int autoFitRevision;
-  final bool autoFitOnMount;
-  final ValueChanged<Map<String, dynamic>>? onCameraChanged;
+  final Map<String, dynamic>? transformOverride;
+  final ValueChanged<Map<String, dynamic>>? onTransformChanged;
 
   @override
   Widget build(BuildContext context) {

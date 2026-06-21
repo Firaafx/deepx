@@ -4129,9 +4129,7 @@ class _SharedPresetPreview extends StatelessWidget {
     this.emptyChild,
     this.fit = BoxFit.cover,
     this.allowImage = true,
-    this.showRecenter = true,
-    this.recenterTop = 8,
-    this.recenterRight = 8,
+    this.trackingEnabled = false,
   });
 
   final Map<String, dynamic> payload;
@@ -4140,18 +4138,14 @@ class _SharedPresetPreview extends StatelessWidget {
   final Widget? emptyChild;
   final BoxFit fit;
   final bool allowImage;
-  final bool showRecenter;
-  final double recenterTop;
-  final double recenterRight;
+  final bool trackingEnabled;
 
   @override
   Widget build(BuildContext context) {
     if (isThreeDPayload(payload)) {
       final Widget viewer = ThreeDViewer(
         payload: payload,
-        showRecenter: showRecenter,
-        recenterTop: recenterTop,
-        recenterRight: recenterRight,
+        trackingEnabled: trackingEnabled,
       );
       if (clipper != null) {
         return ClipPath(
@@ -4321,9 +4315,7 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
                       borderRadius: BorderRadius.zero,
                       fit: BoxFit.contain,
                       allowImage: false,
-                      showRecenter: true,
-                      recenterTop: 18,
-                      recenterRight: showOwnerMenu ? 70 : 14,
+                      trackingEnabled: true,
                     ),
                   ),
                 ),
@@ -5256,8 +5248,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   ),
                   fit: BoxFit.contain,
                   allowImage: false,
-                  showRecenter: true,
-                  recenterRight: _mine ? 56 : 8,
+                  trackingEnabled: true,
                 ),
               ),
               Positioned(
@@ -5711,15 +5702,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   bool _uploading = false;
   bool _openingComposer = false;
   bool _threeDProcessing = false;
-  bool _threeDEditCamera = false;
   double _threeDProgress = 0;
   String _threeDStage = '';
   Map<String, dynamic>? _singlePayload;
   Map<String, dynamic>? _collectionImageThumbnailPayload;
   Map<String, dynamic>? _threeDAssetPayload;
-  Map<String, dynamic> _threeDCameraDraft = _normalizedThreeDCamera(null);
+  Map<String, dynamic> _threeDTransformDraft = _normalizedThreeDTransform(null);
   Map<String, dynamic>? _threeDThumbnailPayload;
-  int _threeDAutoFitRevision = 0;
   final List<UploadedAsset> _threeDSourceImages = <UploadedAsset>[];
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
 
@@ -5929,11 +5918,11 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           contentType: file.contentType,
           byteSize: file.bytes.length,
           sourceKind: 'manual',
-          camera: _threeDCameraDraft,
+          transform: _threeDTransformDraft,
           meta: <String, dynamic>{'sourceName': file.name},
         );
-        _threeDCameraDraft = _cameraFromThreeDPayload(_threeDAssetPayload!);
-        _threeDAutoFitRevision++;
+        _threeDTransformDraft =
+            _transformFromThreeDPayload(_threeDAssetPayload!);
         _threeDProgress = 1;
         _threeDStage = '3D asset ready';
       });
@@ -5957,7 +5946,10 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     final rawPayload = _threeDAssetPayload;
     final payload = rawPayload == null
         ? null
-        : _payloadWithThreeDCameraSnapshot(rawPayload, _threeDCameraDraft);
+        : _payloadWithThreeDTransformSnapshot(
+            rawPayload,
+            _threeDTransformDraft,
+          );
     if (payload == null || threeDAssetFromPayload(payload) == null) {
       messenger.showSnackBar(
         const SnackBar(content: Text('Upload or generate a 3D asset first.')),
@@ -6009,9 +6001,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         _threeDAssetPayload = null;
         _threeDThumbnailPayload = null;
         _threeDSourceImages.clear();
-        _threeDEditCamera = false;
-        _threeDCameraDraft = _normalizedThreeDCamera(null);
-        _threeDAutoFitRevision = 0;
+        _threeDTransformDraft = _normalizedThreeDTransform(null);
         _threeDProgress = 0;
         _threeDStage = '';
       });
@@ -6087,12 +6077,12 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         setState(() {
           if (outputPayload != null &&
               threeDAssetFromPayload(outputPayload) != null) {
-            _threeDAssetPayload = _payloadWithThreeDCameraSnapshot(
+            _threeDAssetPayload = _payloadWithThreeDTransformSnapshot(
               outputPayload,
-              _cameraFromThreeDPayload(outputPayload),
+              _transformFromThreeDPayload(outputPayload),
             );
-            _threeDCameraDraft = _cameraFromThreeDPayload(_threeDAssetPayload!);
-            _threeDAutoFitRevision++;
+            _threeDTransformDraft =
+                _transformFromThreeDPayload(_threeDAssetPayload!);
           }
           _threeDSourceImages.clear();
           _threeDProgress = 1;
@@ -6208,16 +6198,17 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           child: isThreeDPayload(payload)
               ? ThreeDViewer(
                   payload: payload,
-                  editable: _threeDEditCamera,
-                  cameraOverride: _threeDCameraDraft,
-                  autoFitRevision: _threeDAutoFitRevision,
-                  autoFitOnMount: _threeDAutoFitRevision > 0,
-                  onCameraChanged: (camera) {
-                    final normalized = _normalizedThreeDCamera(camera);
+                  editable: true,
+                  trackingEnabled: true,
+                  showModelControls: true,
+                  transformOverride: _threeDTransformDraft,
+                  onTransformChanged: (transform) {
+                    final normalized = _normalizedThreeDTransform(transform);
                     setState(() {
-                      _threeDCameraDraft = normalized;
+                      _threeDTransformDraft = normalized;
                       if (_threeDAssetPayload != null) {
-                        _threeDAssetPayload = _payloadWithThreeDCameraSnapshot(
+                        _threeDAssetPayload =
+                            _payloadWithThreeDTransformSnapshot(
                           _threeDAssetPayload!,
                           normalized,
                         );
@@ -6413,53 +6404,6 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                             : 'Replace Thumbnail',
                       ),
                     ),
-                    if (_threeDAssetPayload != null) ...[
-                      const SizedBox(height: 14),
-                      _ThreeDCameraControlPanel(
-                        camera: _threeDCameraDraft,
-                        editMode: _threeDEditCamera,
-                        onEditModeChanged: (value) =>
-                            setState(() => _threeDEditCamera = value),
-                        onCameraChanged: (camera) {
-                          final normalized = _normalizedThreeDCamera(camera);
-                          setState(() {
-                            _threeDCameraDraft = normalized;
-                            _threeDAssetPayload =
-                                _payloadWithThreeDCameraSnapshot(
-                              _threeDAssetPayload!,
-                              normalized,
-                            );
-                          });
-                        },
-                        onReset: () {
-                          final reset = _normalizedThreeDCamera(
-                            const <String, dynamic>{
-                              'initialPosition': <double>[0, 0, 3],
-                              'initialTarget': <double>[0, 0, 0],
-                              'rotationDegrees': <String, dynamic>{
-                                'yaw': 0,
-                                'pitch': 0,
-                                'roll': 0,
-                              },
-                              'fov': 45,
-                              'distance': 3,
-                            },
-                          );
-                          setState(() {
-                            _threeDCameraDraft = reset;
-                            _threeDAssetPayload =
-                                _payloadWithThreeDCameraSnapshot(
-                              _threeDAssetPayload!,
-                              reset,
-                            );
-                          });
-                        },
-                        onAutoFit: () => setState(() {
-                          _threeDEditCamera = true;
-                          _threeDAutoFitRevision++;
-                        }),
-                      ),
-                    ],
                     const SizedBox(height: 10),
                     if (train3dMode) ...[
                       FilledButton.icon(
@@ -7596,8 +7540,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           ),
           fit: BoxFit.contain,
           allowImage: false,
-          showRecenter: true,
-          recenterRight: _mine ? 56 : 8,
+          trackingEnabled: true,
         ),
       ],
     );
@@ -10593,7 +10536,11 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
   }
 }
 
-List<double> _threeDCameraVector(dynamic value, List<double> fallback) {
+const List<double> _defaultThreeDPosition = <double>[0, -0.09, -0.03];
+const double _defaultThreeDScale = 0.071;
+const List<double> _defaultThreeDRotation = <double>[0, -0.628, 0];
+
+List<double> _threeDTransformVector(dynamic value, List<double> fallback) {
   if (value is! List || value.length < 3) return List<double>.from(fallback);
   double item(int index) {
     final dynamic raw = value[index];
@@ -10604,441 +10551,47 @@ List<double> _threeDCameraVector(dynamic value, List<double> fallback) {
   return <double>[item(0), item(1), item(2)];
 }
 
-double _threeDCameraNumber(dynamic value, double fallback) {
+double _threeDTransformNumber(dynamic value, double fallback) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
-Map<String, dynamic> _threeDCameraRotation(dynamic value) {
+Map<String, dynamic> _normalizedThreeDTransform(dynamic value) {
   final Map<String, dynamic> raw = value is Map
       ? Map<String, dynamic>.from(value)
       : const <String, dynamic>{};
   return <String, dynamic>{
-    'yaw': _threeDCameraNumber(raw['yaw'], 0),
-    'pitch': _threeDCameraNumber(raw['pitch'], 0),
-    'roll': _threeDCameraNumber(raw['roll'], 0),
-  };
-}
-
-double _threeDCameraDistance(List<double> position, List<double> target) {
-  final double dx = position[0] - target[0];
-  final double dy = position[1] - target[1];
-  final double dz = position[2] - target[2];
-  return math.max(0.1, math.sqrt(dx * dx + dy * dy + dz * dz));
-}
-
-Map<String, dynamic> _normalizedThreeDCamera(dynamic value) {
-  final Map<String, dynamic> raw = value is Map
-      ? Map<String, dynamic>.from(value)
-      : const <String, dynamic>{};
-  final List<double> target = _threeDCameraVector(
-    raw['initialTarget'],
-    const <double>[0, 0, 0],
-  );
-  final List<double> position = _threeDCameraVector(
-    raw['initialPosition'],
-    const <double>[0, 0, 3],
-  );
-  return <String, dynamic>{
-    'initialPosition': position,
-    'initialTarget': target,
-    'rotationDegrees': _threeDCameraRotation(raw['rotationDegrees']),
-    'fov': _threeDCameraNumber(raw['fov'], 45).clamp(10, 100).toDouble(),
-    'distance': _threeDCameraNumber(
-      raw['distance'],
-      _threeDCameraDistance(position, target),
-    ).clamp(0.1, 50).toDouble(),
-    if (raw['modelCenter'] is List)
-      'modelCenter': _threeDCameraVector(raw['modelCenter'], target),
-    'modelRadius': math.max(0.1, _threeDCameraNumber(raw['modelRadius'], 1)),
-  };
-}
-
-Map<String, dynamic> _cameraFromThreeDPayload(Map<String, dynamic> payload) {
-  final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
-  return _normalizedThreeDCamera(asset.camera);
-}
-
-List<double> _positionFromCameraAngles(
-  List<double> target,
-  Map<String, dynamic> rotation,
-  double distance,
-) {
-  final double yaw = _threeDCameraNumber(rotation['yaw'], 0) * math.pi / 180;
-  final double pitch =
-      _threeDCameraNumber(rotation['pitch'], 0).clamp(-89, 89).toDouble() *
-          math.pi /
-          180;
-  final double cosPitch = math.cos(pitch);
-  return <double>[
-    target[0] + math.sin(yaw) * cosPitch * distance,
-    target[1] + math.sin(pitch) * distance,
-    target[2] + math.cos(yaw) * cosPitch * distance,
-  ];
-}
-
-Map<String, dynamic> _rotationFromCameraVectors(
-  List<double> position,
-  List<double> target,
-  double roll,
-) {
-  final double dx = position[0] - target[0];
-  final double dy = position[1] - target[1];
-  final double dz = position[2] - target[2];
-  final double distance =
-      math.max(0.0001, math.sqrt(dx * dx + dy * dy + dz * dz));
-  return <String, dynamic>{
-    'yaw': math.atan2(dx, dz) * 180 / math.pi,
-    'pitch': math.asin((dy / distance).clamp(-1, 1).toDouble()) * 180 / math.pi,
-    'roll': roll,
-  };
-}
-
-Map<String, dynamic> _cameraWithPosition(
-  Map<String, dynamic> camera,
-  int index,
-  double value,
-) {
-  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
-  final List<double> position =
-      List<double>.from(next['initialPosition'] as List);
-  position[index] = value;
-  final List<double> target = List<double>.from(next['initialTarget'] as List);
-  final Map<String, dynamic> oldRotation =
-      Map<String, dynamic>.from(next['rotationDegrees'] as Map);
-  return <String, dynamic>{
-    ...next,
-    'initialPosition': position,
-    'rotationDegrees': _rotationFromCameraVectors(
-      position,
-      target,
-      _threeDCameraNumber(oldRotation['roll'], 0),
+    'position': _threeDTransformVector(
+      raw['position'],
+      _defaultThreeDPosition,
     ),
-    'distance': _threeDCameraDistance(position, target),
+    'scale': _threeDTransformNumber(
+      raw['scale'],
+      _defaultThreeDScale,
+    ).clamp(0.001, 100).toDouble(),
+    'rotation': _threeDTransformVector(
+      raw['rotation'],
+      _defaultThreeDRotation,
+    ),
   };
 }
 
-Map<String, dynamic> _cameraWithTarget(
-  Map<String, dynamic> camera,
-  int index,
-  double value,
-) {
-  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
-  final List<double> target = List<double>.from(next['initialTarget'] as List);
-  target[index] = value;
-  final Map<String, dynamic> rotation =
-      Map<String, dynamic>.from(next['rotationDegrees'] as Map);
-  final double distance = _threeDCameraNumber(next['distance'], 3);
-  return <String, dynamic>{
-    ...next,
-    'initialTarget': target,
-    'initialPosition': _positionFromCameraAngles(target, rotation, distance),
-  };
+Map<String, dynamic> _transformFromThreeDPayload(Map<String, dynamic> payload) {
+  final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
+  return _normalizedThreeDTransform(asset.transform);
 }
 
-Map<String, dynamic> _cameraWithRotation(
-  Map<String, dynamic> camera,
-  String key,
-  double value,
-) {
-  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
-  final Map<String, dynamic> rotation =
-      Map<String, dynamic>.from(next['rotationDegrees'] as Map);
-  rotation[key] = key == 'pitch' ? value.clamp(-89, 89).toDouble() : value;
-  final List<double> target = List<double>.from(next['initialTarget'] as List);
-  final double distance = _threeDCameraNumber(next['distance'], 3);
-  return <String, dynamic>{
-    ...next,
-    'rotationDegrees': rotation,
-    'initialPosition': _positionFromCameraAngles(target, rotation, distance),
-  };
-}
-
-Map<String, dynamic> _cameraWithDistance(
-  Map<String, dynamic> camera,
-  double value,
-) {
-  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
-  final List<double> target = List<double>.from(next['initialTarget'] as List);
-  final Map<String, dynamic> rotation =
-      Map<String, dynamic>.from(next['rotationDegrees'] as Map);
-  final double distance = value.clamp(0.1, 50).toDouble();
-  return <String, dynamic>{
-    ...next,
-    'distance': distance,
-    'initialPosition': _positionFromCameraAngles(target, rotation, distance),
-  };
-}
-
-Map<String, dynamic> _cameraWithFov(Map<String, dynamic> camera, double value) {
-  final Map<String, dynamic> next = _normalizedThreeDCamera(camera);
-  return <String, dynamic>{
-    ...next,
-    'fov': value.clamp(10, 100).toDouble(),
-  };
-}
-
-Map<String, dynamic> _payloadWithThreeDCameraSnapshot(
+Map<String, dynamic> _payloadWithThreeDTransformSnapshot(
   Map<String, dynamic> payload,
-  Map<String, dynamic> camera,
+  Map<String, dynamic> transform,
 ) {
-  final Map<String, dynamic> normalized = _normalizedThreeDCamera(camera);
-  return payloadWithThreeDCamera(
+  final Map<String, dynamic> normalized = _normalizedThreeDTransform(transform);
+  return payloadWithThreeDTransform(
     payload,
-    initialPosition: List<double>.from(normalized['initialPosition'] as List),
-    initialTarget: List<double>.from(normalized['initialTarget'] as List),
-    rotationDegrees:
-        Map<String, dynamic>.from(normalized['rotationDegrees'] as Map),
-    fov: _threeDCameraNumber(normalized['fov'], 45),
-    distance: _threeDCameraNumber(normalized['distance'], 3),
+    position: List<double>.from(normalized['position'] as List),
+    scale: _threeDTransformNumber(normalized['scale'], _defaultThreeDScale),
+    rotation: List<double>.from(normalized['rotation'] as List),
   );
-}
-
-class _ThreeDCameraControlPanel extends StatelessWidget {
-  const _ThreeDCameraControlPanel({
-    required this.camera,
-    required this.editMode,
-    required this.onEditModeChanged,
-    required this.onCameraChanged,
-    required this.onReset,
-    required this.onAutoFit,
-  });
-
-  final Map<String, dynamic> camera;
-  final bool editMode;
-  final ValueChanged<bool> onEditModeChanged;
-  final ValueChanged<Map<String, dynamic>> onCameraChanged;
-  final VoidCallback onReset;
-  final VoidCallback onAutoFit;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme cs = Theme.of(context).colorScheme;
-    final Map<String, dynamic> normalized = _normalizedThreeDCamera(camera);
-    final List<double> position =
-        List<double>.from(normalized['initialPosition'] as List);
-    final List<double> target =
-        List<double>.from(normalized['initialTarget'] as List);
-    final Map<String, dynamic> rotation =
-        Map<String, dynamic>.from(normalized['rotationDegrees'] as Map);
-    final List<double> modelCenter = normalized['modelCenter'] is List
-        ? List<double>.from(normalized['modelCenter'] as List)
-        : target;
-    final double radius =
-        math.max(0.1, _threeDCameraNumber(normalized['modelRadius'], 1));
-    final double distance = _threeDCameraNumber(normalized['distance'], 3);
-    final double positionRange =
-        math.max(20, math.max(radius * 5, distance * 3));
-    final double targetRange = math.max(10, radius * 3);
-    final double distanceMax =
-        math.max(50, math.max(radius * 12, distance * 4));
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SwitchListTile.adaptive(
-          contentPadding: EdgeInsets.zero,
-          value: editMode,
-          onChanged: onEditModeChanged,
-          title: Text(
-            'Edit Camera',
-            style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700),
-          ),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Camera X',
-          value: position[0],
-          min: modelCenter[0] - positionRange,
-          max: modelCenter[0] + positionRange,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithPosition(normalized, 0, value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Camera Y',
-          value: position[1],
-          min: modelCenter[1] - positionRange,
-          max: modelCenter[1] + positionRange,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithPosition(normalized, 1, value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Camera Z',
-          value: position[2],
-          min: modelCenter[2] - positionRange,
-          max: modelCenter[2] + positionRange,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithPosition(normalized, 2, value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Target X',
-          value: target[0],
-          min: modelCenter[0] - targetRange,
-          max: modelCenter[0] + targetRange,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithTarget(normalized, 0, value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Target Y',
-          value: target[1],
-          min: modelCenter[1] - targetRange,
-          max: modelCenter[1] + targetRange,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithTarget(normalized, 1, value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Target Z',
-          value: target[2],
-          min: modelCenter[2] - targetRange,
-          max: modelCenter[2] + targetRange,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithTarget(normalized, 2, value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Yaw',
-          value: _threeDCameraNumber(rotation['yaw'], 0),
-          min: -180,
-          max: 180,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithRotation(normalized, 'yaw', value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Pitch',
-          value: _threeDCameraNumber(rotation['pitch'], 0),
-          min: -89,
-          max: 89,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithRotation(normalized, 'pitch', value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Roll',
-          value: _threeDCameraNumber(rotation['roll'], 0),
-          min: -180,
-          max: 180,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithRotation(normalized, 'roll', value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'FOV',
-          value: _threeDCameraNumber(normalized['fov'], 45),
-          min: 10,
-          max: 100,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithFov(normalized, value)),
-        ),
-        _ThreeDCameraNumberControl(
-          label: 'Distance',
-          value: distance,
-          min: 0.1,
-          max: distanceMax,
-          enabled: editMode,
-          onChanged: (value) =>
-              onCameraChanged(_cameraWithDistance(normalized, value)),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            OutlinedButton.icon(
-              onPressed: editMode ? onReset : null,
-              icon: const Icon(Icons.center_focus_strong_rounded),
-              label: const Text('Reset'),
-            ),
-            OutlinedButton.icon(
-              onPressed: editMode ? onAutoFit : null,
-              icon: const Icon(Icons.fit_screen_rounded),
-              label: const Text('Auto-fit'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _ThreeDCameraNumberControl extends StatelessWidget {
-  const _ThreeDCameraNumberControl({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.enabled,
-    required this.onChanged,
-  });
-
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final bool enabled;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme cs = Theme.of(context).colorScheme;
-    final double safeValue = value.clamp(min, max).toDouble();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: enabled ? cs.onSurface : cs.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: 82,
-                child: TextFormField(
-                  key: ValueKey<String>(
-                    '$label-${safeValue.toStringAsFixed(3)}-$enabled',
-                  ),
-                  enabled: enabled,
-                  initialValue: safeValue.toStringAsFixed(2),
-                  textAlign: TextAlign.end,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  onFieldSubmitted: (raw) {
-                    final double? parsed = double.tryParse(raw.trim());
-                    if (parsed != null) {
-                      onChanged(parsed.clamp(min, max).toDouble());
-                    }
-                  },
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          Slider(
-            value: safeValue,
-            min: min,
-            max: max,
-            onChanged: enabled ? onChanged : null,
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _ThreeDAssetEditorPage extends StatefulWidget {
@@ -11059,13 +10612,11 @@ class _ThreeDAssetEditorPage extends StatefulWidget {
 class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
   final AppRepository _repository = AppRepository.instance;
   late Map<String, dynamic> _payload;
-  late Map<String, dynamic> _cameraDraft;
+  late Map<String, dynamic> _transformDraft;
   late DeepXMediaType _selectedMediaType;
-  bool _editCamera = false;
   bool _saving = false;
   bool _uploading = false;
   double _uploadProgress = 0;
-  int _autoFitRevision = 0;
 
   @override
   void initState() {
@@ -11074,35 +10625,19 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
       widget.initialPayload,
       editor: 'three_d_asset_editor',
     );
-    _cameraDraft = _cameraFromThreeDPayload(_payload);
+    _transformDraft = _transformFromThreeDPayload(_payload);
     _selectedMediaType =
         mediaTypeFromPayload(_payload) == DeepXMediaType.triangleMesh
             ? DeepXMediaType.triangleMesh
             : DeepXMediaType.gaussianSplat;
   }
 
-  void _applyCamera(Map<String, dynamic> camera) {
-    final Map<String, dynamic> normalized = _normalizedThreeDCamera(camera);
+  void _applyTransform(Map<String, dynamic> transform) {
+    final Map<String, dynamic> normalized =
+        _normalizedThreeDTransform(transform);
     setState(() {
-      _cameraDraft = normalized;
-      _payload = _payloadWithThreeDCameraSnapshot(_payload, normalized);
-    });
-  }
-
-  void _resetCamera() {
-    _applyCamera(const <String, dynamic>{
-      'initialPosition': <double>[0, 0, 3],
-      'initialTarget': <double>[0, 0, 0],
-      'rotationDegrees': <String, dynamic>{'yaw': 0, 'pitch': 0, 'roll': 0},
-      'fov': 45,
-      'distance': 3,
-    });
-  }
-
-  void _autoFitCamera() {
-    setState(() {
-      _editCamera = true;
-      _autoFitRevision++;
+      _transformDraft = normalized;
+      _payload = _payloadWithThreeDTransformSnapshot(_payload, normalized);
     });
   }
 
@@ -11110,13 +10645,13 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     setState(() {
       _selectedMediaType = mediaType;
       if (threeDAssetFromPayload(_payload) == null) {
-        _payload = _payloadWithThreeDCameraSnapshot(
+        _payload = _payloadWithThreeDTransformSnapshot(
           simpleMissingThreeDPayload(
             preferredType: mediaType,
             reason: 'awaiting_replacement_asset',
             editor: 'three_d_asset_editor',
           ),
-          _cameraDraft,
+          _transformDraft,
         );
       }
     });
@@ -11164,10 +10699,9 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
           byteSize: file.bytes.length,
           sourceKind: 'manual_update',
           transform: old.transform,
-          camera: _cameraDraft,
           meta: <String, dynamic>{'sourceName': file.name},
         );
-        _autoFitRevision++;
+        _transformDraft = _transformFromThreeDPayload(_payload);
       });
     } catch (e) {
       if (!mounted) return;
@@ -11240,11 +10774,11 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                       borderRadius: BorderRadius.circular(12),
                       child: ThreeDViewer(
                         payload: _payload,
-                        editable: _editCamera,
-                        cameraOverride: _cameraDraft,
-                        autoFitRevision: _autoFitRevision,
-                        autoFitOnMount: _autoFitRevision > 0,
-                        onCameraChanged: _applyCamera,
+                        editable: true,
+                        trackingEnabled: true,
+                        showModelControls: true,
+                        transformOverride: _transformDraft,
+                        onTransformChanged: _applyTransform,
                       ),
                     ),
                   ),
@@ -11302,16 +10836,6 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                     ),
                   ],
                   const SizedBox(height: 16),
-                  _ThreeDCameraControlPanel(
-                    camera: _cameraDraft,
-                    editMode: _editCamera,
-                    onEditModeChanged: (value) =>
-                        setState(() => _editCamera = value),
-                    onCameraChanged: _applyCamera,
-                    onReset: _resetCamera,
-                    onAutoFit: _autoFitCamera,
-                  ),
-                  const SizedBox(height: 18),
                   FilledButton.icon(
                     onPressed: _saving ? null : _save,
                     icon: _saving

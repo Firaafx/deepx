@@ -161,6 +161,22 @@ Map<String, dynamic> payloadWithThreeDCamera(
   ).toMap();
 }
 
+Map<String, dynamic> payloadWithThreeDTransform(
+  Map<String, dynamic> payload, {
+  required List<double> position,
+  required double scale,
+  required List<double> rotation,
+}) {
+  final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
+  return asset.copyWith(
+    transform: <String, dynamic>{
+      'position': _vector3(position, const <double>[0, -0.09, -0.03]),
+      'scale': _safeDouble(scale, 0.071).clamp(0.001, 100).toDouble(),
+      'rotation': _vector3(rotation, const <double>[0, -0.628, 0]),
+    },
+  ).toMap();
+}
+
 extension ThreeDAssetPayloadCopy on ThreeDAssetPayload {
   ThreeDAssetPayload copyWith({
     DeepXMediaType? mediaType,
@@ -204,9 +220,9 @@ int? _nullableInt(dynamic value) {
 
 Map<String, dynamic> _defaultTransform() {
   return <String, dynamic>{
-    'scale': 1,
-    'position': <double>[0, 0, 0],
-    'rotation': <double>[0, 0, 0],
+    'scale': 0.071,
+    'position': <double>[0, -0.09, -0.03],
+    'rotation': <double>[0, -0.628, 0],
   };
 }
 
@@ -227,6 +243,15 @@ Map<String, dynamic> _defaultCamera() {
 double _safeDouble(dynamic value, double fallback) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+List<double> _vector3(dynamic value, List<double> fallback) {
+  if (value is! List || value.length < 3) return List<double>.from(fallback);
+  return <double>[
+    _safeDouble(value[0], fallback[0]),
+    _safeDouble(value[1], fallback[1]),
+    _safeDouble(value[2], fallback[2]),
+  ];
 }
 
 double _distance(List<double> a, List<double> b) {

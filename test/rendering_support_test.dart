@@ -162,6 +162,41 @@ void main() {
     expect(asset.camera['fov'], 42);
   });
 
+  test('3D transform defaults match off-axis reference model controls', () {
+    final Map<String, dynamic> payload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.triangleMesh,
+      assetUrl: 'https://example.com/model.glb',
+      format: 'glb',
+    );
+
+    final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
+
+    expect(asset.transform['position'], <double>[0, -0.09, -0.03]);
+    expect(asset.transform['scale'], 0.071);
+    expect(asset.transform['rotation'], <double>[0, -0.628, 0]);
+  });
+
+  test('3D transform payload preserves model position scale and rotation', () {
+    final Map<String, dynamic> payload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.gaussianSplat,
+      assetUrl: 'https://example.com/scene.ksplat',
+      format: 'ksplat',
+    );
+
+    final Map<String, dynamic> transformed = payloadWithThreeDTransform(
+      normalizeRenderPayload(payload, editor: 'transform_test'),
+      position: const <double>[0.25, -0.12, -0.8],
+      scale: 0.118,
+      rotation: const <double>[0.1, -0.7, 0.02],
+    );
+    final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(transformed);
+
+    expect(asset.transform['position'], <double>[0.25, -0.12, -0.8]);
+    expect(asset.transform['scale'], 0.118);
+    expect(asset.transform['rotation'], <double>[0.1, -0.7, 0.02]);
+    expect(asset.mediaType, DeepXMediaType.gaussianSplat);
+  });
+
   test('collection snapshots accept 3D while thumbnails stay image payloads',
       () {
     final Map<String, dynamic> meshPayload = simpleThreeDPayload(
@@ -495,10 +530,29 @@ void main() {
       'blank' '${3}${6}${0}' 'Payload',
       'infer' '${3}${6}${0}' 'AssetKind',
       'assets/' 'tr' 'acker.html',
+      'deepx_' 'tr' 'acker_bridge',
+      'deepx_' 'three_viewer',
+      'DeepX' 'ThreeViewer',
+      'Tr' 'ackerOverlay',
+      'tr' 'acker_controller',
     ];
 
     for (final String value in forbidden) {
       expect(contents.contains(value), isFalse, reason: value);
+    }
+  });
+
+  test('retired tracker runtime files are removed', () {
+    for (final String path in <String>[
+      'web/tracker.html',
+      'web/tracker.js',
+      'web/deepx_tracker_bridge.js',
+      'web/deepx_three_viewer.js',
+      'lib/widgets/tracker_overlay.dart',
+      'lib/widgets/tracker_platform_view.dart',
+      'lib/services/tracker_controller.dart',
+    ]) {
+      expect(File(path).existsSync(), isFalse, reason: path);
     }
   });
 }
