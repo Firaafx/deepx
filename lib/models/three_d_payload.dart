@@ -191,7 +191,12 @@ Map<String, dynamic> payloadWithThreeDViewerState(
   bool? gridVisible,
   bool? dartsVisible,
   bool? objectVisible,
-  bool? backgroundVisible,
+  String? selectedLayerId,
+  List<Map<String, dynamic>>? imageLayers,
+  double? trackingSmoothing,
+  double? deadZoneX,
+  double? deadZoneY,
+  double? deadZoneZ,
 }) {
   final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
   final Map<String, dynamic> current = _normalizedViewerState(asset.viewer);
@@ -201,7 +206,12 @@ Map<String, dynamic> payloadWithThreeDViewerState(
       if (gridVisible != null) 'gridVisible': gridVisible,
       if (dartsVisible != null) 'dartsVisible': dartsVisible,
       if (objectVisible != null) 'objectVisible': objectVisible,
-      if (backgroundVisible != null) 'backgroundVisible': backgroundVisible,
+      if (selectedLayerId != null) 'selectedLayerId': selectedLayerId,
+      if (imageLayers != null) 'imageLayers': imageLayers,
+      if (trackingSmoothing != null) 'trackingSmoothing': trackingSmoothing,
+      if (deadZoneX != null) 'deadZoneX': deadZoneX,
+      if (deadZoneY != null) 'deadZoneY': deadZoneY,
+      if (deadZoneZ != null) 'deadZoneZ': deadZoneZ,
     },
   ).toMap();
 }
@@ -276,19 +286,35 @@ Map<String, dynamic> _defaultViewerState() {
     'gridVisible': true,
     'dartsVisible': false,
     'objectVisible': true,
-    'backgroundVisible': false,
+    'selectedLayerId': '',
+    'imageLayers': <Map<String, dynamic>>[],
+    'trackingSmoothing': 0.3,
+    'deadZoneX': 0.0,
+    'deadZoneY': 0.0,
+    'deadZoneZ': 0.0,
   };
 }
 
 Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
   final Map<String, dynamic> fallback = _defaultViewerState();
+  final List<Map<String, dynamic>> imageLayers = value['imageLayers'] is List
+      ? (value['imageLayers'] as List)
+          .whereType<Map>()
+          .map((layer) => _deepCopyMap(Map<String, dynamic>.from(layer)))
+          .toList()
+      : <Map<String, dynamic>>[];
   return <String, dynamic>{
     'gridVisible': _safeBool(value['gridVisible'], fallback['gridVisible']!),
     'dartsVisible': _safeBool(value['dartsVisible'], fallback['dartsVisible']!),
     'objectVisible':
         _safeBool(value['objectVisible'], fallback['objectVisible']!),
-    'backgroundVisible':
-        _safeBool(value['backgroundVisible'], fallback['backgroundVisible']!),
+    'selectedLayerId': _string(value['selectedLayerId']),
+    'imageLayers': imageLayers,
+    'trackingSmoothing':
+        _safeDouble(value['trackingSmoothing'], 0.3).clamp(0, 1).toDouble(),
+    'deadZoneX': _safeDouble(value['deadZoneX'], 0).clamp(0, 0.2).toDouble(),
+    'deadZoneY': _safeDouble(value['deadZoneY'], 0).clamp(0, 0.2).toDouble(),
+    'deadZoneZ': _safeDouble(value['deadZoneZ'], 0).clamp(0, 0.4).toDouble(),
   };
 }
 

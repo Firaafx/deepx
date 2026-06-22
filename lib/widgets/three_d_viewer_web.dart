@@ -42,6 +42,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   StreamSubscription<html.MessageEvent>? _messageSub;
   StreamSubscription<html.Event>? _resizeSub;
   StreamSubscription<html.Event>? _visibilitySub;
+  Timer? _mountRetryTimer;
   bool _factoryRegistered = false;
   String _mountedAssetKey = '';
   String _mountedOptionsJson = '';
@@ -78,6 +79,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     if (viewer != null) {
       viewer.callMethod('dispose', <Object>[_elementId]);
     }
+    _mountRetryTimer?.cancel();
     _messageSub?.cancel();
     _resizeSub?.cancel();
     _visibilitySub?.cancel();
@@ -86,7 +88,12 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
 
   void _mountOrUpdate({bool forceMount = false}) {
     final dynamic viewer = js.context['DeepXOffAxisViewer'];
-    if (viewer == null) return;
+    if (viewer == null) {
+      _scheduleMountRetry(forceMount: forceMount);
+      return;
+    }
+    _mountRetryTimer?.cancel();
+    _mountRetryTimer = null;
     final String nextAssetKey = _assetKey(widget.payload);
     final String payloadJson = jsonEncode(widget.payload);
     final String optionsJson = jsonEncode(<String, dynamic>{
@@ -127,6 +134,13 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       viewer.callMethod('setViewerState', <Object>[_elementId, viewerJson]);
     }
     viewer.callMethod('setEditable', <Object>[_elementId, widget.editable]);
+  }
+
+  void _scheduleMountRetry({bool forceMount = false}) {
+    if (!mounted || _mountRetryTimer?.isActive == true) return;
+    _mountRetryTimer = Timer(const Duration(milliseconds: 120), () {
+      if (mounted) _mountOrUpdate(forceMount: forceMount);
+    });
   }
 
   bool _viewerAlive(dynamic viewer) {

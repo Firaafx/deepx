@@ -209,10 +209,15 @@ void main() {
     expect(asset.viewer['gridVisible'], isTrue);
     expect(asset.viewer['dartsVisible'], isFalse);
     expect(asset.viewer['objectVisible'], isTrue);
-    expect(asset.viewer['backgroundVisible'], isFalse);
+    expect(asset.viewer['selectedLayerId'], '');
+    expect(asset.viewer['imageLayers'], isEmpty);
+    expect(asset.viewer['trackingSmoothing'], 0.3);
+    expect(asset.viewer['deadZoneX'], 0.0);
+    expect(asset.viewer['deadZoneY'], 0.0);
+    expect(asset.viewer['deadZoneZ'], 0.0);
   });
 
-  test('3D viewer state is preserved and can be updated independently', () {
+  test('3D viewer state and image layers are preserved independently', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
       mediaType: DeepXMediaType.gaussianSplat,
       assetUrl: 'https://example.com/scene.ksplat',
@@ -221,7 +226,24 @@ void main() {
         'gridVisible': false,
         'dartsVisible': true,
         'objectVisible': false,
-        'backgroundVisible': true,
+        'selectedLayerId': 'layer-1',
+        'trackingSmoothing': 0.55,
+        'deadZoneX': 0.02,
+        'deadZoneY': 0.03,
+        'deadZoneZ': 0.04,
+        'imageLayers': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'layer-1',
+            'name': 'mid.png',
+            'url': 'https://example.com/mid.png',
+            'contentType': 'image/png',
+            'transform': <String, dynamic>{
+              'position': <double>[0.1, 0.2, -0.3],
+              'scale': 0.25,
+              'rotation': <double>[0, 0.1, 0],
+            },
+          },
+        ],
       },
     );
 
@@ -237,12 +259,16 @@ void main() {
     expect(transformedAsset.viewer['gridVisible'], isFalse);
     expect(transformedAsset.viewer['dartsVisible'], isTrue);
     expect(transformedAsset.viewer['objectVisible'], isFalse);
-    expect(transformedAsset.viewer['backgroundVisible'], isTrue);
+    expect(transformedAsset.viewer['selectedLayerId'], 'layer-1');
+    expect(transformedAsset.viewer['trackingSmoothing'], 0.55);
+    expect(transformedAsset.viewer['deadZoneX'], 0.02);
+    expect(transformedAsset.viewer['imageLayers'], hasLength(1));
 
     final Map<String, dynamic> updated = payloadWithThreeDViewerState(
       transformed,
       gridVisible: true,
       objectVisible: true,
+      selectedLayerId: 'layer-1',
     );
     final ThreeDAssetPayload updatedAsset = ThreeDAssetPayload.fromMap(updated);
 
@@ -250,7 +276,9 @@ void main() {
     expect(updatedAsset.viewer['gridVisible'], isTrue);
     expect(updatedAsset.viewer['dartsVisible'], isTrue);
     expect(updatedAsset.viewer['objectVisible'], isTrue);
-    expect(updatedAsset.viewer['backgroundVisible'], isTrue);
+    expect(updatedAsset.viewer['selectedLayerId'], 'layer-1');
+    expect(updatedAsset.viewer['imageLayers'], hasLength(1));
+    expect(updatedAsset.viewer['deadZoneZ'], 0.04);
   });
 
   test('collection snapshots accept 3D while thumbnails stay image payloads',

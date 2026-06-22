@@ -5945,6 +5945,73 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     }
   }
 
+  Future<void> _uploadThreeDImageLayer() async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _uploading = true;
+      _threeDProcessing = true;
+      _threeDProgress = 0.12;
+      _threeDStage = 'Uploading PNG layer...';
+    });
+    try {
+      final file = await pickDeviceFile(accept: '.png,image/png');
+      if (file == null) {
+        if (mounted) setState(() => _threeDStage = 'PNG layer cancelled');
+        return;
+      }
+      final String ext = _extensionForFile(file.name);
+      if (ext != 'png') {
+        throw Exception('Only PNG image layers are supported.');
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType.trim().isEmpty
+            ? 'image/png'
+            : file.contentType,
+        folder: 'three-image-layers',
+        bucket: AppRepository.threeDAssetsBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _threeDProgress = progress.clamp(0, 1).toDouble();
+            _threeDStage =
+                'Uploading PNG layer ${(_threeDProgress * 100).round()}%';
+          });
+        },
+      );
+      setState(() {
+        _threeDAssetPayload = _payloadWithThreeDImageLayer(
+          _threeDAssetPayload,
+          asset,
+          name: file.name,
+          byteSize: file.bytes.length,
+          contentType:
+              file.contentType.trim().isEmpty ? 'image/png' : file.contentType,
+        );
+        _threeDTransformDraft =
+            _transformFromThreeDPayload(_threeDAssetPayload!);
+        _threeDViewerDraft =
+            _viewerStateFromThreeDPayload(_threeDAssetPayload!);
+        _threeDProgress = 1;
+        _threeDStage = 'PNG layer ready';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('PNG layer upload failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploading = false;
+          _threeDProcessing = false;
+        });
+      }
+    }
+  }
+
   Future<void> _openThreeDComposer() async {
     final messenger = ScaffoldMessenger.of(context);
     final rawPayload = _threeDAssetPayload;
@@ -5957,9 +6024,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
             ),
             _threeDViewerDraft,
           );
-    if (payload == null || threeDAssetFromPayload(payload) == null) {
+    if (payload == null ||
+        (threeDAssetFromPayload(payload) == null &&
+            !_hasThreeDImageLayers(payload))) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('Upload or generate a 3D asset first.')),
+        const SnackBar(
+          content: Text('Upload or generate a 3D asset, or add a PNG layer.'),
+        ),
       );
       return;
     }
@@ -6431,6 +6502,12 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                             ? 'Upload Thumbnail'
                             : 'Replace Thumbnail',
                       ),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _uploading ? null : _uploadThreeDImageLayer,
+                      icon: const Icon(Icons.layers_outlined),
+                      label: const Text('Add PNG Layer'),
                     ),
                     const SizedBox(height: 10),
                     if (train3dMode) ...[
@@ -10571,7 +10648,6 @@ const Map<String, bool> _defaultThreeDViewerState = <String, bool>{
   'gridVisible': true,
   'dartsVisible': false,
   'objectVisible': true,
-  'backgroundVisible': false,
 };
 
 List<double> _threeDTransformVector(dynamic value, List<double> fallback) {
@@ -10630,7 +10706,47 @@ Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
   return <String, dynamic>{
     for (final entry in _defaultThreeDViewerState.entries)
       entry.key: _threeDViewerBool(raw[entry.key], entry.value),
+    'selectedLayerId': raw['selectedLayerId']?.toString().trim() ?? '',
+    'imageLayers': _normalizedThreeDImageLayers(raw['imageLayers']),
+    'trackingSmoothing':
+        _threeDTransformNumber(raw['trackingSmoothing'], 0.3)
+            .clamp(0.0, 1.0)
+            .toDouble(),
+    'deadZoneX': _threeDTransformNumber(raw['deadZoneX'], 0)
+        .clamp(0.0, 0.2)
+        .toDouble(),
+    'deadZoneY': _threeDTransformNumber(raw['deadZoneY'], 0)
+        .clamp(0.0, 0.2)
+        .toDouble(),
+    'deadZoneZ': _threeDTransformNumber(raw['deadZoneZ'], 0)
+        .clamp(0.0, 0.4)
+        .toDouble(),
   };
+}
+
+List<Map<String, dynamic>> _normalizedThreeDImageLayers(dynamic value) {
+  if (value is! List) return <Map<String, dynamic>>[];
+  return value.whereType<Map>().map((layer) {
+    final Map<String, dynamic> raw = Map<String, dynamic>.from(layer);
+    final Map<String, dynamic> transform = _normalizedThreeDTransform(
+      raw['transform'],
+    );
+    return <String, dynamic>{
+      'id': raw['id']?.toString().trim().isNotEmpty == true
+          ? raw['id'].toString().trim()
+          : 'layer-${DateTime.now().microsecondsSinceEpoch}',
+      'name': raw['name']?.toString().trim().isNotEmpty == true
+          ? raw['name'].toString().trim()
+          : 'Image Layer',
+      'url': raw['url']?.toString().trim() ?? '',
+      'path': raw['path']?.toString().trim() ?? '',
+      'contentType': raw['contentType']?.toString().trim().isNotEmpty == true
+          ? raw['contentType'].toString().trim()
+          : 'image/png',
+      if (raw['bytes'] is num) 'bytes': (raw['bytes'] as num).toInt(),
+      'transform': transform,
+    };
+  }).toList();
 }
 
 Map<String, dynamic> _viewerStateFromThreeDPayload(
@@ -10664,7 +10780,66 @@ Map<String, dynamic> _payloadWithThreeDViewerStateSnapshot(
     gridVisible: normalized['gridVisible'] == true,
     dartsVisible: normalized['dartsVisible'] == true,
     objectVisible: normalized['objectVisible'] == true,
-    backgroundVisible: normalized['backgroundVisible'] == true,
+    selectedLayerId: normalized['selectedLayerId']?.toString() ?? '',
+    imageLayers: List<Map<String, dynamic>>.from(
+      normalized['imageLayers'] as List,
+    ),
+    trackingSmoothing: _threeDTransformNumber(
+      normalized['trackingSmoothing'],
+      0.3,
+    ),
+    deadZoneX: _threeDTransformNumber(normalized['deadZoneX'], 0),
+    deadZoneY: _threeDTransformNumber(normalized['deadZoneY'], 0),
+    deadZoneZ: _threeDTransformNumber(normalized['deadZoneZ'], 0),
+  );
+}
+
+bool _hasThreeDImageLayers(Map<String, dynamic>? payload) {
+  if (payload == null || !isThreeDPayload(payload)) return false;
+  final Map<String, dynamic> viewer = _viewerStateFromThreeDPayload(payload);
+  return _normalizedThreeDImageLayers(viewer['imageLayers']).isNotEmpty;
+}
+
+Map<String, dynamic> _payloadWithThreeDImageLayer(
+  Map<String, dynamic>? payload,
+  UploadedAsset asset, {
+  required String name,
+  required int byteSize,
+  required String contentType,
+}) {
+  final Map<String, dynamic> base = payload == null ||
+          !isThreeDPayload(payload)
+      ? simpleMissingThreeDPayload(
+          preferredType: DeepXMediaType.missing3d,
+          reason: 'png_layers_only',
+          editor: 'three_d_image_layers',
+        )
+      : payload;
+  final Map<String, dynamic> viewer = _viewerStateFromThreeDPayload(base);
+  final List<Map<String, dynamic>> layers = _normalizedThreeDImageLayers(
+    viewer['imageLayers'],
+  );
+  final String id = 'png-${DateTime.now().microsecondsSinceEpoch}';
+  layers.add(<String, dynamic>{
+    'id': id,
+    'name': name.trim().isEmpty ? 'PNG Layer ${layers.length + 1}' : name.trim(),
+    'url': asset.publicUrl,
+    'path': asset.path,
+    'contentType': contentType.trim().isEmpty ? 'image/png' : contentType.trim(),
+    'bytes': byteSize,
+    'transform': <String, dynamic>{
+      'position': <double>[0, 0, -0.08 - (layers.length * 0.08)],
+      'scale': 0.25,
+      'rotation': <double>[0, 0, 0],
+    },
+  });
+  return _payloadWithThreeDViewerStateSnapshot(
+    base,
+    <String, dynamic>{
+      ...viewer,
+      'selectedLayerId': id,
+      'imageLayers': layers,
+    },
   );
 }
 
@@ -10801,6 +10976,56 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     }
   }
 
+  Future<void> _addImageLayer() async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _uploading = true;
+      _uploadProgress = 0;
+    });
+    try {
+      final file = await pickDeviceFile(accept: '.png,image/png');
+      if (file == null) return;
+      final String ext = _extensionForFileName(file.name);
+      if (ext != 'png') {
+        throw Exception('Only PNG image layers are supported.');
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType.trim().isEmpty
+            ? 'image/png'
+            : file.contentType,
+        folder: 'three-image-layers',
+        bucket: AppRepository.threeDAssetsBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress.clamp(0, 1).toDouble());
+        },
+      );
+      setState(() {
+        _payload = _payloadWithThreeDImageLayer(
+          _payload,
+          asset,
+          name: file.name,
+          byteSize: file.bytes.length,
+          contentType:
+              file.contentType.trim().isEmpty ? 'image/png' : file.contentType,
+        );
+        _transformDraft = _transformFromThreeDPayload(_payload);
+        _viewerDraft = _viewerStateFromThreeDPayload(_payload);
+        _uploadProgress = 1;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('PNG layer upload failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     final messenger = ScaffoldMessenger.of(context);
@@ -10921,6 +11146,12 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                           )
                         : const Icon(Icons.upload_file_rounded),
                     label: Text(_uploading ? 'Uploading...' : 'Replace Asset'),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _uploading ? null : _addImageLayer,
+                    icon: const Icon(Icons.layers_outlined),
+                    label: const Text('Add PNG Layer'),
                   ),
                   if (_uploading) ...[
                     const SizedBox(height: 10),

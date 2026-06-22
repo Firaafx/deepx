@@ -8,15 +8,16 @@
 
   const WII_ROOM = Object.freeze({
     numGridlines: 10,
-    boxDepth: 8,
+    boxDepth: 10,
     fogDepth: 5,
-    gridColor: 0xcccccc,
+    fogReachTowardViewer: 2.5,
+    gridColor: 0x333333,
+    gridOpacity: 0.72,
     lineColor: 0xffffff,
     numTargets: 10,
     numInFront: 3,
     targetScale: 0.065,
-    targetTexture: 'reference/WiiDesktopVR/target.png',
-    backgroundTexture: 'reference/WiiDesktopVR/stad_2.png'
+    targetTexture: 'reference/WiiDesktopVR/target.png'
   });
 
   const DEFAULT_TRANSFORM = Object.freeze({
@@ -38,7 +39,12 @@
     gridVisible: true,
     dartsVisible: false,
     objectVisible: true,
-    backgroundVisible: false
+    selectedLayerId: '',
+    imageLayers: Object.freeze([]),
+    trackingSmoothing: 0.3,
+    deadZoneX: 0,
+    deadZoneY: 0,
+    deadZoneZ: 0
   });
 
   const CALIBRATION_STORAGE_KEY = 'parallax_calibration_v1';
@@ -134,6 +140,18 @@
         accent-color: #fff;
         cursor: pointer;
       }
+      .dx-layer-select {
+        width: 100%;
+        border: 1px solid rgba(255,255,255,0.22);
+        border-radius: 6px;
+        background: rgba(255,255,255,0.10);
+        color: #fff;
+        padding: 7px 8px;
+        font: 700 12px system-ui, sans-serif;
+      }
+      .dx-layer-select option {
+        color: #111827;
+      }
       .dx-control-group {
         display: grid;
         gap: 12px;
@@ -156,7 +174,7 @@
         bottom: 16px;
         z-index: 14;
         width: 256px;
-        height: 276px;
+        height: 392px;
         border: 2px solid #fff;
         border-radius: 8px;
         overflow: hidden;
@@ -165,9 +183,38 @@
         pointer-events: none;
         display: none;
       }
-      .dx-camera-stats {
+      .dx-tracking-controls {
         position: absolute;
         inset: 0 0 auto 0;
+        min-height: 116px;
+        padding: 8px;
+        box-sizing: border-box;
+        background: rgba(0,0,0,0.86);
+        color: rgba(255,255,255,0.92);
+        font: 700 10px/1.2 system-ui, sans-serif;
+        display: grid;
+        gap: 4px;
+        z-index: 3;
+        pointer-events: auto;
+      }
+      .dx-tracking-control {
+        display: grid;
+        grid-template-columns: 70px 1fr 34px;
+        align-items: center;
+        gap: 5px;
+      }
+      .dx-tracking-control input[type=range] {
+        width: 100%;
+        accent-color: #fff;
+      }
+      .dx-tracking-value {
+        text-align: right;
+        color: rgba(255,255,255,0.72);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .dx-camera-stats {
+        position: absolute;
+        inset: 116px 0 auto 0;
         min-height: 84px;
         padding: 8px;
         box-sizing: border-box;
@@ -185,9 +232,9 @@
         left: 0;
         right: 0;
         bottom: 0;
-        top: 84px;
+        top: 200px;
         width: 100%;
-        height: calc(100% - 84px);
+        height: calc(100% - 200px);
         object-fit: cover;
       }
       .dx-camera-preview video { transform: scaleX(-1); }
@@ -398,6 +445,16 @@
     };
   }
 
+  function transformFromRaw(raw, fallback) {
+    const base = fallback || DEFAULT_TRANSFORM;
+    const value = raw && typeof raw === 'object' ? raw : {};
+    return {
+      position: numberList(value.position, base.position),
+      scale: clamp(Number.isFinite(Number(value.scale)) ? Number(value.scale) : base.scale, 0.001, 100),
+      rotation: numberList(value.rotation, base.rotation)
+    };
+  }
+
   function transformSnapshot(transform) {
     return {
       position: transform.position.map((value) => Number(Number(value).toFixed(5))),
@@ -414,13 +471,59 @@
     return fallback;
   }
 
+  function safeNumber(value, fallback, min, max) {
+    const next = Number(value);
+    const resolved = Number.isFinite(next) ? next : fallback;
+    return clamp(resolved, min, max);
+  }
+
+  function imageLayersFromValue(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((raw, index) => {
+      const layer = raw && typeof raw === 'object' ? raw : {};
+      const fallbackTransform = {
+        position: [0, 0, -0.08 - index * 0.08],
+        scale: 0.25,
+        rotation: [0, 0, 0]
+      };
+      return {
+        id: String(layer.id || `png-${index}`).trim() || `png-${index}`,
+        name: String(layer.name || `PNG Layer ${index + 1}`).trim() || `PNG Layer ${index + 1}`,
+        url: String(layer.url || layer.assetUrl || '').trim(),
+        path: String(layer.path || layer.assetPath || '').trim(),
+        contentType: String(layer.contentType || 'image/png').trim() || 'image/png',
+        bytes: Number.isFinite(Number(layer.bytes)) ? Number(layer.bytes) : undefined,
+        transform: transformFromRaw(layer.transform, fallbackTransform)
+      };
+    }).filter((layer) => layer.url);
+  }
+
+  function imageLayerSnapshot(layer) {
+    return {
+      id: String(layer.id || ''),
+      name: String(layer.name || 'PNG Layer'),
+      url: String(layer.url || ''),
+      path: String(layer.path || ''),
+      contentType: String(layer.contentType || 'image/png'),
+      ...(Number.isFinite(Number(layer.bytes)) ? { bytes: Number(layer.bytes) } : {}),
+      transform: transformSnapshot(layer.transform)
+    };
+  }
+
   function viewerStateFromPayload(payload) {
     const raw = payload && typeof payload.viewer === 'object' ? payload.viewer : {};
+    const imageLayers = imageLayersFromValue(raw.imageLayers);
+    const rawSelected = String(raw.selectedLayerId || '').trim();
     return {
       gridVisible: safeBool(raw.gridVisible, DEFAULT_VIEWER_STATE.gridVisible),
       dartsVisible: safeBool(raw.dartsVisible, DEFAULT_VIEWER_STATE.dartsVisible),
       objectVisible: safeBool(raw.objectVisible, DEFAULT_VIEWER_STATE.objectVisible),
-      backgroundVisible: safeBool(raw.backgroundVisible, DEFAULT_VIEWER_STATE.backgroundVisible)
+      selectedLayerId: rawSelected || (imageLayers[0] ? imageLayers[0].id : ''),
+      imageLayers,
+      trackingSmoothing: safeNumber(raw.trackingSmoothing, DEFAULT_VIEWER_STATE.trackingSmoothing, 0, 1),
+      deadZoneX: safeNumber(raw.deadZoneX, DEFAULT_VIEWER_STATE.deadZoneX, 0, 0.2),
+      deadZoneY: safeNumber(raw.deadZoneY, DEFAULT_VIEWER_STATE.deadZoneY, 0, 0.2),
+      deadZoneZ: safeNumber(raw.deadZoneZ, DEFAULT_VIEWER_STATE.deadZoneZ, 0, 0.4)
     };
   }
 
@@ -429,8 +532,18 @@
       gridVisible: ctx.gridPreference === true,
       dartsVisible: ctx.dartsVisible === true,
       objectVisible: ctx.objectVisible !== false,
-      backgroundVisible: ctx.backgroundVisible === true
+      selectedLayerId: ctx.selectedLayerId || '',
+      imageLayers: (ctx.imageLayers || []).map(imageLayerSnapshot),
+      trackingSmoothing: Number(Number(ctx.trackingSmoothing).toFixed(3)),
+      deadZoneX: Number(Number(ctx.deadZoneX).toFixed(3)),
+      deadZoneY: Number(Number(ctx.deadZoneY).toFixed(3)),
+      deadZoneZ: Number(Number(ctx.deadZoneZ).toFixed(3))
     };
+  }
+
+  function hasImageLayers(payload) {
+    const state = viewerStateFromPayload(payload);
+    return state.imageLayers.length > 0;
   }
 
   function transformKey(transform) {
@@ -525,6 +638,18 @@
       this.baseInterOcularDistance = 0.1;
       this.smoothedPose = { x: 0.5, y: 0.5, z: 1 };
       this.hasPose = false;
+      this.smoothingAmount = DEFAULT_VIEWER_STATE.trackingSmoothing;
+      this.deadZoneX = DEFAULT_VIEWER_STATE.deadZoneX;
+      this.deadZoneY = DEFAULT_VIEWER_STATE.deadZoneY;
+      this.deadZoneZ = DEFAULT_VIEWER_STATE.deadZoneZ;
+    }
+
+    updateSettings(settings) {
+      const next = settings && typeof settings === 'object' ? settings : {};
+      this.smoothingAmount = safeNumber(next.trackingSmoothing, this.smoothingAmount, 0, 0.95);
+      this.deadZoneX = safeNumber(next.deadZoneX, this.deadZoneX, 0, 0.2);
+      this.deadZoneY = safeNumber(next.deadZoneY, this.deadZoneY, 0, 0.2);
+      this.deadZoneZ = safeNumber(next.deadZoneZ, this.deadZoneZ, 0, 0.4);
     }
 
     extractHeadPoseFromLandmarks(landmarks) {
@@ -562,15 +687,16 @@
         this.hasPose = true;
         return { ...this.smoothedPose };
       }
-      const delta = Math.hypot(
-        clamped.x - this.smoothedPose.x,
-        clamped.y - this.smoothedPose.y,
-        (clamped.z - this.smoothedPose.z) * 0.5
-      );
-      const alpha = delta > 0.035 ? 0.86 : 0.58;
-      this.smoothedPose.x += alpha * (clamped.x - this.smoothedPose.x);
-      this.smoothedPose.y += alpha * (clamped.y - this.smoothedPose.y);
-      this.smoothedPose.z += alpha * (clamped.z - this.smoothedPose.z);
+      const alpha = clamp(1 - this.smoothingAmount, 0.05, 1);
+      const applyAxis = (axis, target, deadZone) => {
+        const current = this.smoothedPose[axis];
+        const delta = target - current;
+        if (Math.abs(delta) <= deadZone) return current;
+        return current + alpha * delta;
+      };
+      this.smoothedPose.x = applyAxis('x', clamped.x, this.deadZoneX);
+      this.smoothedPose.y = applyAxis('y', clamped.y, this.deadZoneY);
+      this.smoothedPose.z = applyAxis('z', clamped.z, this.deadZoneZ);
       return { ...this.smoothedPose };
     }
 
@@ -669,6 +795,20 @@
     },
     poseTracker: new HeadPoseTracker(),
 
+    activeTrackingSettings() {
+      for (const ctx of viewers.values()) {
+        if (ctx.trackingEnabled && !ctx.disposed) {
+          return {
+            trackingSmoothing: ctx.trackingSmoothing,
+            deadZoneX: ctx.deadZoneX,
+            deadZoneY: ctx.deadZoneY,
+            deadZoneZ: ctx.deadZoneZ
+          };
+        }
+      }
+      return DEFAULT_VIEWER_STATE;
+    },
+
     async ensure() {
       if (document.hidden) return;
       if (![...viewers.values()].some((ctx) => ctx.trackingEnabled && !ctx.disposed)) {
@@ -681,16 +821,17 @@
       this.video.autoplay = true;
       this.video.muted = true;
       this.video.playsInline = true;
-      this.video.width = 640;
-      this.video.height = 480;
+      this.video.width = 320;
+      this.video.height = 240;
       this.video.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
       if (!this.video.parentNode) document.body.appendChild(this.video);
 
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          width: 640,
-          height: 480,
+          width: { ideal: 320, max: 640 },
+          height: { ideal: 240, max: 480 },
+          frameRate: { ideal: 60, max: 60 },
           facingMode: 'user'
         }
       });
@@ -702,9 +843,10 @@
       });
       this.faceMesh.setOptions({
         maxNumFaces: 1,
-        refineLandmarks: true,
+        refineLandmarks: false,
+        selfieMode: true,
         minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minTrackingConfidence: 0.65
       });
       this.faceMesh.onResults((results) => this.handleResults(results));
       this.running = true;
@@ -740,6 +882,7 @@
       const now = performance.now();
       const landmarks = results && results.multiFaceLandmarks ? results.multiFaceLandmarks : [];
       const firstFace = landmarks[0] || null;
+      this.poseTracker.updateSettings(this.activeTrackingSettings());
       const pose = this.poseTracker.extractHeadPoseFromLandmarks(landmarks);
       this.lastPose = pose || this.lastPose || { x: 0.5, y: 0.5, z: 1 };
       this.lastResultsAt = now;
@@ -838,7 +981,19 @@
       this.gridVisible = true;
       this.dartsVisible = this.viewerState.dartsVisible;
       this.objectVisible = this.viewerState.objectVisible;
-      this.backgroundVisible = this.viewerState.backgroundVisible;
+      this.imageLayers = this.viewerState.imageLayers.map((layer) => ({
+        ...layer,
+        transform: transformFromRaw(layer.transform, {
+          position: [0, 0, -0.08],
+          scale: 0.25,
+          rotation: [0, 0, 0]
+        })
+      }));
+      this.selectedLayerId = this.viewerState.selectedLayerId || (this.imageLayers[0] ? this.imageLayers[0].id : '');
+      this.trackingSmoothing = this.viewerState.trackingSmoothing;
+      this.deadZoneX = this.viewerState.deadZoneX;
+      this.deadZoneY = this.viewerState.deadZoneY;
+      this.deadZoneZ = this.viewerState.deadZoneZ;
       this.debugMode = false;
       this.headPose = { x: 0.5, y: 0.5, z: 1 };
       this.worldHeadPosition = { x: 0, y: 0, z: 0.6 };
@@ -854,7 +1009,9 @@
       this.debugHelpers = [];
       this.roomObjects = [];
       this.dartObjects = [];
-      this.backgroundObjects = [];
+      this.imageLayerObjects = [];
+      this.imageLayerPromises = [];
+      this.imageLayerGroup = null;
       this.disposed = false;
       this.raf = 0;
       this.resizeObserver = null;
@@ -880,7 +1037,7 @@
       };
       this.offAxisCamera = new OffAxisCamera(this.THREE, this.camera, calibration);
       this.renderer = new this.THREE.WebGLRenderer({ antialias: true, alpha: false });
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1));
       this.renderer.setSize(Math.max(1, this.root.clientWidth), Math.max(1, this.root.clientHeight), false);
       this.renderer.outputColorSpace = this.THREE.SRGBColorSpace;
       this.renderer.domElement.className = 'dx-render-canvas';
@@ -892,7 +1049,7 @@
       this.addLights();
       this.createWireframeRoom();
       this.createDarts();
-      this.createBackgroundPanorama();
+      this.createImageLayers();
       this.createDebugHelpers();
       this.buildChrome();
       this.installContextLossHandler();
@@ -926,6 +1083,17 @@
     }
 
     async loadAsset() {
+      if (!this.asset.url || (!supportedMesh(this.asset) && !supportedSplat(this.asset))) {
+        await this.waitForImageLayers();
+        if (this.disposed) return;
+        this.assetLoaded = true;
+        this.applyObjectVisibility();
+        this.setGridVisible(this.gridPreference, { notify: false, preference: false });
+        if (this.controlsOpen) this.refreshControlPanel();
+        notifyViewerStateChanged(this, true);
+        notifyLoadState(this.elementId, 'ready', 1, this.imageLayers.length ? 'Image layers ready' : 'Scene ready');
+        return;
+      }
       this.updateLoading('Loading 3D asset');
       try {
         this.object = supportedMesh(this.asset)
@@ -1101,16 +1269,18 @@
       const gridDivisions = WII_ROOM.numGridlines;
       const wallMaterial = new this.THREE.LineBasicMaterial({
         color: WII_ROOM.gridColor,
-        transparent: false,
-        opacity: 1,
+        transparent: true,
+        opacity: WII_ROOM.gridOpacity,
         depthTest: true,
         depthWrite: true,
-        fog: true
+        fog: true,
+        linewidth: 1
       });
-      const createGridWall = (width, height) => {
+      const createGridWall = (width, height, includeEdges) => {
         const geometry = new this.THREE.BufferGeometry();
         const vertices = [];
         for (let i = 0; i <= gridDivisions; i++) {
+          if (!includeEdges && (i === 0 || i === gridDivisions)) continue;
           const t = i / gridDivisions;
           vertices.push(-width / 2 + t * width, -height / 2, 0);
           vertices.push(-width / 2 + t * width, height / 2, 0);
@@ -1120,21 +1290,21 @@
         geometry.setAttribute('position', new this.THREE.Float32BufferAttribute(vertices, 3));
         return new this.THREE.LineSegments(geometry, wallMaterial);
       };
-      const backWall = createGridWall(roomWidth, roomHeight);
+      const backWall = createGridWall(roomWidth, roomHeight, false);
       backWall.position.z = -roomDepth;
-      const leftWall = createGridWall(roomDepth, roomHeight);
+      const leftWall = createGridWall(roomDepth, roomHeight, false);
       leftWall.rotation.y = Math.PI / 2;
       leftWall.position.x = -roomWidth / 2;
       leftWall.position.z = -roomDepth / 2;
-      const rightWall = createGridWall(roomDepth, roomHeight);
+      const rightWall = createGridWall(roomDepth, roomHeight, false);
       rightWall.rotation.y = -Math.PI / 2;
       rightWall.position.x = roomWidth / 2;
       rightWall.position.z = -roomDepth / 2;
-      const floor = createGridWall(roomWidth, roomDepth);
+      const floor = createGridWall(roomWidth, roomDepth, false);
       floor.rotation.x = Math.PI / 2;
       floor.position.y = -roomHeight / 2;
       floor.position.z = -roomDepth / 2;
-      const ceiling = createGridWall(roomWidth, roomDepth);
+      const ceiling = createGridWall(roomWidth, roomDepth, false);
       ceiling.rotation.x = -Math.PI / 2;
       ceiling.position.y = roomHeight / 2;
       ceiling.position.z = -roomDepth / 2;
@@ -1250,55 +1420,82 @@
       this.dartObjects = [];
     }
 
-    createBackgroundPanorama() {
-      this.removeBackgroundPanorama();
-      const screenDims = this.offAxisCamera.getScreenDimensions();
-      const radius = screenDims.height * 3;
-      const height = screenDims.height * 2;
-      const segments = 24;
-      const geometry = new this.THREE.BufferGeometry();
-      const vertices = [];
-      const uvs = [];
-      const indices = [];
-      for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
-        const angle = Math.PI * t;
-        const x = Math.cos(angle) * radius;
-        const z = -Math.sin(angle) * radius;
-        vertices.push(x, -height / 2, z, x, height / 2, z);
-        uvs.push(t, 1, t, 0);
-        if (i < segments) {
-          const base = i * 2;
-          indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
-        }
+    createImageLayers() {
+      this.removeImageLayers();
+      const group = new this.THREE.Group();
+      group.visible = this.objectVisible;
+      this.imageLayerGroup = group;
+      this.scene.add(group);
+      this.imageLayerObjects = [];
+      this.imageLayerPromises = [];
+      for (const layer of this.imageLayers) {
+        const geometry = new this.THREE.PlaneGeometry(1, 1);
+        const material = new this.THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          alphaTest: 0.01,
+          depthTest: true,
+          depthWrite: false,
+          side: this.THREE.DoubleSide,
+          fog: true
+        });
+        const mesh = new this.THREE.Mesh(geometry, material);
+        mesh.userData.deepxImageLayerId = layer.id;
+        mesh.userData.deepxImageLayerAspect = 1;
+        group.add(mesh);
+        this.imageLayerObjects.push(mesh);
+        this.applyImageLayerTransform(layer);
+        const promise = this.loadTexture(layer.url)
+          .then((texture) => {
+            if (this.disposed) return;
+            material.map = texture;
+            const image = texture.image || {};
+            const width = Number(image.width) || 1;
+            const height = Number(image.height) || 1;
+            mesh.userData.deepxImageLayerAspect = width / Math.max(height, 1);
+            material.needsUpdate = true;
+            this.applyImageLayerTransform(layer);
+          })
+          .catch((error) => console.warn('Unable to load PNG layer:', error));
+        this.imageLayerPromises.push(promise);
       }
-      geometry.setAttribute('position', new this.THREE.Float32BufferAttribute(vertices, 3));
-      geometry.setAttribute('uv', new this.THREE.Float32BufferAttribute(uvs, 2));
-      geometry.setIndex(indices);
-      const material = new this.THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        side: this.THREE.DoubleSide,
-        fog: false
-      });
-      const mesh = new this.THREE.Mesh(geometry, material);
-      mesh.visible = this.backgroundVisible;
-      this.backgroundObjects.push(mesh);
-      this.scene.add(mesh);
-      this.loadTexture(WII_ROOM.backgroundTexture)
-        .then((texture) => {
-          if (this.disposed) return;
-          material.map = texture;
-          material.needsUpdate = true;
-        })
-        .catch((error) => console.warn('Unable to load background texture:', error));
     }
 
-    removeBackgroundPanorama() {
-      for (const obj of this.backgroundObjects) {
-        this.scene.remove(obj);
-        this.disposeObject(obj);
+    async waitForImageLayers() {
+      if (!this.imageLayerPromises || !this.imageLayerPromises.length) return;
+      await Promise.allSettled(this.imageLayerPromises);
+    }
+
+    removeImageLayers() {
+      if (this.imageLayerGroup) {
+        this.scene.remove(this.imageLayerGroup);
+        this.disposeObject(this.imageLayerGroup);
       }
-      this.backgroundObjects = [];
+      this.imageLayerGroup = null;
+      this.imageLayerObjects = [];
+    }
+
+    selectedImageLayer() {
+      if (!this.selectedLayerId) return null;
+      return this.imageLayers.find((layer) => layer.id === this.selectedLayerId) || null;
+    }
+
+    imageLayerMesh(id) {
+      return this.imageLayerObjects.find((mesh) => mesh.userData && mesh.userData.deepxImageLayerId === id) || null;
+    }
+
+    applyImageLayerTransform(layer) {
+      const mesh = layer ? this.imageLayerMesh(layer.id) : null;
+      if (!mesh) return;
+      const transform = layer.transform;
+      const aspect = Number(mesh.userData.deepxImageLayerAspect) || 1;
+      mesh.position.set(transform.position[0], transform.position[1], transform.position[2]);
+      mesh.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
+      mesh.scale.set(transform.scale * aspect, transform.scale, transform.scale);
+    }
+
+    applyImageLayerTransforms() {
+      for (const layer of this.imageLayers) this.applyImageLayerTransform(layer);
     }
 
     createDebugHelpers() {
@@ -1330,7 +1527,25 @@
       };
     }
 
+    activeImageLayerTransform() {
+      const layer = this.selectedImageLayer();
+      return layer ? layer.transform : null;
+    }
+
+    activeTransform() {
+      return this.activeImageLayerTransform() || this.transform;
+    }
+
     computeScaleRange() {
+      const layerTransform = this.activeImageLayerTransform();
+      if (layerTransform) {
+        const current = Math.max(Number(layerTransform.scale) || 0.25, 0.001);
+        this.scaleRange = {
+          min: clamp(Math.min(0.001, current / 20), 0.001, 100),
+          max: clamp(Math.max(2, current * 20), 0.001, 100)
+        };
+        return this.scaleRange;
+      }
       const screenDims = this.offAxisCamera ? this.offAxisCamera.getScreenDimensions() : { width: 1, height: 1 };
       const modelMaxDimension = this.modelBounds && this.modelBounds.maxDimension
         ? this.modelBounds.maxDimension
@@ -1350,6 +1565,8 @@
     buildChrome() {
       this.preview = document.createElement('div');
       this.preview.className = 'dx-camera-preview';
+      this.trackingControls = document.createElement('div');
+      this.trackingControls.className = 'dx-tracking-controls';
       this.statsPanel = document.createElement('div');
       this.statsPanel.className = 'dx-camera-stats';
       this.previewVideo = document.createElement('video');
@@ -1357,8 +1574,10 @@
       this.previewVideo.muted = true;
       this.previewVideo.playsInline = true;
       this.previewCanvas = document.createElement('canvas');
-      this.previewCanvas.width = 640;
-      this.previewCanvas.height = 480;
+      this.previewCanvas.width = 320;
+      this.previewCanvas.height = 240;
+      this.buildTrackingControls();
+      this.preview.appendChild(this.trackingControls);
       this.preview.appendChild(this.statsPanel);
       this.preview.appendChild(this.previewVideo);
       this.preview.appendChild(this.previewCanvas);
@@ -1411,23 +1630,97 @@
       panel.appendChild(header);
       const body = document.createElement('div');
       body.className = 'dx-model-body';
-      body.appendChild(this.makeRange('Position X', this.transform.position[0], -1, 1, 0.001, (value) => this.setPositionAxis(0, value)));
-      body.appendChild(this.makeRange('Position Y', this.transform.position[1], -1, 1, 0.001, (value) => this.setPositionAxis(1, value)));
-      body.appendChild(this.makeRange('Position Z', this.transform.position[2], -2, 1, 0.001, (value) => this.setPositionAxis(2, value)));
+      if (this.imageLayers.length) {
+        body.appendChild(this.makeLayerSelector());
+      }
+      const active = this.activeTransform();
+      body.appendChild(this.makeRange('Position X', active.position[0], -1, 1, 0.001, (value) => this.setPositionAxis(0, value)));
+      body.appendChild(this.makeRange('Position Y', active.position[1], -1, 1, 0.001, (value) => this.setPositionAxis(1, value)));
+      body.appendChild(this.makeRange('Position Z', active.position[2], -2, 1, 0.001, (value) => this.setPositionAxis(2, value)));
       const scaleGroup = document.createElement('div');
       scaleGroup.className = 'dx-control-group';
       this.computeScaleRange();
-      scaleGroup.appendChild(this.makeRange('Scale', this.transform.scale, this.scaleRange.min, this.scaleRange.max, 0.001, (value) => this.setScale(value)));
+      scaleGroup.appendChild(this.makeRange('Scale', active.scale, this.scaleRange.min, this.scaleRange.max, 0.001, (value) => this.setScale(value)));
       body.appendChild(scaleGroup);
       const rotationGroup = document.createElement('div');
       rotationGroup.className = 'dx-control-group';
       const formatDegrees = (value) => `${(value * 180 / Math.PI).toFixed(1)}deg`;
-      rotationGroup.appendChild(this.makeRange('Rotation X', this.transform.rotation[0], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(0, value), formatDegrees));
-      rotationGroup.appendChild(this.makeRange('Rotation Y', this.transform.rotation[1], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(1, value), formatDegrees));
-      rotationGroup.appendChild(this.makeRange('Rotation Z', this.transform.rotation[2], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(2, value), formatDegrees));
+      rotationGroup.appendChild(this.makeRange('Rotation X', active.rotation[0], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(0, value), formatDegrees));
+      rotationGroup.appendChild(this.makeRange('Rotation Y', active.rotation[1], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(1, value), formatDegrees));
+      rotationGroup.appendChild(this.makeRange('Rotation Z', active.rotation[2], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(2, value), formatDegrees));
       body.appendChild(rotationGroup);
       panel.appendChild(body);
       this.modelPanel.appendChild(panel);
+    }
+
+    makeLayerSelector() {
+      const wrap = document.createElement('div');
+      wrap.className = 'dx-control';
+      const label = document.createElement('label');
+      label.textContent = 'Selected Object';
+      const select = document.createElement('select');
+      select.className = 'dx-layer-select';
+      const canSelectObject = !!this.object || !!this.asset.url;
+      if (canSelectObject) {
+        const option = document.createElement('option');
+        option.value = '__object__';
+        option.textContent = '3D Object';
+        select.appendChild(option);
+      }
+      for (const layer of this.imageLayers) {
+        const option = document.createElement('option');
+        option.value = layer.id;
+        option.textContent = layer.name;
+        select.appendChild(option);
+      }
+      if (!canSelectObject && this.imageLayers.length && !this.selectedImageLayer()) {
+        this.selectedLayerId = this.imageLayers[0].id;
+      }
+      select.value = this.selectedImageLayer() ? this.selectedLayerId : '__object__';
+      select.addEventListener('change', () => {
+        this.selectedLayerId = select.value === '__object__' ? '' : select.value;
+        notifyViewerStateChanged(this);
+        this.refreshControlPanel();
+      });
+      wrap.append(label, select);
+      return wrap;
+    }
+
+    buildTrackingControls() {
+      if (!this.trackingControls) return;
+      this.trackingControls.innerHTML = '';
+      this.trackingControls.append(
+        this.makeTrackingRange('Smoothing', this.trackingSmoothing, 0, 0.95, 0.001, (value) => this.setTrackingSettings({ trackingSmoothing: value }, true)),
+        this.makeTrackingRange('Dead X', this.deadZoneX, 0, 0.2, 0.001, (value) => this.setTrackingSettings({ deadZoneX: value }, true)),
+        this.makeTrackingRange('Dead Y', this.deadZoneY, 0, 0.2, 0.001, (value) => this.setTrackingSettings({ deadZoneY: value }, true)),
+        this.makeTrackingRange('Dead Z', this.deadZoneZ, 0, 0.4, 0.001, (value) => this.setTrackingSettings({ deadZoneZ: value }, true))
+      );
+    }
+
+    makeTrackingRange(label, value, min, max, step, onInput) {
+      const wrap = document.createElement('label');
+      wrap.className = 'dx-tracking-control';
+      const text = document.createElement('span');
+      text.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(min);
+      input.max = String(max);
+      input.step = String(step);
+      input.value = String(clamp(value, min, max));
+      const output = document.createElement('span');
+      output.className = 'dx-tracking-value';
+      const updateOutput = (next) => {
+        output.textContent = Number(next).toFixed(3);
+      };
+      updateOutput(value);
+      input.addEventListener('input', () => {
+        const next = Number(input.value);
+        updateOutput(next);
+        onInput(next);
+      });
+      wrap.append(text, input, output);
+      return wrap;
     }
 
     makeRange(label, value, min, max, step, onInput, formatter) {
@@ -1476,10 +1769,6 @@
         this.setObjectVisible(!this.objectVisible, true);
       });
       object.classList.toggle('is-active', this.objectVisible);
-      const background = this.makeButton('BG', 'Toggle background panorama', () => {
-        this.setBackgroundVisible(!this.backgroundVisible, true);
-      });
-      background.classList.toggle('is-active', this.backgroundVisible);
       const preview = this.makeButton('CAM', 'Toggle camera preview', () => {
         this.setPreviewVisible(!this.previewVisible);
         preview.classList.toggle('is-active', this.previewVisible);
@@ -1488,9 +1777,8 @@
       this.gridButton = grid;
       this.dartsButton = darts;
       this.objectButton = object;
-      this.backgroundButton = background;
       this.previewButton = preview;
-      buttons.append(fullscreen, settings, debug, grid, darts, object, background, preview, reset);
+      buttons.append(fullscreen, settings, debug, grid, darts, object, preview, reset);
       this.root.appendChild(buttons);
       document.addEventListener('fullscreenchange', () => {
         fullscreen.textContent = document.fullscreenElement ? 'MIN' : 'FS';
@@ -1516,9 +1804,6 @@
       } else if (key === 'o') {
         event.preventDefault();
         this.setObjectVisible(!this.objectVisible, true);
-      } else if (key === 'b') {
-        event.preventDefault();
-        this.setBackgroundVisible(!this.backgroundVisible, true);
       } else if (key === 'c') {
         event.preventDefault();
         this.setPreviewVisible(!this.previewVisible);
@@ -1599,10 +1884,9 @@
       this.offAxisCamera.updateCalibration(calibration);
       this.createWireframeRoom();
       this.createDarts();
-      this.createBackgroundPanorama();
+      this.applyImageLayerTransforms();
       this.setGridVisible(this.gridVisible, { notify: false, preference: false });
       this.setDartsVisible(this.dartsVisible, false);
-      this.setBackgroundVisible(this.backgroundVisible, false);
     }
 
     setGridVisible(visible, options) {
@@ -1631,13 +1915,7 @@
 
     applyObjectVisibility() {
       if (this.object) this.object.visible = this.objectVisible;
-    }
-
-    setBackgroundVisible(visible, notify) {
-      this.backgroundVisible = visible === true;
-      for (const obj of this.backgroundObjects) obj.visible = this.backgroundVisible;
-      if (this.backgroundButton) this.backgroundButton.classList.toggle('is-active', this.backgroundVisible);
-      if (notify) notifyViewerStateChanged(this);
+      if (this.imageLayerGroup) this.imageLayerGroup.visible = this.objectVisible;
     }
 
     setViewerState(state, notify) {
@@ -1650,7 +1928,48 @@
       this.setGridVisible(shouldShowGrid, { notify: false, preference: false });
       this.setDartsVisible(safeBool(next.dartsVisible, DEFAULT_VIEWER_STATE.dartsVisible), false);
       this.setObjectVisible(safeBool(next.objectVisible, DEFAULT_VIEWER_STATE.objectVisible), false);
-      this.setBackgroundVisible(safeBool(next.backgroundVisible, DEFAULT_VIEWER_STATE.backgroundVisible), false);
+      const incomingLayers = imageLayersFromValue(next.imageLayers);
+      const oldLayerKey = JSON.stringify((this.imageLayers || []).map(imageLayerSnapshot));
+      const newLayerKey = JSON.stringify(incomingLayers.map(imageLayerSnapshot));
+      if (oldLayerKey !== newLayerKey) {
+        this.imageLayers = incomingLayers;
+        this.selectedLayerId = String(next.selectedLayerId || '').trim() || (this.imageLayers[0] ? this.imageLayers[0].id : '');
+        this.createImageLayers();
+        this.applyObjectVisibility();
+        if (this.controlsOpen) this.refreshControlPanel();
+      } else {
+        this.selectedLayerId = String(next.selectedLayerId || '').trim();
+      }
+      this.setTrackingSettings({
+        trackingSmoothing: safeNumber(next.trackingSmoothing, DEFAULT_VIEWER_STATE.trackingSmoothing, 0, 1),
+        deadZoneX: safeNumber(next.deadZoneX, DEFAULT_VIEWER_STATE.deadZoneX, 0, 0.2),
+        deadZoneY: safeNumber(next.deadZoneY, DEFAULT_VIEWER_STATE.deadZoneY, 0, 0.2),
+        deadZoneZ: safeNumber(next.deadZoneZ, DEFAULT_VIEWER_STATE.deadZoneZ, 0, 0.4)
+      }, false);
+      if (notify) notifyViewerStateChanged(this);
+    }
+
+    setTrackingSettings(settings, notify) {
+      const next = settings && typeof settings === 'object' ? settings : {};
+      if (Object.prototype.hasOwnProperty.call(next, 'trackingSmoothing')) {
+        this.trackingSmoothing = safeNumber(next.trackingSmoothing, this.trackingSmoothing, 0, 0.95);
+      }
+      if (Object.prototype.hasOwnProperty.call(next, 'deadZoneX')) {
+        this.deadZoneX = safeNumber(next.deadZoneX, this.deadZoneX, 0, 0.2);
+      }
+      if (Object.prototype.hasOwnProperty.call(next, 'deadZoneY')) {
+        this.deadZoneY = safeNumber(next.deadZoneY, this.deadZoneY, 0, 0.2);
+      }
+      if (Object.prototype.hasOwnProperty.call(next, 'deadZoneZ')) {
+        this.deadZoneZ = safeNumber(next.deadZoneZ, this.deadZoneZ, 0, 0.4);
+      }
+      faceTracker.poseTracker.updateSettings({
+        trackingSmoothing: this.trackingSmoothing,
+        deadZoneX: this.deadZoneX,
+        deadZoneY: this.deadZoneY,
+        deadZoneZ: this.deadZoneZ
+      });
+      if (!notify) this.buildTrackingControls();
       if (notify) notifyViewerStateChanged(this);
     }
 
@@ -1726,18 +2045,40 @@
     }
 
     setPositionAxis(index, value) {
+      const layer = this.selectedImageLayer();
+      if (layer) {
+        layer.transform.position[index] = value;
+        this.applyImageLayerTransform(layer);
+        notifyViewerStateChanged(this);
+        return;
+      }
       this.transform.position[index] = value;
       this.applyTransform();
       notifyTransformChanged(this);
     }
 
     setRotationAxis(index, value) {
+      const layer = this.selectedImageLayer();
+      if (layer) {
+        layer.transform.rotation[index] = value;
+        this.applyImageLayerTransform(layer);
+        notifyViewerStateChanged(this);
+        return;
+      }
       this.transform.rotation[index] = value;
       this.applyTransform();
       notifyTransformChanged(this);
     }
 
     setScale(value) {
+      const layer = this.selectedImageLayer();
+      if (layer) {
+        layer.transform.scale = value;
+        this.applyImageLayerTransform(layer);
+        this.computeScaleRange();
+        notifyViewerStateChanged(this);
+        return;
+      }
       this.transform.scale = value;
       this.applyTransform();
       this.computeScaleRange();
@@ -1777,9 +2118,6 @@
     receiveHeadPose(headPose) {
       this.headPose = headPose || { x: 0.5, y: 0.5, z: 1 };
       this.updateOffAxisCamera();
-      if (this.renderer && this.scene && this.camera && this.rendering) {
-        this.renderer.render(this.scene, this.camera);
-      }
     }
 
     updateOffAxisCamera() {
@@ -1797,7 +2135,8 @@
     updateFog() {
       if (!this.scene || !this.scene.fog) return;
       const screenDims = this.offAxisCamera.getScreenDimensions();
-      const start = Math.max(0.001, this.worldHeadPosition ? this.worldHeadPosition.z : this.camera.position.z);
+      const headZ = this.worldHeadPosition ? this.worldHeadPosition.z : this.camera.position.z;
+      const start = Math.max(0.001, headZ - screenDims.height * WII_ROOM.fogReachTowardViewer);
       this.scene.fog.near = start;
       this.scene.fog.far = start + screenDims.height * WII_ROOM.fogDepth;
     }
@@ -1853,10 +2192,9 @@
       this.renderer.setSize(width, height, false);
       this.createWireframeRoom();
       this.createDarts();
-      this.createBackgroundPanorama();
+      this.applyImageLayerTransforms();
       this.setGridVisible(this.gridVisible, { notify: false, preference: false });
       this.setDartsVisible(this.dartsVisible, false);
-      this.setBackgroundVisible(this.backgroundVisible, false);
       this.computeScaleRange();
       return true;
     }
@@ -1924,18 +2262,24 @@
     const payload = parseJson(payloadJson);
     const options = parseJson(optionsJson);
     const asset = payloadAsset(payload);
-    if (!asset.url) {
+    const imageLayerScene = hasImageLayers(payload);
+    if (!asset.url && !imageLayerScene) {
       notifyLoadState(elementId, 'missing', null, missingLabel(asset));
       setMessage(root, missingLabel(asset));
       return;
     }
-    if (!supportedMesh(asset) && !supportedSplat(asset)) {
+    if (asset.url && !supportedMesh(asset) && !supportedSplat(asset) && !imageLayerScene) {
       notifyLoadState(elementId, 'missing', null, missingLabel(asset));
       setMessage(root, missingLabel(asset));
       return;
     }
-    setMessage(root, 'Loading 3D asset...');
-    notifyLoadState(elementId, 'loading', null, 'Loading 3D asset');
+    setMessage(root, imageLayerScene && !asset.url ? 'Loading image layers...' : 'Loading 3D asset...');
+    notifyLoadState(
+      elementId,
+      'loading',
+      null,
+      imageLayerScene && !asset.url ? 'Loading image layers' : 'Loading 3D asset'
+    );
     try {
       const modules = await loadModules();
       if (root.__deepxOffAxisMountToken !== token) return;
