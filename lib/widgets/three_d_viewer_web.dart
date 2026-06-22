@@ -18,6 +18,7 @@ class ThreeDViewer extends StatefulWidget {
     this.showLoadingProgress = true,
     this.transformOverride,
     this.onTransformChanged,
+    this.onViewerStateChanged,
   });
 
   final Map<String, dynamic> payload;
@@ -27,6 +28,7 @@ class ThreeDViewer extends StatefulWidget {
   final bool showLoadingProgress;
   final Map<String, dynamic>? transformOverride;
   final ValueChanged<Map<String, dynamic>>? onTransformChanged;
+  final ValueChanged<Map<String, dynamic>>? onViewerStateChanged;
 
   @override
   State<ThreeDViewer> createState() => _ThreeDViewerState();
@@ -44,6 +46,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   String _mountedAssetKey = '';
   String _mountedOptionsJson = '';
   String _lastTransformJson = '';
+  String _lastViewerJson = '';
   String _loadStatus = '';
   String _loadLabel = '';
   double? _loadProgress;
@@ -93,6 +96,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     });
     final String transformJson =
         jsonEncode(widget.transformOverride ?? _transformFromPayload());
+    final String viewerJson = jsonEncode(_viewerFromPayload());
     final bool missingViewer =
         _mountedAssetKey.isNotEmpty && !_viewerAlive(viewer);
     if (forceMount ||
@@ -102,6 +106,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       _mountedAssetKey = nextAssetKey;
       _mountedOptionsJson = optionsJson;
       _lastTransformJson = transformJson;
+      _lastViewerJson = viewerJson;
       if (mounted) {
         setState(() {
           _loadStatus = 'loading';
@@ -116,6 +121,10 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     if (_lastTransformJson != transformJson) {
       _lastTransformJson = transformJson;
       viewer.callMethod('setTransform', <Object>[_elementId, transformJson]);
+    }
+    if (_lastViewerJson != viewerJson) {
+      _lastViewerJson = viewerJson;
+      viewer.callMethod('setViewerState', <Object>[_elementId, viewerJson]);
     }
     viewer.callMethod('setEditable', <Object>[_elementId, widget.editable]);
   }
@@ -166,6 +175,12 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     return const <String, dynamic>{};
   }
 
+  Map<String, dynamic> _viewerFromPayload() {
+    final dynamic rawViewer = widget.payload['viewer'];
+    if (rawViewer is Map) return Map<String, dynamic>.from(rawViewer);
+    return const <String, dynamic>{};
+  }
+
   void _handleMessage(html.MessageEvent event) {
     final Map<String, dynamic>? data = _messageMap(event.data);
     if (data == null || data['elementId'] != _elementId) return;
@@ -182,13 +197,23 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       });
       return;
     }
-    final callback = widget.onTransformChanged;
-    if (callback == null) return;
-    if (data['type'] != 'deepx-off-axis-transform-changed') return;
-    final Map<String, dynamic>? transform = _messageMap(data['transform']);
-    if (transform == null) return;
-    _lastTransformJson = jsonEncode(transform);
-    callback(transform);
+    if (data['type'] == 'deepx-off-axis-transform-changed') {
+      final callback = widget.onTransformChanged;
+      if (callback == null) return;
+      final Map<String, dynamic>? transform = _messageMap(data['transform']);
+      if (transform == null) return;
+      _lastTransformJson = jsonEncode(transform);
+      callback(transform);
+      return;
+    }
+    if (data['type'] == 'deepx-off-axis-viewer-state-changed') {
+      final callback = widget.onViewerStateChanged;
+      if (callback == null) return;
+      final Map<String, dynamic>? viewerState = _messageMap(data['viewer']);
+      if (viewerState == null) return;
+      _lastViewerJson = jsonEncode(viewerState);
+      callback(viewerState);
+    }
   }
 
   Widget _buildLoadingProgress(BuildContext context) {

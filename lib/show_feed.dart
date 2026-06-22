@@ -5708,6 +5708,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   Map<String, dynamic>? _collectionImageThumbnailPayload;
   Map<String, dynamic>? _threeDAssetPayload;
   Map<String, dynamic> _threeDTransformDraft = _normalizedThreeDTransform(null);
+  Map<String, dynamic> _threeDViewerDraft = _normalizedThreeDViewerState(null);
   Map<String, dynamic>? _threeDThumbnailPayload;
   final List<UploadedAsset> _threeDSourceImages = <UploadedAsset>[];
   final List<CollectionDraftItem> _draftItems = <CollectionDraftItem>[];
@@ -5919,10 +5920,13 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           byteSize: file.bytes.length,
           sourceKind: 'manual',
           transform: _threeDTransformDraft,
+          viewer: _threeDViewerDraft,
           meta: <String, dynamic>{'sourceName': file.name},
         );
         _threeDTransformDraft =
             _transformFromThreeDPayload(_threeDAssetPayload!);
+        _threeDViewerDraft =
+            _viewerStateFromThreeDPayload(_threeDAssetPayload!);
         _threeDProgress = 1;
         _threeDStage = '3D asset ready';
       });
@@ -5946,9 +5950,12 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     final rawPayload = _threeDAssetPayload;
     final payload = rawPayload == null
         ? null
-        : _payloadWithThreeDTransformSnapshot(
-            rawPayload,
-            _threeDTransformDraft,
+        : _payloadWithThreeDViewerStateSnapshot(
+            _payloadWithThreeDTransformSnapshot(
+              rawPayload,
+              _threeDTransformDraft,
+            ),
+            _threeDViewerDraft,
           );
     if (payload == null || threeDAssetFromPayload(payload) == null) {
       messenger.showSnackBar(
@@ -6002,6 +6009,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         _threeDThumbnailPayload = null;
         _threeDSourceImages.clear();
         _threeDTransformDraft = _normalizedThreeDTransform(null);
+        _threeDViewerDraft = _normalizedThreeDViewerState(null);
         _threeDProgress = 0;
         _threeDStage = '';
       });
@@ -6081,8 +6089,14 @@ class _PostStudioTabState extends State<_PostStudioTab> {
               outputPayload,
               _transformFromThreeDPayload(outputPayload),
             );
+            _threeDAssetPayload = _payloadWithThreeDViewerStateSnapshot(
+              _threeDAssetPayload!,
+              _threeDViewerDraft,
+            );
             _threeDTransformDraft =
                 _transformFromThreeDPayload(_threeDAssetPayload!);
+            _threeDViewerDraft =
+                _viewerStateFromThreeDPayload(_threeDAssetPayload!);
           }
           _threeDSourceImages.clear();
           _threeDProgress = 1;
@@ -6209,6 +6223,20 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       if (_threeDAssetPayload != null) {
                         _threeDAssetPayload =
                             _payloadWithThreeDTransformSnapshot(
+                          _threeDAssetPayload!,
+                          normalized,
+                        );
+                      }
+                    });
+                  },
+                  onViewerStateChanged: (viewerState) {
+                    final normalized =
+                        _normalizedThreeDViewerState(viewerState);
+                    setState(() {
+                      _threeDViewerDraft = normalized;
+                      if (_threeDAssetPayload != null) {
+                        _threeDAssetPayload =
+                            _payloadWithThreeDViewerStateSnapshot(
                           _threeDAssetPayload!,
                           normalized,
                         );
@@ -10539,6 +10567,12 @@ class _GroupChatDialogState extends State<_GroupChatDialog> {
 const List<double> _defaultThreeDPosition = <double>[0, -0.09, -0.03];
 const double _defaultThreeDScale = 0.071;
 const List<double> _defaultThreeDRotation = <double>[0, -0.628, 0];
+const Map<String, bool> _defaultThreeDViewerState = <String, bool>{
+  'gridVisible': true,
+  'dartsVisible': false,
+  'objectVisible': true,
+  'backgroundVisible': false,
+};
 
 List<double> _threeDTransformVector(dynamic value, List<double> fallback) {
   if (value is! List || value.length < 3) return List<double>.from(fallback);
@@ -10581,6 +10615,31 @@ Map<String, dynamic> _transformFromThreeDPayload(Map<String, dynamic> payload) {
   return _normalizedThreeDTransform(asset.transform);
 }
 
+bool _threeDViewerBool(dynamic value, bool fallback) {
+  if (value is bool) return value;
+  final String text = value?.toString().trim().toLowerCase() ?? '';
+  if (text == 'true' || text == '1' || text == 'yes') return true;
+  if (text == 'false' || text == '0' || text == 'no') return false;
+  return fallback;
+}
+
+Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
+  final Map<String, dynamic> raw = value is Map
+      ? Map<String, dynamic>.from(value)
+      : const <String, dynamic>{};
+  return <String, dynamic>{
+    for (final entry in _defaultThreeDViewerState.entries)
+      entry.key: _threeDViewerBool(raw[entry.key], entry.value),
+  };
+}
+
+Map<String, dynamic> _viewerStateFromThreeDPayload(
+  Map<String, dynamic> payload,
+) {
+  final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
+  return _normalizedThreeDViewerState(asset.viewer);
+}
+
 Map<String, dynamic> _payloadWithThreeDTransformSnapshot(
   Map<String, dynamic> payload,
   Map<String, dynamic> transform,
@@ -10591,6 +10650,21 @@ Map<String, dynamic> _payloadWithThreeDTransformSnapshot(
     position: List<double>.from(normalized['position'] as List),
     scale: _threeDTransformNumber(normalized['scale'], _defaultThreeDScale),
     rotation: List<double>.from(normalized['rotation'] as List),
+  );
+}
+
+Map<String, dynamic> _payloadWithThreeDViewerStateSnapshot(
+  Map<String, dynamic> payload,
+  Map<String, dynamic> viewerState,
+) {
+  final Map<String, dynamic> normalized =
+      _normalizedThreeDViewerState(viewerState);
+  return payloadWithThreeDViewerState(
+    payload,
+    gridVisible: normalized['gridVisible'] == true,
+    dartsVisible: normalized['dartsVisible'] == true,
+    objectVisible: normalized['objectVisible'] == true,
+    backgroundVisible: normalized['backgroundVisible'] == true,
   );
 }
 
@@ -10613,6 +10687,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
   final AppRepository _repository = AppRepository.instance;
   late Map<String, dynamic> _payload;
   late Map<String, dynamic> _transformDraft;
+  late Map<String, dynamic> _viewerDraft;
   late DeepXMediaType _selectedMediaType;
   bool _saving = false;
   bool _uploading = false;
@@ -10626,6 +10701,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
       editor: 'three_d_asset_editor',
     );
     _transformDraft = _transformFromThreeDPayload(_payload);
+    _viewerDraft = _viewerStateFromThreeDPayload(_payload);
     _selectedMediaType =
         mediaTypeFromPayload(_payload) == DeepXMediaType.triangleMesh
             ? DeepXMediaType.triangleMesh
@@ -10641,17 +10717,29 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     });
   }
 
+  void _applyViewerState(Map<String, dynamic> viewerState) {
+    final Map<String, dynamic> normalized =
+        _normalizedThreeDViewerState(viewerState);
+    setState(() {
+      _viewerDraft = normalized;
+      _payload = _payloadWithThreeDViewerStateSnapshot(_payload, normalized);
+    });
+  }
+
   void _setMediaType(DeepXMediaType mediaType) {
     setState(() {
       _selectedMediaType = mediaType;
       if (threeDAssetFromPayload(_payload) == null) {
-        _payload = _payloadWithThreeDTransformSnapshot(
-          simpleMissingThreeDPayload(
-            preferredType: mediaType,
-            reason: 'awaiting_replacement_asset',
-            editor: 'three_d_asset_editor',
+        _payload = _payloadWithThreeDViewerStateSnapshot(
+          _payloadWithThreeDTransformSnapshot(
+            simpleMissingThreeDPayload(
+              preferredType: mediaType,
+              reason: 'awaiting_replacement_asset',
+              editor: 'three_d_asset_editor',
+            ),
+            _transformDraft,
           ),
-          _transformDraft,
+          _viewerDraft,
         );
       }
     });
@@ -10699,9 +10787,11 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
           byteSize: file.bytes.length,
           sourceKind: 'manual_update',
           transform: old.transform,
+          viewer: old.viewer,
           meta: <String, dynamic>{'sourceName': file.name},
         );
         _transformDraft = _transformFromThreeDPayload(_payload);
+        _viewerDraft = _viewerStateFromThreeDPayload(_payload);
       });
     } catch (e) {
       if (!mounted) return;
@@ -10723,7 +10813,12 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     }
     setState(() => _saving = true);
     try {
-      await widget.onSave(_payload);
+      final Map<String, dynamic> payloadToSave =
+          _payloadWithThreeDViewerStateSnapshot(
+        _payloadWithThreeDTransformSnapshot(_payload, _transformDraft),
+        _viewerDraft,
+      );
+      await widget.onSave(payloadToSave);
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
@@ -10779,6 +10874,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                         showModelControls: true,
                         transformOverride: _transformDraft,
                         onTransformChanged: _applyTransform,
+                        onViewerStateChanged: _applyViewerState,
                       ),
                     ),
                   ),

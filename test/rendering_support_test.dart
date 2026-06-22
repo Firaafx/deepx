@@ -197,6 +197,62 @@ void main() {
     expect(asset.mediaType, DeepXMediaType.gaussianSplat);
   });
 
+  test('3D viewer state defaults match WiiDesktopVR viewer controls', () {
+    final Map<String, dynamic> payload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.triangleMesh,
+      assetUrl: 'https://example.com/model.glb',
+      format: 'glb',
+    );
+
+    final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
+
+    expect(asset.viewer['gridVisible'], isTrue);
+    expect(asset.viewer['dartsVisible'], isFalse);
+    expect(asset.viewer['objectVisible'], isTrue);
+    expect(asset.viewer['backgroundVisible'], isFalse);
+  });
+
+  test('3D viewer state is preserved and can be updated independently', () {
+    final Map<String, dynamic> payload = simpleThreeDPayload(
+      mediaType: DeepXMediaType.gaussianSplat,
+      assetUrl: 'https://example.com/scene.ksplat',
+      format: 'ksplat',
+      viewer: const <String, dynamic>{
+        'gridVisible': false,
+        'dartsVisible': true,
+        'objectVisible': false,
+        'backgroundVisible': true,
+      },
+    );
+
+    final Map<String, dynamic> transformed = payloadWithThreeDTransform(
+      payload,
+      position: const <double>[0.1, 0.2, -0.3],
+      scale: 0.2,
+      rotation: const <double>[0.1, 0.2, 0.3],
+    );
+    final ThreeDAssetPayload transformedAsset =
+        ThreeDAssetPayload.fromMap(transformed);
+
+    expect(transformedAsset.viewer['gridVisible'], isFalse);
+    expect(transformedAsset.viewer['dartsVisible'], isTrue);
+    expect(transformedAsset.viewer['objectVisible'], isFalse);
+    expect(transformedAsset.viewer['backgroundVisible'], isTrue);
+
+    final Map<String, dynamic> updated = payloadWithThreeDViewerState(
+      transformed,
+      gridVisible: true,
+      objectVisible: true,
+    );
+    final ThreeDAssetPayload updatedAsset = ThreeDAssetPayload.fromMap(updated);
+
+    expect(updatedAsset.transform['scale'], 0.2);
+    expect(updatedAsset.viewer['gridVisible'], isTrue);
+    expect(updatedAsset.viewer['dartsVisible'], isTrue);
+    expect(updatedAsset.viewer['objectVisible'], isTrue);
+    expect(updatedAsset.viewer['backgroundVisible'], isTrue);
+  });
+
   test('collection snapshots accept 3D while thumbnails stay image payloads',
       () {
     final Map<String, dynamic> meshPayload = simpleThreeDPayload(

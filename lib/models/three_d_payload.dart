@@ -54,6 +54,7 @@ class ThreeDAssetPayload {
     this.sourceImageCount,
     this.transform = const <String, dynamic>{},
     this.camera = const <String, dynamic>{},
+    this.viewer = const <String, dynamic>{},
     this.meta = const <String, dynamic>{},
   });
 
@@ -70,6 +71,7 @@ class ThreeDAssetPayload {
   final int? sourceImageCount;
   final Map<String, dynamic> transform;
   final Map<String, dynamic> camera;
+  final Map<String, dynamic> viewer;
   final Map<String, dynamic> meta;
 
   Map<String, dynamic> toMap() {
@@ -77,6 +79,8 @@ class ThreeDAssetPayload {
         transform.isEmpty ? _defaultTransform() : _deepCopyMap(transform);
     final Map<String, dynamic> normalizedCamera =
         camera.isEmpty ? _defaultCamera() : _deepCopyMap(camera);
+    final Map<String, dynamic> normalizedViewer =
+        _normalizedViewerState(viewer);
     return <String, dynamic>{
       'schemaVersion': schemaVersion,
       'media': <String, dynamic>{
@@ -91,6 +95,7 @@ class ThreeDAssetPayload {
       },
       'transform': normalizedTransform,
       'camera': normalizedCamera,
+      'viewer': normalizedViewer,
       'source': <String, dynamic>{
         'kind': sourceKind.trim().isEmpty ? 'manual' : sourceKind.trim(),
         if (jobId != null && jobId!.trim().isNotEmpty) 'jobId': jobId,
@@ -113,6 +118,9 @@ class ThreeDAssetPayload {
     final Map<String, dynamic> camera = payload['camera'] is Map
         ? Map<String, dynamic>.from(payload['camera'] as Map)
         : const <String, dynamic>{};
+    final Map<String, dynamic> viewer = payload['viewer'] is Map
+        ? Map<String, dynamic>.from(payload['viewer'] as Map)
+        : const <String, dynamic>{};
     final Map<String, dynamic> meta = payload['meta'] is Map
         ? Map<String, dynamic>.from(payload['meta'] as Map)
         : const <String, dynamic>{};
@@ -131,6 +139,7 @@ class ThreeDAssetPayload {
       sourceImageCount: _nullableInt(source['sourceImageCount']),
       transform: transform,
       camera: camera,
+      viewer: _normalizedViewerState(viewer),
       meta: meta,
     );
   }
@@ -177,6 +186,26 @@ Map<String, dynamic> payloadWithThreeDTransform(
   ).toMap();
 }
 
+Map<String, dynamic> payloadWithThreeDViewerState(
+  Map<String, dynamic> payload, {
+  bool? gridVisible,
+  bool? dartsVisible,
+  bool? objectVisible,
+  bool? backgroundVisible,
+}) {
+  final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
+  final Map<String, dynamic> current = _normalizedViewerState(asset.viewer);
+  return asset.copyWith(
+    viewer: <String, dynamic>{
+      ...current,
+      if (gridVisible != null) 'gridVisible': gridVisible,
+      if (dartsVisible != null) 'dartsVisible': dartsVisible,
+      if (objectVisible != null) 'objectVisible': objectVisible,
+      if (backgroundVisible != null) 'backgroundVisible': backgroundVisible,
+    },
+  ).toMap();
+}
+
 extension ThreeDAssetPayloadCopy on ThreeDAssetPayload {
   ThreeDAssetPayload copyWith({
     DeepXMediaType? mediaType,
@@ -190,6 +219,7 @@ extension ThreeDAssetPayloadCopy on ThreeDAssetPayload {
     int? sourceImageCount,
     Map<String, dynamic>? transform,
     Map<String, dynamic>? camera,
+    Map<String, dynamic>? viewer,
     Map<String, dynamic>? meta,
   }) {
     return ThreeDAssetPayload(
@@ -204,6 +234,7 @@ extension ThreeDAssetPayloadCopy on ThreeDAssetPayload {
       sourceImageCount: sourceImageCount ?? this.sourceImageCount,
       transform: transform ?? this.transform,
       camera: camera ?? this.camera,
+      viewer: viewer ?? this.viewer,
       meta: meta ?? this.meta,
     );
   }
@@ -240,9 +271,38 @@ Map<String, dynamic> _defaultCamera() {
   };
 }
 
+Map<String, dynamic> _defaultViewerState() {
+  return <String, dynamic>{
+    'gridVisible': true,
+    'dartsVisible': false,
+    'objectVisible': true,
+    'backgroundVisible': false,
+  };
+}
+
+Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
+  final Map<String, dynamic> fallback = _defaultViewerState();
+  return <String, dynamic>{
+    'gridVisible': _safeBool(value['gridVisible'], fallback['gridVisible']!),
+    'dartsVisible': _safeBool(value['dartsVisible'], fallback['dartsVisible']!),
+    'objectVisible':
+        _safeBool(value['objectVisible'], fallback['objectVisible']!),
+    'backgroundVisible':
+        _safeBool(value['backgroundVisible'], fallback['backgroundVisible']!),
+  };
+}
+
 double _safeDouble(dynamic value, double fallback) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+bool _safeBool(dynamic value, bool fallback) {
+  if (value is bool) return value;
+  final String text = value?.toString().trim().toLowerCase() ?? '';
+  if (text == 'true' || text == '1' || text == 'yes') return true;
+  if (text == 'false' || text == '0' || text == 'no') return false;
+  return fallback;
 }
 
 List<double> _vector3(dynamic value, List<double> fallback) {

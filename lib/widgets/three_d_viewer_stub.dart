@@ -10,6 +10,7 @@ class ThreeDViewer extends StatelessWidget {
     this.showLoadingProgress = true,
     this.transformOverride,
     this.onTransformChanged,
+    this.onViewerStateChanged,
   });
 
   final Map<String, dynamic> payload;
@@ -19,6 +20,7 @@ class ThreeDViewer extends StatelessWidget {
   final bool showLoadingProgress;
   final Map<String, dynamic>? transformOverride;
   final ValueChanged<Map<String, dynamic>>? onTransformChanged;
+  final ValueChanged<Map<String, dynamic>>? onViewerStateChanged;
 
   @override
   Widget build(BuildContext context) {

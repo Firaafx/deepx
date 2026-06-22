@@ -35,6 +35,7 @@ Map<String, dynamic> simpleThreeDPayload({
   int? sourceImageCount,
   Map<String, dynamic> transform = const <String, dynamic>{},
   Map<String, dynamic> camera = const <String, dynamic>{},
+  Map<String, dynamic> viewer = const <String, dynamic>{},
   Map<String, dynamic> meta = const <String, dynamic>{},
 }) {
   return ThreeDAssetPayload(
@@ -49,6 +50,7 @@ Map<String, dynamic> simpleThreeDPayload({
     sourceImageCount: sourceImageCount,
     transform: transform,
     camera: camera,
+    viewer: viewer,
     meta: meta,
   ).toMap();
 }

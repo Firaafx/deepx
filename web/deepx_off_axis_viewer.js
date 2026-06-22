@@ -3,6 +3,21 @@
   let modulePromise = null;
   let mediaPipePromise = null;
   const loadingMessages = new WeakMap();
+  const assetCache = new Map();
+  const textureCache = new Map();
+
+  const WII_ROOM = Object.freeze({
+    numGridlines: 10,
+    boxDepth: 8,
+    fogDepth: 5,
+    gridColor: 0xcccccc,
+    lineColor: 0xffffff,
+    numTargets: 10,
+    numInFront: 3,
+    targetScale: 0.065,
+    targetTexture: 'reference/WiiDesktopVR/target.png',
+    backgroundTexture: 'reference/WiiDesktopVR/stad_2.png'
+  });
 
   const DEFAULT_TRANSFORM = Object.freeze({
     position: Object.freeze([0, -0.09, -0.03]),
@@ -17,6 +32,13 @@
     pixelWidth: 1920,
     pixelHeight: 1080,
     isCalibrated: false
+  });
+
+  const DEFAULT_VIEWER_STATE = Object.freeze({
+    gridVisible: true,
+    dartsVisible: false,
+    objectVisible: true,
+    backgroundVisible: false
   });
 
   const CALIBRATION_STORAGE_KEY = 'parallax_calibration_v1';
@@ -46,8 +68,10 @@
         touch-action: none;
       }
       .dx-viewer-button {
-        width: 30px;
+        min-width: 34px;
+        width: auto;
         height: 30px;
+        padding: 0 6px;
         border: 0;
         border-radius: 4px;
         background: rgba(0,0,0,0.5);
@@ -132,7 +156,7 @@
         bottom: 16px;
         z-index: 14;
         width: 256px;
-        height: 192px;
+        height: 276px;
         border: 2px solid #fff;
         border-radius: 8px;
         overflow: hidden;
@@ -141,12 +165,29 @@
         pointer-events: none;
         display: none;
       }
+      .dx-camera-stats {
+        position: absolute;
+        inset: 0 0 auto 0;
+        min-height: 84px;
+        padding: 8px;
+        box-sizing: border-box;
+        background: rgba(0,0,0,0.82);
+        color: rgba(255,255,255,0.92);
+        font: 600 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px 8px;
+        z-index: 2;
+      }
       .dx-camera-preview video,
       .dx-camera-preview canvas {
         position: absolute;
-        inset: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: 84px;
         width: 100%;
-        height: 100%;
+        height: calc(100% - 84px);
         object-fit: cover;
       }
       .dx-camera-preview video { transform: scaleX(-1); }
@@ -365,12 +406,43 @@
     };
   }
 
+  function safeBool(value, fallback) {
+    if (typeof value === 'boolean') return value;
+    const raw = String(value == null ? '' : value).trim().toLowerCase();
+    if (raw === 'true' || raw === '1' || raw === 'yes') return true;
+    if (raw === 'false' || raw === '0' || raw === 'no') return false;
+    return fallback;
+  }
+
+  function viewerStateFromPayload(payload) {
+    const raw = payload && typeof payload.viewer === 'object' ? payload.viewer : {};
+    return {
+      gridVisible: safeBool(raw.gridVisible, DEFAULT_VIEWER_STATE.gridVisible),
+      dartsVisible: safeBool(raw.dartsVisible, DEFAULT_VIEWER_STATE.dartsVisible),
+      objectVisible: safeBool(raw.objectVisible, DEFAULT_VIEWER_STATE.objectVisible),
+      backgroundVisible: safeBool(raw.backgroundVisible, DEFAULT_VIEWER_STATE.backgroundVisible)
+    };
+  }
+
+  function viewerStateSnapshot(ctx) {
+    return {
+      gridVisible: ctx.gridPreference === true,
+      dartsVisible: ctx.dartsVisible === true,
+      objectVisible: ctx.objectVisible !== false,
+      backgroundVisible: ctx.backgroundVisible === true
+    };
+  }
+
   function transformKey(transform) {
     return JSON.stringify(transformSnapshot(transform));
   }
 
   function payloadKey(payload) {
     const asset = payloadAsset(payload);
+    return [asset.type, asset.url, asset.path, asset.format].join('|');
+  }
+
+  function assetCacheKey(asset) {
     return [asset.type, asset.url, asset.path, asset.format].join('|');
   }
 
@@ -418,6 +490,17 @@
     } catch (_) {}
   }
 
+  function notifyViewerStateChanged(ctx, force) {
+    if (!ctx || (!ctx.editable && !force)) return;
+    try {
+      window.postMessage(JSON.stringify({
+        type: 'deepx-off-axis-viewer-state-changed',
+        elementId: ctx.elementId,
+        viewer: viewerStateSnapshot(ctx)
+      }), window.location.origin);
+    } catch (_) {}
+  }
+
   function getCalibration() {
     try {
       const stored = localStorage.getItem(CALIBRATION_STORAGE_KEY);
@@ -438,10 +521,10 @@
   }
 
   class HeadPoseTracker {
-    constructor(smoothingFactor) {
-      this.smoothingFactor = clamp(Number(smoothingFactor) || 0.3, 0.1, 0.9);
+    constructor() {
       this.baseInterOcularDistance = 0.1;
       this.smoothedPose = { x: 0.5, y: 0.5, z: 1 };
+      this.hasPose = false;
     }
 
     extractHeadPoseFromLandmarks(landmarks) {
@@ -474,14 +557,26 @@
         y: clamp(faceY, 0.2, 0.8),
         z: clamp(depthProxy, 0.5, 2)
       };
-      this.smoothedPose.x += this.smoothingFactor * (clamped.x - this.smoothedPose.x);
-      this.smoothedPose.y += this.smoothingFactor * (clamped.y - this.smoothedPose.y);
-      this.smoothedPose.z += this.smoothingFactor * (clamped.z - this.smoothedPose.z);
+      if (!this.hasPose) {
+        this.smoothedPose = { ...clamped };
+        this.hasPose = true;
+        return { ...this.smoothedPose };
+      }
+      const delta = Math.hypot(
+        clamped.x - this.smoothedPose.x,
+        clamped.y - this.smoothedPose.y,
+        (clamped.z - this.smoothedPose.z) * 0.5
+      );
+      const alpha = delta > 0.035 ? 0.86 : 0.58;
+      this.smoothedPose.x += alpha * (clamped.x - this.smoothedPose.x);
+      this.smoothedPose.y += alpha * (clamped.y - this.smoothedPose.y);
+      this.smoothedPose.z += alpha * (clamped.z - this.smoothedPose.z);
       return { ...this.smoothedPose };
     }
 
     reset() {
       this.smoothedPose = { x: 0.5, y: 0.5, z: 1 };
+      this.hasPose = false;
     }
   }
 
@@ -562,7 +657,17 @@
     running: false,
     sending: false,
     lastPose: { x: 0.5, y: 0.5, z: 1 },
-    poseTracker: new HeadPoseTracker(0.3),
+    lastWorldPosition: { x: 0, y: 0, z: 0.6 },
+    lastSentAt: 0,
+    lastResultsAt: 0,
+    stats: {
+      latencyMs: null,
+      faceDetected: false,
+      trackingAgeMs: null,
+      leftBlink: false,
+      rightBlink: false
+    },
+    poseTracker: new HeadPoseTracker(),
 
     async ensure() {
       if (document.hidden) return;
@@ -623,6 +728,7 @@
       this.raf = requestAnimationFrame(() => this.loop());
       if (!this.faceMesh || !this.video || this.video.readyState < 2 || this.sending) return;
       this.sending = true;
+      this.lastSentAt = performance.now();
       this.faceMesh.send({ image: this.video })
         .catch((error) => console.warn('MediaPipe frame failed:', error))
         .finally(() => {
@@ -631,13 +737,48 @@
     },
 
     handleResults(results) {
+      const now = performance.now();
       const landmarks = results && results.multiFaceLandmarks ? results.multiFaceLandmarks : [];
+      const firstFace = landmarks[0] || null;
       const pose = this.poseTracker.extractHeadPoseFromLandmarks(landmarks);
       this.lastPose = pose || this.lastPose || { x: 0.5, y: 0.5, z: 1 };
+      this.lastResultsAt = now;
+      const blink = this.extractBlinkState(firstFace);
+      this.stats = {
+        latencyMs: this.lastSentAt ? now - this.lastSentAt : null,
+        faceDetected: !!firstFace,
+        trackingAgeMs: 0,
+        leftBlink: blink.left,
+        rightBlink: blink.right
+      };
       for (const ctx of viewers.values()) {
-        if (ctx.trackingEnabled && !ctx.disposed) ctx.headPose = this.lastPose;
+        if (ctx.trackingEnabled && !ctx.disposed) {
+          if (typeof ctx.receiveHeadPose === 'function') {
+            ctx.receiveHeadPose(this.lastPose);
+          } else {
+            ctx.headPose = this.lastPose;
+          }
+        }
         if (ctx.previewVisible) ctx.drawPreview(results);
       }
+    },
+
+    extractBlinkState(face) {
+      if (!face || face.length < 468) return { left: false, right: false };
+      const ratio = (upperIndex, lowerIndex, outerIndex, innerIndex) => {
+        const upper = face[upperIndex];
+        const lower = face[lowerIndex];
+        const outer = face[outerIndex];
+        const inner = face[innerIndex];
+        if (!upper || !lower || !outer || !inner) return 1;
+        const vertical = Math.hypot(upper.x - lower.x, upper.y - lower.y);
+        const horizontal = Math.hypot(outer.x - inner.x, outer.y - inner.y);
+        return horizontal > 0 ? vertical / horizontal : 1;
+      };
+      return {
+        left: ratio(159, 145, 33, 133) < 0.18,
+        right: ratio(386, 374, 263, 362) < 0.18
+      };
     },
 
     async stop(reason) {
@@ -659,6 +800,13 @@
         this.stream = null;
       }
       this.sending = false;
+      this.stats = {
+        latencyMs: null,
+        faceDetected: false,
+        trackingAgeMs: null,
+        leftBlink: false,
+        rightBlink: false
+      };
       this.poseTracker.reset();
       this.syncPreviewStreams();
       for (const ctx of viewers.values()) ctx.clearPreview();
@@ -684,14 +832,29 @@
       this.editable = options.editable === true;
       this.showModelControls = options.showModelControls === true;
       this.trackingEnabled = options.trackingEnabled === true;
+      this.viewerState = viewerStateFromPayload(payload);
       this.previewVisible = false;
-      this.gridVisible = false;
+      this.gridPreference = this.viewerState.gridVisible;
+      this.gridVisible = true;
+      this.dartsVisible = this.viewerState.dartsVisible;
+      this.objectVisible = this.viewerState.objectVisible;
+      this.backgroundVisible = this.viewerState.backgroundVisible;
       this.debugMode = false;
       this.headPose = { x: 0.5, y: 0.5, z: 1 };
+      this.worldHeadPosition = { x: 0, y: 0, z: 0.6 };
+      this.assetLoaded = false;
+      this.modelBounds = null;
+      this.scaleRange = { min: 0.001, max: 1 };
+      this.lastFrameAt = 0;
+      this.frameCounter = 0;
+      this.fpsStartedAt = performance.now();
+      this.fps = 0;
       this.objectUrls = [];
       this.cleanup = [];
       this.debugHelpers = [];
       this.roomObjects = [];
+      this.dartObjects = [];
+      this.backgroundObjects = [];
       this.disposed = false;
       this.raf = 0;
       this.resizeObserver = null;
@@ -706,7 +869,8 @@
       this.root.style.touchAction = 'none';
 
       this.scene = new this.THREE.Scene();
-      this.scene.background = new this.THREE.Color(0x1a1a1a);
+      this.scene.background = new this.THREE.Color(0x000000);
+      this.scene.fog = new this.THREE.Fog(0x000000, 0.6, 1.6);
       this.camera = new this.THREE.PerspectiveCamera(75, 1, 0.05, 1000);
       this.camera.position.z = 5;
       const calibration = {
@@ -727,20 +891,19 @@
       }
       this.addLights();
       this.createWireframeRoom();
+      this.createDarts();
+      this.createBackgroundPanorama();
       this.createDebugHelpers();
       this.buildChrome();
       this.installContextLossHandler();
-      this.object = supportedMesh(this.asset)
-        ? await this.addTriangleMesh()
-        : await this.addGaussianSplat();
-      this.applyTransform();
-      this.resize();
       this.resizeObserver = new ResizeObserver(() => this.resize());
       this.resizeObserver.observe(this.root);
+      this.resize();
       this.resumeRender();
       this.ensureTracking();
+      notifyViewerStateChanged(this, true);
       notifyTransformChanged(this, true);
-      notifyLoadState(this.elementId, 'ready', 1, '3D asset ready');
+      await this.loadAsset();
     }
 
     addLights() {
@@ -762,40 +925,85 @@
       this.cleanup.push(() => this.renderer.domElement.removeEventListener('webglcontextlost', onContextLost));
     }
 
-    async fetchObjectUrl(url, label) {
+    async loadAsset() {
+      this.updateLoading('Loading 3D asset');
+      try {
+        this.object = supportedMesh(this.asset)
+          ? await this.addTriangleMesh()
+          : await this.addGaussianSplat();
+        if (this.disposed) return;
+        this.assetLoaded = true;
+        this.applyTransform();
+        this.applyObjectVisibility();
+        this.updateModelBounds();
+        this.computeScaleRange();
+        this.setGridVisible(this.gridPreference, { notify: false, preference: false });
+        this.resize();
+        if (this.controlsOpen) this.refreshControlPanel();
+        notifyTransformChanged(this, true);
+        notifyViewerStateChanged(this, true);
+        notifyLoadState(this.elementId, 'ready', 1, '3D asset ready');
+      } catch (error) {
+        if (this.disposed) return;
+        console.error(error);
+        const label = error && error.message ? error.message : 'Unable to load 3D asset.';
+        notifyLoadState(this.elementId, 'error', null, label);
+      }
+    }
+
+    async fetchObjectUrl(url, label, cacheKey) {
+      const key = cacheKey || `${url}|blob`;
+      const cached = assetCache.get(key);
+      if (cached && cached.objectUrl) {
+        this.updateLoading(label, 1);
+        return cached.objectUrl;
+      }
+      if (cached && cached.promise) {
+        this.updateLoading(label);
+        return cached.promise;
+      }
       this.updateLoading(label);
-      const response = await fetch(url, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`Unable to load 3D asset (${response.status}).`);
-      const type = response.headers.get('content-type') || 'application/octet-stream';
-      const total = Number(response.headers.get('content-length'));
-      if (!response.body || !Number.isFinite(total) || total <= 0) {
-        const blob = await response.blob();
-        if (this.disposed) throw new Error('3D viewer was disposed while loading.');
-        const objectUrl = URL.createObjectURL(blob);
-        this.objectUrls.push(objectUrl);
-        return objectUrl;
-      }
-      const reader = response.body.getReader();
-      const chunks = [];
-      let loaded = 0;
-      let lastProgressAt = 0;
-      for (;;) {
-        if (this.disposed) throw new Error('3D viewer was disposed while loading.');
-        const result = await reader.read();
-        if (result.done) break;
-        chunks.push(result.value);
-        loaded += result.value.byteLength;
-        const now = performance.now();
-        if (now - lastProgressAt > 80 || loaded >= total) {
-          lastProgressAt = now;
-          this.updateLoading(label, loaded / total);
+      const promise = (async () => {
+        const response = await fetch(url, { cache: 'force-cache' });
+        if (!response.ok) throw new Error(`Unable to load 3D asset (${response.status}).`);
+        const type = response.headers.get('content-type') || 'application/octet-stream';
+        const total = Number(response.headers.get('content-length'));
+        if (!response.body || !Number.isFinite(total) || total <= 0) {
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          assetCache.set(key, { objectUrl });
+          return objectUrl;
         }
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+        let lastProgressAt = 0;
+        for (;;) {
+          const result = await reader.read();
+          if (result.done) break;
+          chunks.push(result.value);
+          loaded += result.value.byteLength;
+          const now = performance.now();
+          if (now - lastProgressAt > 80 || loaded >= total) {
+            lastProgressAt = now;
+            this.updateLoading(label, loaded / total);
+          }
+        }
+        const blob = new Blob(chunks, { type });
+        const objectUrl = URL.createObjectURL(blob);
+        assetCache.set(key, { objectUrl });
+        this.updateLoading(label, 1);
+        return objectUrl;
+      })();
+      assetCache.set(key, { promise });
+      try {
+        const objectUrl = await promise;
+        assetCache.set(key, { objectUrl });
+        return objectUrl;
+      } catch (error) {
+        if (assetCache.get(key)?.promise === promise) assetCache.delete(key);
+        throw error;
       }
-      const blob = new Blob(chunks, { type });
-      const objectUrl = URL.createObjectURL(blob);
-      this.objectUrls.push(objectUrl);
-      this.updateLoading(label, 1);
-      return objectUrl;
     }
 
     updateLoading(label, progress) {
@@ -805,26 +1013,20 @@
     }
 
     async addTriangleMesh() {
-      const loader = new this.modules.GLTFLoader();
-      if (this.modules.DRACOLoader) {
-        const dracoLoader = new this.modules.DRACOLoader();
-        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
-        dracoLoader.setDecoderConfig({ type: 'js' });
-        loader.setDRACOLoader(dracoLoader);
-        this.cleanup.push(() => dracoLoader.dispose());
+      const key = `${assetCacheKey(this.asset)}|gltf`;
+      let entry = assetCache.get(key);
+      if (!entry) {
+        entry = {};
+        assetCache.set(key, entry);
       }
-      let loadUrl = this.asset.url;
-      if (assetLooksLike(this.asset, 'glb')) {
-        loadUrl = await this.fetchObjectUrl(this.asset.url, 'Loading 3D mesh');
-      } else {
-        this.updateLoading('Loading 3D mesh');
-      }
-      const gltf = await loader.loadAsync(loadUrl, (event) => {
-        if (event && Number.isFinite(event.total) && event.total > 0) {
-          this.updateLoading('Loading 3D mesh', event.loaded / event.total);
+      if (!entry.gltf) {
+        if (!entry.promise) {
+          entry.promise = this.loadGltfForCache(key);
         }
-      });
-      const object = gltf.scene;
+        entry.gltf = await entry.promise;
+      }
+      const object = entry.gltf.scene.clone(true);
+      this.markSharedAsset(object);
       object.traverse((node) => {
         if (node.isMesh) {
           node.castShadow = true;
@@ -835,13 +1037,48 @@
       return object;
     }
 
+    async loadGltfForCache(key) {
+      const loader = new this.modules.GLTFLoader();
+      let dracoLoader = null;
+      if (this.modules.DRACOLoader) {
+        dracoLoader = new this.modules.DRACOLoader();
+        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+        dracoLoader.setDecoderConfig({ type: 'js' });
+        loader.setDRACOLoader(dracoLoader);
+      }
+      let loadUrl = this.asset.url;
+      if (assetLooksLike(this.asset, 'glb')) {
+        loadUrl = await this.fetchObjectUrl(this.asset.url, 'Loading 3D mesh', `${assetCacheKey(this.asset)}|blob`);
+      } else {
+        this.updateLoading('Loading 3D mesh');
+      }
+      try {
+        const gltf = await loader.loadAsync(loadUrl, (event) => {
+          if (event && Number.isFinite(event.total) && event.total > 0) {
+            this.updateLoading('Loading 3D mesh', event.loaded / event.total);
+          }
+        });
+        assetCache.set(key, { gltf });
+        return gltf;
+      } finally {
+        if (dracoLoader) dracoLoader.dispose();
+      }
+    }
+
+    markSharedAsset(object) {
+      object.traverse((node) => {
+        node.userData = node.userData || {};
+        node.userData.deepxSharedAsset = true;
+      });
+    }
+
     async addGaussianSplat() {
       const spark = this.modules.spark;
       if (!spark) throw new Error('Spark module failed to load.');
       const Candidate =
         spark.SplatMesh || spark.SparkSplatMesh || spark.GaussianSplatMesh || spark.SplatObject;
       if (!Candidate) throw new Error('Spark loaded, but no supported splat mesh export was found.');
-      const loadUrl = await this.fetchObjectUrl(this.asset.url, 'Loading 3D asset');
+      const loadUrl = await this.fetchObjectUrl(this.asset.url, 'Loading 3D asset', `${assetCacheKey(this.asset)}|blob`);
       let object;
       try {
         object = new Candidate({ url: loadUrl, fileType: this.asset.format || undefined });
@@ -860,14 +1097,15 @@
       const screenDims = this.offAxisCamera.getScreenDimensions();
       const roomWidth = screenDims.width;
       const roomHeight = screenDims.height;
-      const roomDepth = 0.35;
-      const gridDivisions = 8;
+      const roomDepth = roomHeight * (WII_ROOM.boxDepth / 2);
+      const gridDivisions = WII_ROOM.numGridlines;
       const wallMaterial = new this.THREE.LineBasicMaterial({
-        color: 0xff8c00,
-        transparent: true,
-        opacity: 0.8,
+        color: WII_ROOM.gridColor,
+        transparent: false,
+        opacity: 1,
         depthTest: true,
-        depthWrite: true
+        depthWrite: true,
+        fog: true
       });
       const createGridWall = (width, height) => {
         const geometry = new this.THREE.BufferGeometry();
@@ -900,12 +1138,7 @@
       ceiling.rotation.x = -Math.PI / 2;
       ceiling.position.y = roomHeight / 2;
       ceiling.position.z = -roomDepth / 2;
-      const screenFrame = new this.THREE.LineSegments(
-        new this.THREE.EdgesGeometry(new this.THREE.PlaneGeometry(roomWidth, roomHeight)),
-        new this.THREE.LineBasicMaterial({ color: 0xff0000, depthTest: true, depthWrite: true })
-      );
-      screenFrame.position.z = 0.001;
-      this.roomObjects.push(backWall, leftWall, rightWall, floor, ceiling, screenFrame);
+      this.roomObjects.push(backWall, leftWall, rightWall, floor, ceiling);
       for (const obj of this.roomObjects) {
         obj.visible = this.gridVisible;
         this.scene.add(obj);
@@ -921,6 +1154,153 @@
       this.roomObjects = [];
     }
 
+    async loadTexture(src) {
+      const cached = textureCache.get(src);
+      if (cached) return cached;
+      const loader = new this.THREE.TextureLoader();
+      const promise = loader.loadAsync(src).then((texture) => {
+        texture.colorSpace = this.THREE.SRGBColorSpace;
+        texture.minFilter = this.THREE.LinearFilter;
+        texture.magFilter = this.THREE.LinearFilter;
+        texture.userData = texture.userData || {};
+        texture.userData.deepxCachedTexture = true;
+        return texture;
+      });
+      textureCache.set(src, promise);
+      return promise;
+    }
+
+    seededRandom(seedText) {
+      let seed = 2166136261;
+      for (let i = 0; i < seedText.length; i++) {
+        seed ^= seedText.charCodeAt(i);
+        seed = Math.imul(seed, 16777619);
+      }
+      return () => {
+        seed += 0x6D2B79F5;
+        let value = seed;
+        value = Math.imul(value ^ value >>> 15, value | 1);
+        value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+        return ((value ^ value >>> 14) >>> 0) / 4294967296;
+      };
+    }
+
+    createDarts() {
+      this.removeDarts();
+      const screenDims = this.offAxisCamera.getScreenDimensions();
+      const roomHeight = screenDims.height;
+      const screenAspect = screenDims.width / Math.max(roomHeight, 0.0001);
+      const depthStep = (WII_ROOM.boxDepth / 2) / WII_ROOM.numTargets;
+      const startDepth = WII_ROOM.numInFront * depthStep;
+      const random = this.seededRandom(assetCacheKey(this.asset));
+      const group = new this.THREE.Group();
+      const lineMaterial = new this.THREE.LineBasicMaterial({
+        color: WII_ROOM.lineColor,
+        fog: true,
+        depthTest: true,
+        depthWrite: true
+      });
+      const lineDepth = -200 * WII_ROOM.targetScale * roomHeight;
+      for (let i = 0; i < WII_ROOM.numTargets; i++) {
+        let x = 0.7 * screenAspect * (random() - 0.5) * roomHeight;
+        let y = 0.7 * (random() - 0.5) * roomHeight;
+        const z = (startDepth - i * depthStep) * roomHeight;
+        if (i < WII_ROOM.numInFront) {
+          x *= 0.5;
+          y *= 0.5;
+        }
+        const geometry = new this.THREE.BufferGeometry();
+        geometry.setAttribute('position', new this.THREE.Float32BufferAttribute([
+          x, y, z,
+          x, y, z + lineDepth
+        ], 3));
+        group.add(new this.THREE.LineSegments(geometry, lineMaterial));
+      }
+      group.visible = this.dartsVisible;
+      this.dartObjects.push(group);
+      this.scene.add(group);
+      this.loadTexture(WII_ROOM.targetTexture)
+        .then((texture) => {
+          if (this.disposed) return;
+          for (let i = 0; i < WII_ROOM.numTargets; i++) {
+            const line = group.children[i];
+            if (!line || !line.geometry) continue;
+            const position = line.geometry.getAttribute('position');
+            const sprite = new this.THREE.Sprite(new this.THREE.SpriteMaterial({
+              map: texture,
+              transparent: true,
+              fog: true,
+              depthTest: true,
+              depthWrite: false
+            }));
+            sprite.position.set(position.getX(0), position.getY(0), position.getZ(0));
+            const size = WII_ROOM.targetScale * roomHeight;
+            sprite.scale.set(size, size, size);
+            group.add(sprite);
+          }
+        })
+        .catch((error) => console.warn('Unable to load target texture:', error));
+    }
+
+    removeDarts() {
+      for (const obj of this.dartObjects) {
+        this.scene.remove(obj);
+        this.disposeObject(obj);
+      }
+      this.dartObjects = [];
+    }
+
+    createBackgroundPanorama() {
+      this.removeBackgroundPanorama();
+      const screenDims = this.offAxisCamera.getScreenDimensions();
+      const radius = screenDims.height * 3;
+      const height = screenDims.height * 2;
+      const segments = 24;
+      const geometry = new this.THREE.BufferGeometry();
+      const vertices = [];
+      const uvs = [];
+      const indices = [];
+      for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const angle = Math.PI * t;
+        const x = Math.cos(angle) * radius;
+        const z = -Math.sin(angle) * radius;
+        vertices.push(x, -height / 2, z, x, height / 2, z);
+        uvs.push(t, 1, t, 0);
+        if (i < segments) {
+          const base = i * 2;
+          indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+        }
+      }
+      geometry.setAttribute('position', new this.THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setAttribute('uv', new this.THREE.Float32BufferAttribute(uvs, 2));
+      geometry.setIndex(indices);
+      const material = new this.THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        side: this.THREE.DoubleSide,
+        fog: false
+      });
+      const mesh = new this.THREE.Mesh(geometry, material);
+      mesh.visible = this.backgroundVisible;
+      this.backgroundObjects.push(mesh);
+      this.scene.add(mesh);
+      this.loadTexture(WII_ROOM.backgroundTexture)
+        .then((texture) => {
+          if (this.disposed) return;
+          material.map = texture;
+          material.needsUpdate = true;
+        })
+        .catch((error) => console.warn('Unable to load background texture:', error));
+    }
+
+    removeBackgroundPanorama() {
+      for (const obj of this.backgroundObjects) {
+        this.scene.remove(obj);
+        this.disposeObject(obj);
+      }
+      this.backgroundObjects = [];
+    }
+
     createDebugHelpers() {
       const axes = new this.THREE.AxesHelper(0.1);
       axes.visible = false;
@@ -934,9 +1314,44 @@
       this.scene.add(headMarker);
     }
 
+    updateModelBounds() {
+      if (!this.object) {
+        this.modelBounds = null;
+        return;
+      }
+      const box = new this.THREE.Box3().setFromObject(this.object);
+      const size = new this.THREE.Vector3();
+      box.getSize(size);
+      const maxDimension = Math.max(size.x, size.y, size.z);
+      this.modelBounds = {
+        maxDimension: Number.isFinite(maxDimension) && maxDimension > 0
+          ? maxDimension / Math.max(this.transform.scale, 0.001)
+          : 1
+      };
+    }
+
+    computeScaleRange() {
+      const screenDims = this.offAxisCamera ? this.offAxisCamera.getScreenDimensions() : { width: 1, height: 1 };
+      const modelMaxDimension = this.modelBounds && this.modelBounds.maxDimension
+        ? this.modelBounds.maxDimension
+        : 1;
+      const fitScale = Math.min(screenDims.width, screenDims.height) / Math.max(modelMaxDimension, 0.000001);
+      const current = Math.max(Number(this.transform.scale) || DEFAULT_TRANSFORM.scale, 0.001);
+      this.scaleRange = {
+        min: clamp(Math.min(0.001, current / 20, fitScale / 20), 0.001, 100),
+        max: clamp(Math.max(0.3, current * 20, fitScale * 10), 0.001, 100)
+      };
+      if (this.scaleRange.max <= this.scaleRange.min) {
+        this.scaleRange.max = Math.min(100, this.scaleRange.min + 1);
+      }
+      return this.scaleRange;
+    }
+
     buildChrome() {
       this.preview = document.createElement('div');
       this.preview.className = 'dx-camera-preview';
+      this.statsPanel = document.createElement('div');
+      this.statsPanel.className = 'dx-camera-stats';
       this.previewVideo = document.createElement('video');
       this.previewVideo.autoplay = true;
       this.previewVideo.muted = true;
@@ -944,6 +1359,7 @@
       this.previewCanvas = document.createElement('canvas');
       this.previewCanvas.width = 640;
       this.previewCanvas.height = 480;
+      this.preview.appendChild(this.statsPanel);
       this.preview.appendChild(this.previewVideo);
       this.preview.appendChild(this.previewCanvas);
       this.root.appendChild(this.preview);
@@ -995,16 +1411,20 @@
       panel.appendChild(header);
       const body = document.createElement('div');
       body.className = 'dx-model-body';
-      body.appendChild(this.makeRange('Position X', this.transform.position[0], -1, 1, 0.01, (value) => this.setPositionAxis(0, value)));
-      body.appendChild(this.makeRange('Position Y', this.transform.position[1], -1, 1, 0.01, (value) => this.setPositionAxis(1, value)));
-      body.appendChild(this.makeRange('Position Z', this.transform.position[2], -2, 1, 0.01, (value) => this.setPositionAxis(2, value)));
+      body.appendChild(this.makeRange('Position X', this.transform.position[0], -1, 1, 0.001, (value) => this.setPositionAxis(0, value)));
+      body.appendChild(this.makeRange('Position Y', this.transform.position[1], -1, 1, 0.001, (value) => this.setPositionAxis(1, value)));
+      body.appendChild(this.makeRange('Position Z', this.transform.position[2], -2, 1, 0.001, (value) => this.setPositionAxis(2, value)));
       const scaleGroup = document.createElement('div');
       scaleGroup.className = 'dx-control-group';
-      scaleGroup.appendChild(this.makeRange('Scale', this.transform.scale, 0.01, 0.3, 0.001, (value) => this.setScale(value)));
+      this.computeScaleRange();
+      scaleGroup.appendChild(this.makeRange('Scale', this.transform.scale, this.scaleRange.min, this.scaleRange.max, 0.001, (value) => this.setScale(value)));
       body.appendChild(scaleGroup);
       const rotationGroup = document.createElement('div');
       rotationGroup.className = 'dx-control-group';
-      rotationGroup.appendChild(this.makeRange('Rotation', this.transform.rotation[1], -Math.PI, Math.PI, 0.01, (value) => this.setRotationAxis(1, value), (value) => `${Math.round(value * 180 / Math.PI)}deg`));
+      const formatDegrees = (value) => `${(value * 180 / Math.PI).toFixed(1)}deg`;
+      rotationGroup.appendChild(this.makeRange('Rotation X', this.transform.rotation[0], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(0, value), formatDegrees));
+      rotationGroup.appendChild(this.makeRange('Rotation Y', this.transform.rotation[1], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(1, value), formatDegrees));
+      rotationGroup.appendChild(this.makeRange('Rotation Z', this.transform.rotation[2], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(2, value), formatDegrees));
       body.appendChild(rotationGroup);
       panel.appendChild(body);
       this.modelPanel.appendChild(panel);
@@ -1045,20 +1465,64 @@
         debug.classList.toggle('is-active', this.debugMode);
       });
       const grid = this.makeButton('GRID', 'Toggle grid', () => {
-        this.setGridVisible(!this.gridVisible);
-        grid.classList.toggle('is-active', this.gridVisible);
+        this.setGridVisible(!(this.gridPreference === true), { notify: true, preference: true });
       });
+      grid.classList.toggle('is-active', this.gridPreference === true);
+      const darts = this.makeButton('DART', 'Toggle darts', () => {
+        this.setDartsVisible(!this.dartsVisible, true);
+      });
+      darts.classList.toggle('is-active', this.dartsVisible);
+      const object = this.makeButton('OBJ', 'Toggle 3D object', () => {
+        this.setObjectVisible(!this.objectVisible, true);
+      });
+      object.classList.toggle('is-active', this.objectVisible);
+      const background = this.makeButton('BG', 'Toggle background panorama', () => {
+        this.setBackgroundVisible(!this.backgroundVisible, true);
+      });
+      background.classList.toggle('is-active', this.backgroundVisible);
       const preview = this.makeButton('CAM', 'Toggle camera preview', () => {
         this.setPreviewVisible(!this.previewVisible);
         preview.classList.toggle('is-active', this.previewVisible);
       });
       const reset = this.makeButton('RST', 'Reset model transform', () => this.resetTransform());
-      buttons.append(fullscreen, settings, debug, grid, preview, reset);
+      this.gridButton = grid;
+      this.dartsButton = darts;
+      this.objectButton = object;
+      this.backgroundButton = background;
+      this.previewButton = preview;
+      buttons.append(fullscreen, settings, debug, grid, darts, object, background, preview, reset);
       this.root.appendChild(buttons);
       document.addEventListener('fullscreenchange', () => {
         fullscreen.textContent = document.fullscreenElement ? 'MIN' : 'FS';
         fullscreen.title = document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen';
       });
+      const onKeyDown = (event) => this.handleShortcut(event);
+      window.addEventListener('keydown', onKeyDown);
+      this.cleanup.push(() => window.removeEventListener('keydown', onKeyDown));
+    }
+
+    handleShortcut(event) {
+      if (event.defaultPrevented) return;
+      const target = event.target;
+      const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable)) return;
+      const key = String(event.key || '').toLowerCase();
+      if (key === 'g') {
+        event.preventDefault();
+        this.setGridVisible(!(this.gridPreference === true), { notify: true, preference: true });
+      } else if (key === 't') {
+        event.preventDefault();
+        this.setDartsVisible(!this.dartsVisible, true);
+      } else if (key === 'o') {
+        event.preventDefault();
+        this.setObjectVisible(!this.objectVisible, true);
+      } else if (key === 'b') {
+        event.preventDefault();
+        this.setBackgroundVisible(!this.backgroundVisible, true);
+      } else if (key === 'c') {
+        event.preventDefault();
+        this.setPreviewVisible(!this.previewVisible);
+      }
     }
 
     async toggleFullscreen() {
@@ -1134,12 +1598,60 @@
     updateCalibration(calibration) {
       this.offAxisCamera.updateCalibration(calibration);
       this.createWireframeRoom();
-      this.setGridVisible(this.gridVisible);
+      this.createDarts();
+      this.createBackgroundPanorama();
+      this.setGridVisible(this.gridVisible, { notify: false, preference: false });
+      this.setDartsVisible(this.dartsVisible, false);
+      this.setBackgroundVisible(this.backgroundVisible, false);
     }
 
-    setGridVisible(visible) {
+    setGridVisible(visible, options) {
       this.gridVisible = visible === true;
+      if (!options || options.preference !== false) {
+        this.gridPreference = this.gridVisible;
+      }
       for (const obj of this.roomObjects) obj.visible = this.gridVisible;
+      if (this.gridButton) this.gridButton.classList.toggle('is-active', this.gridPreference === true);
+      if (options && options.notify) notifyViewerStateChanged(this);
+    }
+
+    setDartsVisible(visible, notify) {
+      this.dartsVisible = visible === true;
+      for (const obj of this.dartObjects) obj.visible = this.dartsVisible;
+      if (this.dartsButton) this.dartsButton.classList.toggle('is-active', this.dartsVisible);
+      if (notify) notifyViewerStateChanged(this);
+    }
+
+    setObjectVisible(visible, notify) {
+      this.objectVisible = visible === true;
+      this.applyObjectVisibility();
+      if (this.objectButton) this.objectButton.classList.toggle('is-active', this.objectVisible);
+      if (notify) notifyViewerStateChanged(this);
+    }
+
+    applyObjectVisibility() {
+      if (this.object) this.object.visible = this.objectVisible;
+    }
+
+    setBackgroundVisible(visible, notify) {
+      this.backgroundVisible = visible === true;
+      for (const obj of this.backgroundObjects) obj.visible = this.backgroundVisible;
+      if (this.backgroundButton) this.backgroundButton.classList.toggle('is-active', this.backgroundVisible);
+      if (notify) notifyViewerStateChanged(this);
+    }
+
+    setViewerState(state, notify) {
+      const next = {
+        ...DEFAULT_VIEWER_STATE,
+        ...(state && typeof state === 'object' ? state : {})
+      };
+      this.gridPreference = safeBool(next.gridVisible, DEFAULT_VIEWER_STATE.gridVisible);
+      const shouldShowGrid = this.assetLoaded ? this.gridPreference : (this.gridPreference || !this.assetLoaded);
+      this.setGridVisible(shouldShowGrid, { notify: false, preference: false });
+      this.setDartsVisible(safeBool(next.dartsVisible, DEFAULT_VIEWER_STATE.dartsVisible), false);
+      this.setObjectVisible(safeBool(next.objectVisible, DEFAULT_VIEWER_STATE.objectVisible), false);
+      this.setBackgroundVisible(safeBool(next.backgroundVisible, DEFAULT_VIEWER_STATE.backgroundVisible), false);
+      if (notify) notifyViewerStateChanged(this);
     }
 
     setDebugMode(enabled) {
@@ -1150,6 +1662,7 @@
     setPreviewVisible(visible) {
       this.previewVisible = visible === true;
       if (this.preview) this.preview.style.display = this.previewVisible ? 'block' : 'none';
+      if (this.previewButton) this.previewButton.classList.toggle('is-active', this.previewVisible);
       if (!this.previewVisible) {
         this.clearPreview();
         return;
@@ -1180,12 +1693,36 @@
         }
       }
       ctx.restore();
+      this.updateStatsPanel();
     }
 
     clearPreview() {
       if (!this.previewCanvas) return;
       const ctx = this.previewCanvas.getContext('2d');
       if (ctx) ctx.clearRect(0, 0, this.previewCanvas.width, this.previewCanvas.height);
+    }
+
+    updateStatsPanel() {
+      if (!this.statsPanel || !this.previewVisible) return;
+      const stats = faceTracker.stats || {};
+      const age = faceTracker.lastResultsAt ? performance.now() - faceTracker.lastResultsAt : null;
+      const pose = this.headPose || { x: 0.5, y: 0.5, z: 1 };
+      const world = this.worldHeadPosition || this.offAxisCamera.headPoseToWorldPosition(pose);
+      const calibration = this.offAxisCamera.calibration || getCalibration();
+      const item = (label, value) => `<span>${label}: ${value}</span>`;
+      const fixed = (value, digits) => Number.isFinite(value) ? Number(value).toFixed(digits) : '--';
+      this.statsPanel.innerHTML = [
+        item('FPS', fixed(this.fps, 1)),
+        item('Latency', stats.latencyMs == null ? '--' : `${Math.round(stats.latencyMs)}ms`),
+        item('Face', stats.faceDetected ? 'yes' : 'no'),
+        item('Age', age == null ? '--' : `${Math.round(age)}ms`),
+        item('L blink', stats.leftBlink ? 'closed' : 'open'),
+        item('R blink', stats.rightBlink ? 'closed' : 'open'),
+        item('Head N', `${fixed(pose.x, 3)},${fixed(pose.y, 3)},${fixed(pose.z, 3)}`),
+        item('Head W', `${fixed(world.x, 3)},${fixed(world.y, 3)},${fixed(world.z, 3)}`),
+        item('Dist', `${fixed(world.z * 100, 1)}cm`),
+        item('Cal', `${fixed(calibration.screenWidthCm, 1)}x${fixed(calibration.screenHeightCm, 1)}cm`)
+      ].join('');
     }
 
     setPositionAxis(index, value) {
@@ -1203,6 +1740,7 @@
     setScale(value) {
       this.transform.scale = value;
       this.applyTransform();
+      this.computeScaleRange();
       notifyTransformChanged(this);
     }
 
@@ -1236,6 +1774,34 @@
       );
     }
 
+    receiveHeadPose(headPose) {
+      this.headPose = headPose || { x: 0.5, y: 0.5, z: 1 };
+      this.updateOffAxisCamera();
+      if (this.renderer && this.scene && this.camera && this.rendering) {
+        this.renderer.render(this.scene, this.camera);
+      }
+    }
+
+    updateOffAxisCamera() {
+      const pose = this.trackingEnabled ? this.headPose : { x: 0.5, y: 0.5, z: 1 };
+      this.worldHeadPosition = this.offAxisCamera.headPoseToWorldPosition(pose);
+      this.offAxisCamera.setCameraPosition(this.worldHeadPosition);
+      this.offAxisCamera.updateProjectionMatrix(this.worldHeadPosition);
+      this.updateFog();
+      if (this.debugMode && this.debugHelpers.length > 1) {
+        const worldPos = this.worldHeadPosition;
+        this.debugHelpers[1].position.set(worldPos.x, worldPos.y, worldPos.z);
+      }
+    }
+
+    updateFog() {
+      if (!this.scene || !this.scene.fog) return;
+      const screenDims = this.offAxisCamera.getScreenDimensions();
+      const start = Math.max(0.001, this.worldHeadPosition ? this.worldHeadPosition.z : this.camera.position.z);
+      this.scene.fog.near = start;
+      this.scene.fog.far = start + screenDims.height * WII_ROOM.fogDepth;
+    }
+
     ensureTracking() {
       if (this.trackingEnabled && !document.hidden) {
         faceTracker.ensure().catch((error) => {
@@ -1262,11 +1828,15 @@
     animate() {
       if (!this.rendering || this.disposed) return;
       this.raf = requestAnimationFrame(() => this.animate());
-      this.offAxisCamera.updateFromHeadPose(this.trackingEnabled ? this.headPose : { x: 0.5, y: 0.5, z: 1 });
-      if (this.debugMode && this.debugHelpers.length > 1) {
-        const worldPos = this.offAxisCamera.headPoseToWorldPosition(this.headPose);
-        this.debugHelpers[1].position.set(worldPos.x, worldPos.y, worldPos.z);
+      const now = performance.now();
+      this.frameCounter++;
+      if (now - this.fpsStartedAt >= 500) {
+        this.fps = this.frameCounter * 1000 / (now - this.fpsStartedAt);
+        this.frameCounter = 0;
+        this.fpsStartedAt = now;
       }
+      this.updateOffAxisCamera();
+      this.updateStatsPanel();
       this.renderer.render(this.scene, this.camera);
     }
 
@@ -1282,7 +1852,12 @@
       this.offAxisCamera.updateCalibration(calibration);
       this.renderer.setSize(width, height, false);
       this.createWireframeRoom();
-      this.setGridVisible(this.gridVisible);
+      this.createDarts();
+      this.createBackgroundPanorama();
+      this.setGridVisible(this.gridVisible, { notify: false, preference: false });
+      this.setDartsVisible(this.dartsVisible, false);
+      this.setBackgroundVisible(this.backgroundVisible, false);
+      this.computeScaleRange();
       return true;
     }
 
@@ -1313,7 +1888,9 @@
       if (!material) return;
       for (const key of Object.keys(material)) {
         const value = material[key];
-        if (value && value.isTexture && typeof value.dispose === 'function') value.dispose();
+        if (value && value.isTexture && typeof value.dispose === 'function' && !(value.userData && value.userData.deepxCachedTexture)) {
+          value.dispose();
+        }
       }
       if (typeof material.dispose === 'function') material.dispose();
     }
@@ -1325,6 +1902,7 @@
       }
       if (typeof object.traverse === 'function') {
         object.traverse((node) => {
+          if (node.userData && node.userData.deepxSharedAsset) return;
           if (node.geometry && typeof node.geometry.dispose === 'function') node.geometry.dispose();
           if (Array.isArray(node.material)) {
             node.material.forEach((material) => this.disposeMaterial(material));
@@ -1409,6 +1987,12 @@
     ctx.setTransform(parseJson(transformJson), false);
   }
 
+  function setViewerState(elementId, viewerJson) {
+    const ctx = viewers.get(elementId);
+    if (!ctx) return;
+    ctx.setViewerState(parseJson(viewerJson), false);
+  }
+
   function resetTransform(elementId) {
     const ctx = viewers.get(elementId);
     if (ctx) ctx.resetTransform();
@@ -1429,6 +2013,7 @@
     dispose,
     setEditable,
     setTransform,
+    setViewerState,
     resetTransform,
     resize: resizeViewer,
     isAlive
