@@ -115,11 +115,15 @@
       }
       .dx-model-controls {
         width: min(320px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
         border-radius: 8px;
         background: rgba(0,0,0,0.70);
         color: #fff;
         box-shadow: 0 16px 36px rgba(0,0,0,0.35);
         backdrop-filter: blur(8px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
       }
       .dx-model-header {
         display: flex;
@@ -131,6 +135,8 @@
         display: grid;
         gap: 12px;
         padding: 8px 16px 16px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
       }
       .dx-control {
         display: grid;
@@ -875,7 +881,7 @@
       const normalizedY = headPose ? headPose.y : 0.5;
       const normalizedZ = headPose ? headPose.z : 1;
       return {
-        x: (normalizedX - 0.5) * this.screenWidthWorld * movementScale,
+        x: -(normalizedX - 0.5) * this.screenWidthWorld * movementScale,
         y: -(normalizedY - 0.5) * this.screenHeightWorld * movementScale,
         z: this.calibration.viewingDistanceCm * worldScale * (1 / normalizedZ)
       };
@@ -990,7 +996,7 @@
       this.faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: false,
-        selfieMode: true,
+        selfieMode: false,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.65
       });
