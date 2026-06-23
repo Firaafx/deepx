@@ -552,6 +552,8 @@
         path: String(layer.path || layer.assetPath || '').trim(),
         contentType: String(layer.contentType || 'image/png').trim() || 'image/png',
         bytes: Number.isFinite(Number(layer.bytes)) ? Number(layer.bytes) : undefined,
+        visible: safeBool(layer.visible, true),
+        locked: safeBool(layer.locked, false),
         transform: transformFromRaw(layer.transform, fallbackTransform)
       };
     }).filter((layer) => layer.url);
@@ -565,6 +567,8 @@
       path: String(layer.path || ''),
       contentType: String(layer.contentType || 'image/png'),
       ...(Number.isFinite(Number(layer.bytes)) ? { bytes: Number(layer.bytes) } : {}),
+      visible: layer.visible !== false,
+      locked: layer.locked === true,
       transform: transformSnapshot(layer.transform)
     };
   }
@@ -583,6 +587,8 @@
         id: String(layer.id || `model-${index}`).trim() || `model-${index}`,
         name: String(layer.name || `3D Layer ${index + 1}`).trim() || `3D Layer ${index + 1}`,
         ...asset,
+        visible: safeBool(layer.visible, true),
+        locked: safeBool(layer.locked, false),
         transform: transformFromRaw(layer.transform, fallbackTransform)
       };
     }).filter((layer) => layer.url && (supportedMesh(layer) || supportedSplat(layer)));
@@ -598,6 +604,8 @@
       format: String(layer.format || ''),
       contentType: String(layer.contentType || 'application/octet-stream'),
       ...(Number.isFinite(Number(layer.bytes)) ? { bytes: Number(layer.bytes) } : {}),
+      visible: layer.visible !== false,
+      locked: layer.locked === true,
       transform: transformSnapshot(layer.transform)
     };
   }
@@ -618,6 +626,8 @@
         type,
         color: safeColor(layer.color, '#ffffff'),
         intensity: safeNumber(layer.intensity, type === 'spot' ? 1.2 : 1, 0, 20),
+        visible: safeBool(layer.visible, true),
+        locked: safeBool(layer.locked, false),
         transform: transformFromRaw(layer.transform, fallbackTransform)
       };
     });
@@ -630,6 +640,8 @@
       type: String(layer.type || 'point'),
       color: safeColor(layer.color, '#ffffff'),
       intensity: Number(Number(layer.intensity).toFixed(3)),
+      visible: layer.visible !== false,
+      locked: layer.locked === true,
       transform: transformSnapshot(layer.transform)
     };
   }
@@ -1674,6 +1686,7 @@
         const mesh = new this.THREE.Mesh(geometry, material);
         mesh.userData.deepxImageLayerId = layer.id;
         mesh.userData.deepxImageLayerAspect = 1;
+        mesh.visible = layer.visible !== false;
         group.add(mesh);
         this.imageLayerObjects.push(mesh);
         this.applyImageLayerTransform(layer);
@@ -1724,6 +1737,7 @@
       mesh.position.set(transform.position[0], transform.position[1], transform.position[2]);
       mesh.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
       mesh.scale.set(transform.scale * aspect, transform.scale, transform.scale);
+      mesh.visible = layer.visible !== false;
     }
 
     applyImageLayerTransforms() {
@@ -1746,6 +1760,7 @@
       object.position.set(transform.position[0], transform.position[1], transform.position[2]);
       object.scale.set(transform.scale, transform.scale, transform.scale);
       object.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
+      object.visible = this.objectVisible && layer.visible !== false;
     }
 
     applyModelLayerTransforms() {
@@ -1795,6 +1810,8 @@
         type: normalizedType,
         color: '#ffffff',
         intensity: normalizedType === 'spot' ? 1.2 : 1,
+        visible: true,
+        locked: false,
         transform: {
           position: [0.18, 0.16, 0.28],
           scale: 0.25,
@@ -1832,6 +1849,15 @@
       return this.lightLayers.find((layer) => layer.id === this.selectedLayerId) || null;
     }
 
+    selectedEditableLayer() {
+      return this.selectedImageLayer() || this.selectedModelLayer() || this.selectedLightLayer();
+    }
+
+    selectedLayerLocked() {
+      const layer = this.selectedEditableLayer();
+      return !!(layer && layer.locked === true);
+    }
+
     lightLayerObject(id) {
       return this.lightLayerObjects.get(id) || null;
     }
@@ -1843,6 +1869,7 @@
       entry.light.position.set(transform.position[0], transform.position[1], transform.position[2]);
       entry.light.color.set(layer.color);
       entry.light.intensity = layer.intensity;
+      entry.light.visible = layer.visible !== false;
       const distance = Math.max(0, transform.scale * 20);
       entry.light.distance = distance;
       if (layer.type === 'spot') {
@@ -1857,6 +1884,7 @@
             transform.position[2] + direction.z
           );
           entry.target.updateMatrixWorld();
+          entry.target.visible = layer.visible !== false;
         }
       }
     }
@@ -2421,8 +2449,14 @@
 
     applyObjectVisibility() {
       if (this.object) this.object.visible = this.objectVisible;
-      if (this.imageLayerGroup) this.imageLayerGroup.visible = this.objectVisible;
-      for (const object of this.modelLayerObjects.values()) object.visible = this.objectVisible;
+      if (this.imageLayerGroup) {
+        this.imageLayerGroup.visible = this.objectVisible;
+        for (const layer of this.imageLayers) this.applyImageLayerTransform(layer);
+      }
+      for (const layer of this.modelLayers) {
+        const object = this.modelLayerObject(layer.id);
+        if (object) object.visible = this.objectVisible && layer.visible !== false;
+      }
     }
 
     setSceneSetting(key, value) {
@@ -2599,6 +2633,7 @@
     setSelectedLightIntensity(value) {
       const layer = this.selectedLightLayer();
       if (!layer) return;
+      if (layer.locked === true) return;
       layer.intensity = safeNumber(value, layer.intensity, 0, 20);
       this.applyLightLayerTransform(layer);
       notifyViewerStateChanged(this);
@@ -2607,6 +2642,7 @@
     setSelectedLightColor(value) {
       const layer = this.selectedLightLayer();
       if (!layer) return;
+      if (layer.locked === true) return;
       layer.color = safeColor(value, layer.color);
       this.applyLightLayerTransform(layer);
       notifyViewerStateChanged(this);
@@ -2615,6 +2651,7 @@
     setPositionAxis(index, value) {
       const layer = this.selectedImageLayer();
       if (layer) {
+        if (layer.locked === true) return;
         layer.transform.position[index] = value;
         this.applyImageLayerTransform(layer);
         notifyViewerStateChanged(this);
@@ -2622,6 +2659,7 @@
       }
       const modelLayer = this.selectedModelLayer();
       if (modelLayer) {
+        if (modelLayer.locked === true) return;
         modelLayer.transform.position[index] = value;
         this.applyModelLayerTransform(modelLayer);
         notifyViewerStateChanged(this);
@@ -2629,6 +2667,7 @@
       }
       const lightLayer = this.selectedLightLayer();
       if (lightLayer) {
+        if (lightLayer.locked === true) return;
         lightLayer.transform.position[index] = value;
         this.applyLightLayerTransform(lightLayer);
         notifyViewerStateChanged(this);
@@ -2642,6 +2681,7 @@
     setRotationAxis(index, value) {
       const layer = this.selectedImageLayer();
       if (layer) {
+        if (layer.locked === true) return;
         layer.transform.rotation[index] = value;
         this.applyImageLayerTransform(layer);
         notifyViewerStateChanged(this);
@@ -2649,6 +2689,7 @@
       }
       const modelLayer = this.selectedModelLayer();
       if (modelLayer) {
+        if (modelLayer.locked === true) return;
         modelLayer.transform.rotation[index] = value;
         this.applyModelLayerTransform(modelLayer);
         notifyViewerStateChanged(this);
@@ -2656,6 +2697,7 @@
       }
       const lightLayer = this.selectedLightLayer();
       if (lightLayer) {
+        if (lightLayer.locked === true) return;
         lightLayer.transform.rotation[index] = value;
         this.applyLightLayerTransform(lightLayer);
         notifyViewerStateChanged(this);
@@ -2669,6 +2711,7 @@
     setScale(value) {
       const layer = this.selectedImageLayer();
       if (layer) {
+        if (layer.locked === true) return;
         layer.transform.scale = value;
         this.applyImageLayerTransform(layer);
         this.computeScaleRange();
@@ -2677,6 +2720,7 @@
       }
       const modelLayer = this.selectedModelLayer();
       if (modelLayer) {
+        if (modelLayer.locked === true) return;
         modelLayer.transform.scale = value;
         this.applyModelLayerTransform(modelLayer);
         this.computeScaleRange();
@@ -2685,6 +2729,7 @@
       }
       const lightLayer = this.selectedLightLayer();
       if (lightLayer) {
+        if (lightLayer.locked === true) return;
         lightLayer.transform.scale = value;
         this.applyLightLayerTransform(lightLayer);
         this.computeScaleRange();

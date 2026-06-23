@@ -6350,6 +6350,34 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     });
   }
 
+  void _applyThreeDTransformDraft(Map<String, dynamic> transform) {
+    final Map<String, dynamic> normalized =
+        _normalizedThreeDTransform(transform);
+    setState(() {
+      _threeDTransformDraft = normalized;
+      if (_threeDAssetPayload != null) {
+        _threeDAssetPayload = _payloadWithThreeDTransformSnapshot(
+          _threeDAssetPayload!,
+          normalized,
+        );
+      }
+    });
+  }
+
+  void _applyThreeDViewerDraft(Map<String, dynamic> viewerState) {
+    final Map<String, dynamic> normalized =
+        _normalizedThreeDViewerState(viewerState);
+    setState(() {
+      _threeDViewerDraft = normalized;
+      if (_threeDAssetPayload != null) {
+        _threeDAssetPayload = _payloadWithThreeDViewerStateSnapshot(
+          _threeDAssetPayload!,
+          normalized,
+        );
+      }
+    });
+  }
+
   Widget _buildPreview(ColorScheme cs) {
     if (_postTypeIndex > 0) {
       final payload = _threeDAssetPayload ?? _threeDThumbnailPayload;
@@ -6361,35 +6389,10 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   payload: payload,
                   editable: true,
                   trackingEnabled: true,
-                  showModelControls: true,
+                  showModelControls: false,
                   transformOverride: _threeDTransformDraft,
-                  onTransformChanged: (transform) {
-                    final normalized = _normalizedThreeDTransform(transform);
-                    setState(() {
-                      _threeDTransformDraft = normalized;
-                      if (_threeDAssetPayload != null) {
-                        _threeDAssetPayload =
-                            _payloadWithThreeDTransformSnapshot(
-                          _threeDAssetPayload!,
-                          normalized,
-                        );
-                      }
-                    });
-                  },
-                  onViewerStateChanged: (viewerState) {
-                    final normalized =
-                        _normalizedThreeDViewerState(viewerState);
-                    setState(() {
-                      _threeDViewerDraft = normalized;
-                      if (_threeDAssetPayload != null) {
-                        _threeDAssetPayload =
-                            _payloadWithThreeDViewerStateSnapshot(
-                          _threeDAssetPayload!,
-                          normalized,
-                        );
-                      }
-                    });
-                  },
+                  onTransformChanged: _applyThreeDTransformDraft,
+                  onViewerStateChanged: _applyThreeDViewerDraft,
                 )
               : _SharedPresetPreview(
                   payload: payload,
@@ -6621,7 +6624,18 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 14),
+                    _buildThreeDViewerControlsPanel(
+                      context: context,
+                      cs: cs,
+                      viewerState: _threeDViewerDraft,
+                      transformState: _threeDTransformDraft,
+                      hasPrimaryObject: _threeDAssetPayload != null &&
+                          threeDAssetFromPayload(_threeDAssetPayload!) != null,
+                      onTransformChanged: _applyThreeDTransformDraft,
+                      onViewerStateChanged: _applyThreeDViewerDraft,
+                    ),
+                    const SizedBox(height: 14),
                     if (train3dMode) ...[
                       FilledButton.icon(
                         onPressed: _uploading ? null : _uploadThreeDSourceImage,
@@ -10876,6 +10890,8 @@ List<Map<String, dynamic>> _normalizedThreeDImageLayers(dynamic value) {
           ? raw['contentType'].toString().trim()
           : 'image/png',
       if (raw['bytes'] is num) 'bytes': (raw['bytes'] as num).toInt(),
+      'visible': _threeDViewerBool(raw['visible'], true),
+      'locked': _threeDViewerBool(raw['locked'], false),
       'transform': transform,
     };
   }).toList();
@@ -10906,6 +10922,8 @@ List<Map<String, dynamic>> _normalizedThreeDModelLayers(dynamic value) {
           ? raw['contentType'].toString().trim()
           : 'application/octet-stream',
       if (raw['bytes'] is num) 'bytes': (raw['bytes'] as num).toInt(),
+      'visible': _threeDViewerBool(raw['visible'], true),
+      'locked': _threeDViewerBool(raw['locked'], false),
       'transform': transform,
     };
   }).toList();
@@ -10931,6 +10949,8 @@ List<Map<String, dynamic>> _normalizedThreeDLightLayers(dynamic value) {
         raw['intensity'],
         type == 'spot' ? 1.2 : 1,
       ).clamp(0.0, 20.0).toDouble(),
+      'visible': _threeDViewerBool(raw['visible'], true),
+      'locked': _threeDViewerBool(raw['locked'], false),
       'transform': _normalizedThreeDTransform(raw['transform']),
     };
   }).toList();
@@ -11035,6 +11055,8 @@ Map<String, dynamic> _payloadWithThreeDImageLayer(
     'contentType':
         contentType.trim().isEmpty ? 'image/png' : contentType.trim(),
     'bytes': byteSize,
+    'visible': true,
+    'locked': false,
     'transform': <String, dynamic>{
       'position': <double>[0, 0, -0.08 - (layers.length * 0.08)],
       'scale': 0.25,
@@ -11083,6 +11105,8 @@ Map<String, dynamic> _payloadWithThreeDModelLayer(
         ? 'application/octet-stream'
         : contentType.trim(),
     'bytes': byteSize,
+    'visible': true,
+    'locked': false,
     'transform': <String, dynamic>{
       'position': <double>[0, -0.09, -0.08 - (layers.length * 0.08)],
       'scale': _defaultThreeDScale,
@@ -11097,6 +11121,738 @@ Map<String, dynamic> _payloadWithThreeDModelLayer(
       'modelLayers': layers,
     },
   );
+}
+
+double _threeDRound(double value) => double.parse(value.toStringAsFixed(3));
+
+String _threeDHexFromColor(Color color) {
+  final int value = color.toARGB32();
+  final int red = (value >> 16) & 0xFF;
+  final int green = (value >> 8) & 0xFF;
+  final int blue = value & 0xFF;
+  return '#${red.toRadixString(16).padLeft(2, '0')}'
+          '${green.toRadixString(16).padLeft(2, '0')}'
+          '${blue.toRadixString(16).padLeft(2, '0')}'
+      .toUpperCase();
+}
+
+Future<void> _pickThreeDViewerColor({
+  required BuildContext context,
+  required String initialHex,
+  required ValueChanged<String> onPicked,
+}) async {
+  Color selected = _cardAccentColorFromHex(initialHex);
+  int red(Color color) => (color.toARGB32() >> 16) & 0xFF;
+  int green(Color color) => (color.toARGB32() >> 8) & 0xFF;
+  int blue(Color color) => color.toARGB32() & 0xFF;
+  final Color? result = await showDialog<Color>(
+    context: context,
+    builder: (dialogContext) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          void update(Color color) => setDialogState(() => selected = color);
+          return AlertDialog(
+            title: const Text('Choose color'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _RgbSlider(
+                  label: 'Red',
+                  value: red(selected),
+                  color: Colors.red,
+                  onChanged: (value) => update(
+                    Color.fromARGB(
+                      255,
+                      value.round(),
+                      green(selected),
+                      blue(selected),
+                    ),
+                  ),
+                ),
+                _RgbSlider(
+                  label: 'Green',
+                  value: green(selected),
+                  color: Colors.green,
+                  onChanged: (value) => update(
+                    Color.fromARGB(
+                      255,
+                      red(selected),
+                      value.round(),
+                      blue(selected),
+                    ),
+                  ),
+                ),
+                _RgbSlider(
+                  label: 'Blue',
+                  value: blue(selected),
+                  color: Colors.blue,
+                  onChanged: (value) => update(
+                    Color.fromARGB(
+                      255,
+                      red(selected),
+                      green(selected),
+                      value.round(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, selected),
+                child: const Text('Apply'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+  if (result != null) onPicked(_threeDHexFromColor(result));
+}
+
+Widget _buildThreeDViewerControlsPanel({
+  required BuildContext context,
+  required ColorScheme cs,
+  required Map<String, dynamic> viewerState,
+  required Map<String, dynamic> transformState,
+  required bool hasPrimaryObject,
+  required ValueChanged<Map<String, dynamic>> onTransformChanged,
+  required ValueChanged<Map<String, dynamic>> onViewerStateChanged,
+}) {
+  final Map<String, dynamic> viewer = _normalizedThreeDViewerState(viewerState);
+  final Map<String, dynamic> primaryTransform =
+      _normalizedThreeDTransform(transformState);
+  final List<Map<String, dynamic>> images =
+      _normalizedThreeDImageLayers(viewer['imageLayers']);
+  final List<Map<String, dynamic>> models =
+      _normalizedThreeDModelLayers(viewer['modelLayers']);
+  final List<Map<String, dynamic>> lights =
+      _normalizedThreeDLightLayers(viewer['lightLayers']);
+
+  String selectedId = viewer['selectedLayerId']?.toString() ?? '';
+  final bool selectedLayerExists = <Map<String, dynamic>>[
+    ...models,
+    ...images,
+    ...lights,
+  ].any((layer) => layer['id']?.toString() == selectedId);
+  if (selectedId.isNotEmpty && !selectedLayerExists) selectedId = '';
+  if (selectedId.isEmpty && !hasPrimaryObject) {
+    if (models.isNotEmpty) {
+      selectedId = models.first['id']?.toString() ?? '';
+    } else if (images.isNotEmpty) {
+      selectedId = images.first['id']?.toString() ?? '';
+    } else if (lights.isNotEmpty) {
+      selectedId = lights.first['id']?.toString() ?? '';
+    }
+  }
+
+  String targetKind(String id) {
+    if (id.isEmpty && hasPrimaryObject) return 'primary';
+    if (models.any((layer) => layer['id']?.toString() == id)) return 'model';
+    if (images.any((layer) => layer['id']?.toString() == id)) return 'image';
+    if (lights.any((layer) => layer['id']?.toString() == id)) return 'light';
+    return '';
+  }
+
+  final String kind = targetKind(selectedId);
+  String layerKeyForKind(String value) {
+    return switch (value) {
+      'model' => 'modelLayers',
+      'image' => 'imageLayers',
+      'light' => 'lightLayers',
+      _ => '',
+    };
+  }
+
+  List<Map<String, dynamic>> sourceForKind(String value) {
+    return switch (value) {
+      'model' => models,
+      'image' => images,
+      'light' => lights,
+      _ => <Map<String, dynamic>>[],
+    };
+  }
+
+  Map<String, dynamic> selectedLayer() {
+    if (kind == 'primary') return const <String, dynamic>{};
+    return sourceForKind(kind).firstWhere(
+      (entry) => entry['id']?.toString() == selectedId,
+      orElse: () => const <String, dynamic>{},
+    );
+  }
+
+  Map<String, dynamic> activeTransform() {
+    if (kind == 'primary') return primaryTransform;
+    final Map<String, dynamic> layer = selectedLayer();
+    return _normalizedThreeDTransform(layer['transform']);
+  }
+
+  void emitViewer(Map<String, dynamic> next) {
+    onViewerStateChanged(_normalizedThreeDViewerState(next));
+  }
+
+  void updateActiveTransform(Map<String, dynamic> nextTransform) {
+    final Map<String, dynamic> normalized =
+        _normalizedThreeDTransform(nextTransform);
+    if (kind == 'primary') {
+      onTransformChanged(normalized);
+      return;
+    }
+    final String layerKey = layerKeyForKind(kind);
+    if (layerKey.isEmpty) return;
+    final List<Map<String, dynamic>> source = sourceForKind(kind);
+    final List<Map<String, dynamic>> updated = source.map((layer) {
+      if (layer['id']?.toString() != selectedId) return layer;
+      return <String, dynamic>{...layer, 'transform': normalized};
+    }).toList();
+    emitViewer(<String, dynamic>{
+      ...viewer,
+      'selectedLayerId': selectedId,
+      layerKey: updated,
+    });
+  }
+
+  void updateSelectedLayerState({bool? visible, bool? locked}) {
+    if (kind == 'primary') return;
+    final String layerKey = layerKeyForKind(kind);
+    if (layerKey.isEmpty) return;
+    final List<Map<String, dynamic>> updated = sourceForKind(kind).map((layer) {
+      if (layer['id']?.toString() != selectedId) return layer;
+      return <String, dynamic>{
+        ...layer,
+        if (visible != null) 'visible': visible,
+        if (locked != null) 'locked': locked,
+      };
+    }).toList();
+    emitViewer(<String, dynamic>{
+      ...viewer,
+      'selectedLayerId': selectedId,
+      layerKey: updated,
+    });
+  }
+
+  void deleteSelectedLayer() {
+    if (kind == 'primary') return;
+    final Map<String, dynamic> selected = selectedLayer();
+    if (selected['locked'] == true) return;
+    final List<Map<String, dynamic>> nextModels = kind == 'model'
+        ? models
+            .where((layer) => layer['id']?.toString() != selectedId)
+            .toList()
+        : models;
+    final List<Map<String, dynamic>> nextImages = kind == 'image'
+        ? images
+            .where((layer) => layer['id']?.toString() != selectedId)
+            .toList()
+        : images;
+    final List<Map<String, dynamic>> nextLights = kind == 'light'
+        ? lights
+            .where((layer) => layer['id']?.toString() != selectedId)
+            .toList()
+        : lights;
+    final String nextSelectedId = hasPrimaryObject
+        ? ''
+        : (nextModels.isNotEmpty
+            ? nextModels.first['id']?.toString() ?? ''
+            : nextImages.isNotEmpty
+                ? nextImages.first['id']?.toString() ?? ''
+                : nextLights.isNotEmpty
+                    ? nextLights.first['id']?.toString() ?? ''
+                    : '');
+    emitViewer(<String, dynamic>{
+      ...viewer,
+      'selectedLayerId': nextSelectedId,
+      'modelLayers': nextModels,
+      'imageLayers': nextImages,
+      'lightLayers': nextLights,
+    });
+  }
+
+  void updatePosition(int index, double value) {
+    final Map<String, dynamic> transform = activeTransform();
+    final List<double> position = List<double>.from(
+      transform['position'] as List,
+    );
+    position[index] = _threeDRound(value);
+    updateActiveTransform(<String, dynamic>{
+      ...transform,
+      'position': position,
+    });
+  }
+
+  void updateRotation(int index, double value) {
+    final Map<String, dynamic> transform = activeTransform();
+    final List<double> rotation = List<double>.from(
+      transform['rotation'] as List,
+    );
+    rotation[index] = _threeDRound(value);
+    updateActiveTransform(<String, dynamic>{
+      ...transform,
+      'rotation': rotation,
+    });
+  }
+
+  void updateScale(double value) {
+    final Map<String, dynamic> transform = activeTransform();
+    updateActiveTransform(<String, dynamic>{
+      ...transform,
+      'scale': _threeDRound(value),
+    });
+  }
+
+  void addLight(String type) {
+    final String normalizedType = type == 'spot' ? 'spot' : 'point';
+    final String id =
+        '$normalizedType-${DateTime.now().microsecondsSinceEpoch}';
+    final List<Map<String, dynamic>> updatedLights =
+        List<Map<String, dynamic>>.from(lights);
+    updatedLights.add(<String, dynamic>{
+      'id': id,
+      'name':
+          '${normalizedType == 'spot' ? 'Spot' : 'Point'} Light ${updatedLights.length + 1}',
+      'type': normalizedType,
+      'color': '#FFFFFF',
+      'intensity': normalizedType == 'spot' ? 1.2 : 1.0,
+      'visible': true,
+      'locked': false,
+      'transform': <String, dynamic>{
+        'position': <double>[0.18, 0.16, 0.28],
+        'scale': 0.25,
+        'rotation': <double>[-0.55, -0.45, 0],
+      },
+    });
+    emitViewer(<String, dynamic>{
+      ...viewer,
+      'selectedLayerId': id,
+      'lightLayers': updatedLights,
+    });
+  }
+
+  void updateSelectedLight({double? intensity, String? color}) {
+    if (kind != 'light') return;
+    final List<Map<String, dynamic>> updatedLights = lights.map((layer) {
+      if (layer['id']?.toString() != selectedId) return layer;
+      return <String, dynamic>{
+        ...layer,
+        if (intensity != null) 'intensity': _threeDRound(intensity),
+        if (color != null) 'color': _threeDColor(color, '#ffffff'),
+      };
+    }).toList();
+    emitViewer(<String, dynamic>{
+      ...viewer,
+      'selectedLayerId': selectedId,
+      'lightLayers': updatedLights,
+    });
+  }
+
+  final Map<String, dynamic> active = activeTransform();
+  final List<double> position = List<double>.from(active['position'] as List);
+  final List<double> rotation = List<double>.from(active['rotation'] as List);
+  final double scale = _threeDTransformNumber(active['scale'], 1);
+  final Map<String, dynamic> selectedLayerState = selectedLayer();
+  final bool hasSelectedLayer =
+      kind != 'primary' && selectedLayerState.isNotEmpty;
+  final bool selectedLayerVisible = selectedLayerState['visible'] != false;
+  final bool selectedLayerLocked = selectedLayerState['locked'] == true;
+  final Map<String, dynamic>? selectedLight = kind == 'light'
+      ? lights.firstWhere(
+          (entry) => entry['id']?.toString() == selectedId,
+          orElse: () => const <String, dynamic>{},
+        )
+      : null;
+  final bool hasAnyTarget = hasPrimaryObject ||
+      images.isNotEmpty ||
+      models.isNotEmpty ||
+      lights.isNotEmpty;
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Viewer Controls',
+        style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 8),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: viewer['gridVisible'] == true,
+        title: const Text('Grid + fog'),
+        onChanged: (value) => emitViewer(<String, dynamic>{
+          ...viewer,
+          'gridVisible': value,
+        }),
+      ),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: viewer['dartsVisible'] == true,
+        title: const Text('Darts'),
+        onChanged: (value) => emitViewer(<String, dynamic>{
+          ...viewer,
+          'dartsVisible': value,
+        }),
+      ),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: viewer['objectVisible'] == true,
+        title: const Text('Objects'),
+        onChanged: (value) => emitViewer(<String, dynamic>{
+          ...viewer,
+          'objectVisible': value,
+        }),
+      ),
+      const SizedBox(height: 8),
+      DropdownButtonFormField<String>(
+        key: ValueKey<String>(
+          'three-d-selected-$selectedId-${models.length}-${images.length}-${lights.length}',
+        ),
+        initialValue: hasAnyTarget ? selectedId : null,
+        decoration: const InputDecoration(labelText: 'Selected object'),
+        items: <DropdownMenuItem<String>>[
+          if (hasPrimaryObject)
+            const DropdownMenuItem<String>(
+              value: '',
+              child: Text('3D Object'),
+            ),
+          ...models.map(
+            (layer) => DropdownMenuItem<String>(
+              value: layer['id']?.toString() ?? '',
+              child: Text(
+                '3D: ${layer['name'] ?? 'Layer'}'
+                '${layer['visible'] == false ? ' hidden' : ''}'
+                '${layer['locked'] == true ? ' locked' : ''}',
+              ),
+            ),
+          ),
+          ...images.map(
+            (layer) => DropdownMenuItem<String>(
+              value: layer['id']?.toString() ?? '',
+              child: Text(
+                'PNG: ${layer['name'] ?? 'Layer'}'
+                '${layer['visible'] == false ? ' hidden' : ''}'
+                '${layer['locked'] == true ? ' locked' : ''}',
+              ),
+            ),
+          ),
+          ...lights.map(
+            (layer) => DropdownMenuItem<String>(
+              value: layer['id']?.toString() ?? '',
+              child: Text(
+                '${layer['type'] == 'spot' ? 'Spot' : 'Point'}: ${layer['name'] ?? 'Light'}'
+                '${layer['visible'] == false ? ' hidden' : ''}'
+                '${layer['locked'] == true ? ' locked' : ''}',
+              ),
+            ),
+          ),
+        ],
+        onChanged: hasAnyTarget
+            ? (value) => emitViewer(<String, dynamic>{
+                  ...viewer,
+                  'selectedLayerId': value ?? '',
+                })
+            : null,
+      ),
+      if (hasSelectedLayer) ...[
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: () => updateSelectedLayerState(
+                visible: !selectedLayerVisible,
+              ),
+              icon: Icon(
+                selectedLayerVisible
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+              ),
+              label: Text(selectedLayerVisible ? 'Hide' : 'Show'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => updateSelectedLayerState(
+                locked: !selectedLayerLocked,
+              ),
+              icon: Icon(
+                selectedLayerLocked
+                    ? Icons.lock_open_rounded
+                    : Icons.lock_outline_rounded,
+              ),
+              label: Text(selectedLayerLocked ? 'Unlock' : 'Lock'),
+            ),
+            OutlinedButton.icon(
+              onPressed: selectedLayerLocked ? null : deleteSelectedLayer,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: cs.error,
+              ),
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: const Text('Delete'),
+            ),
+          ],
+        ),
+      ],
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          OutlinedButton.icon(
+            onPressed: () => addLight('point'),
+            icon: const Icon(Icons.lightbulb_outline_rounded),
+            label: const Text('Add Point'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => addLight('spot'),
+            icon: const Icon(Icons.highlight_outlined),
+            label: const Text('Add Spot'),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      _ThreeDPanelSlider(
+        label: 'Fog Strength',
+        value: _threeDTransformNumber(viewer['fogStrength'], 0.35),
+        min: 0,
+        max: 1,
+        onChanged: (value) => emitViewer(<String, dynamic>{
+          ...viewer,
+          'fogStrength': _threeDRound(value),
+        }),
+      ),
+      _ThreeDPanelSlider(
+        label: 'Fog Length',
+        value: _threeDTransformNumber(viewer['fogDepth'], 9),
+        min: 0.5,
+        max: 40,
+        onChanged: (value) => emitViewer(<String, dynamic>{
+          ...viewer,
+          'fogDepth': _threeDRound(value),
+        }),
+      ),
+      const SizedBox(height: 8),
+      _ThreeDPanelSlider(
+        label: 'Ambient Light',
+        value: _threeDTransformNumber(viewer['ambientIntensity'], 0.5),
+        min: 0,
+        max: 5,
+        onChanged: (value) => emitViewer(<String, dynamic>{
+          ...viewer,
+          'ambientIntensity': _threeDRound(value),
+        }),
+      ),
+      _ThreeDColorRow(
+        label: 'Ambient Color',
+        value: viewer['ambientColor']?.toString() ?? '#ffffff',
+        onTap: () => _pickThreeDViewerColor(
+          context: context,
+          initialHex: viewer['ambientColor']?.toString() ?? '#ffffff',
+          onPicked: (value) => emitViewer(<String, dynamic>{
+            ...viewer,
+            'ambientColor': value,
+          }),
+        ),
+      ),
+      _ThreeDPanelSlider(
+        label: 'Sun Light',
+        value: _threeDTransformNumber(viewer['sunIntensity'], 0.8),
+        min: 0,
+        max: 10,
+        onChanged: (value) => emitViewer(<String, dynamic>{
+          ...viewer,
+          'sunIntensity': _threeDRound(value),
+        }),
+      ),
+      _ThreeDColorRow(
+        label: 'Sun Color',
+        value: viewer['sunColor']?.toString() ?? '#ffffff',
+        onTap: () => _pickThreeDViewerColor(
+          context: context,
+          initialHex: viewer['sunColor']?.toString() ?? '#ffffff',
+          onPicked: (value) => emitViewer(<String, dynamic>{
+            ...viewer,
+            'sunColor': value,
+          }),
+        ),
+      ),
+      for (int i = 0; i < 3; i++)
+        _ThreeDPanelSlider(
+          label: 'Sun Dir ${'XYZ'[i]}',
+          value: _threeDTransformVector(
+            viewer['sunDirection'],
+            const <double>[1, 1, 1],
+          )[i],
+          min: -2,
+          max: 2,
+          onChanged: (value) {
+            final List<double> direction = _threeDTransformVector(
+              viewer['sunDirection'],
+              const <double>[1, 1, 1],
+            );
+            direction[i] = _threeDRound(value);
+            emitViewer(<String, dynamic>{
+              ...viewer,
+              'sunDirection': direction,
+            });
+          },
+        ),
+      const SizedBox(height: 8),
+      if (hasAnyTarget) ...[
+        _ThreeDPanelSlider(
+          label: 'Position X',
+          value: position[0],
+          min: -1,
+          max: 1,
+          onChanged:
+              selectedLayerLocked ? null : (value) => updatePosition(0, value),
+        ),
+        _ThreeDPanelSlider(
+          label: 'Position Y',
+          value: position[1],
+          min: -1,
+          max: 1,
+          onChanged:
+              selectedLayerLocked ? null : (value) => updatePosition(1, value),
+        ),
+        _ThreeDPanelSlider(
+          label: 'Position Z',
+          value: position[2],
+          min: -2,
+          max: 1,
+          onChanged:
+              selectedLayerLocked ? null : (value) => updatePosition(2, value),
+        ),
+        _ThreeDPanelSlider(
+          label: 'Scale',
+          value: scale,
+          min: 0.001,
+          max: kind == 'primary' ? 100 : 4,
+          onChanged: selectedLayerLocked ? null : updateScale,
+        ),
+        for (int i = 0; i < 3; i++)
+          _ThreeDPanelSlider(
+            label: 'Rotation ${'XYZ'[i]}',
+            value: rotation[i],
+            min: -math.pi,
+            max: math.pi,
+            display: (value) =>
+                '${(value * 180 / math.pi).toStringAsFixed(1)} deg',
+            onChanged: selectedLayerLocked
+                ? null
+                : (value) => updateRotation(i, value),
+          ),
+      ],
+      if (selectedLight != null && selectedLight.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        _ThreeDPanelSlider(
+          label: 'Light Intensity',
+          value: _threeDTransformNumber(selectedLight['intensity'], 1),
+          min: 0,
+          max: 20,
+          onChanged: selectedLayerLocked
+              ? null
+              : (value) => updateSelectedLight(intensity: value),
+        ),
+        _ThreeDColorRow(
+          label: 'Light Color',
+          value: selectedLight['color']?.toString() ?? '#ffffff',
+          onTap: selectedLayerLocked
+              ? null
+              : () => _pickThreeDViewerColor(
+                    context: context,
+                    initialHex: selectedLight['color']?.toString() ?? '#ffffff',
+                    onPicked: (value) => updateSelectedLight(color: value),
+                  ),
+        ),
+      ],
+    ],
+  );
+}
+
+class _ThreeDPanelSlider extends StatelessWidget {
+  const _ThreeDPanelSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+    this.display,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final ValueChanged<double>? onChanged;
+  final String Function(double value)? display;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    final double clamped = value.clamp(min, max).toDouble();
+    final String text = display?.call(clamped) ?? clamped.toStringAsFixed(3);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(label, style: TextStyle(color: cs.onSurface)),
+            ),
+            Text(text, style: TextStyle(color: cs.onSurfaceVariant)),
+          ],
+        ),
+        Slider(
+          value: clamped,
+          min: min,
+          max: max,
+          onChanged: onChanged == null
+              ? null
+              : (value) => onChanged!(_threeDRound(value)),
+        ),
+      ],
+    );
+  }
+}
+
+class _ThreeDColorRow extends StatelessWidget {
+  const _ThreeDColorRow({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    final Color color = _cardAccentColorFromHex(value, fallback: Colors.white);
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(label),
+      subtitle: Text(value.toUpperCase()),
+      enabled: onTap != null,
+      trailing: DecoratedBox(
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: cs.outline.withValues(alpha: 0.4)),
+        ),
+        child: const SizedBox(width: 34, height: 24),
+      ),
+      onTap: onTap,
+    );
+  }
 }
 
 class _ThreeDAssetEditorPage extends StatefulWidget {
@@ -11412,7 +12168,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                         payload: _payload,
                         editable: true,
                         trackingEnabled: true,
-                        showModelControls: true,
+                        showModelControls: false,
                         transformOverride: _transformDraft,
                         onTransformChanged: _applyTransform,
                         onViewerStateChanged: _applyViewerState,
@@ -11493,6 +12249,16 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                         label: const Text('Add Splat Layer'),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 14),
+                  _buildThreeDViewerControlsPanel(
+                    context: context,
+                    cs: cs,
+                    viewerState: _viewerDraft,
+                    transformState: _transformDraft,
+                    hasPrimaryObject: threeDAssetFromPayload(_payload) != null,
+                    onTransformChanged: _applyTransform,
+                    onViewerStateChanged: _applyViewerState,
                   ),
                   if (_uploading) ...[
                     const SizedBox(height: 10),
