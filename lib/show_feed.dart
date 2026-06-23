@@ -5967,9 +5967,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
       final asset = await _repository.uploadAssetBytesWithPath(
         bytes: file.bytes,
         fileName: file.name,
-        contentType: file.contentType.trim().isEmpty
-            ? 'image/png'
-            : file.contentType,
+        contentType:
+            file.contentType.trim().isEmpty ? 'image/png' : file.contentType,
         folder: 'three-image-layers',
         bucket: AppRepository.threeDAssetsBucket,
         onProgress: (progress) {
@@ -6012,6 +6011,82 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     }
   }
 
+  Future<void> _uploadThreeDModelLayer({
+    required DeepXMediaType mediaType,
+    required String accept,
+    required Set<String> allowedExtensions,
+  }) async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _uploading = true;
+      _threeDProcessing = true;
+      _threeDProgress = 0.12;
+      _threeDStage = 'Uploading 3D layer...';
+    });
+    try {
+      final file = await pickDeviceFile(accept: accept);
+      if (file == null) {
+        if (mounted) setState(() => _threeDStage = '3D layer cancelled');
+        return;
+      }
+      final String ext = _extensionForFile(file.name);
+      if (!allowedExtensions.contains(ext)) {
+        throw Exception('Unsupported file type .$ext');
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType.trim().isEmpty
+            ? 'application/octet-stream'
+            : file.contentType,
+        folder: mediaType == DeepXMediaType.gaussianSplat
+            ? 'gaussian-splats'
+            : 'triangle-meshes',
+        bucket: AppRepository.threeDAssetsBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _threeDProgress = progress.clamp(0, 1).toDouble();
+            _threeDStage =
+                'Uploading 3D layer ${(_threeDProgress * 100).round()}%';
+          });
+        },
+      );
+      setState(() {
+        _threeDAssetPayload = _payloadWithThreeDModelLayer(
+          _threeDAssetPayload,
+          asset,
+          mediaType: mediaType,
+          name: file.name,
+          format: ext,
+          byteSize: file.bytes.length,
+          contentType: file.contentType.trim().isEmpty
+              ? 'application/octet-stream'
+              : file.contentType,
+        );
+        _threeDTransformDraft =
+            _transformFromThreeDPayload(_threeDAssetPayload!);
+        _threeDViewerDraft =
+            _viewerStateFromThreeDPayload(_threeDAssetPayload!);
+        _threeDProgress = 1;
+        _threeDStage = '3D layer ready';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('3D layer upload failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploading = false;
+          _threeDProcessing = false;
+        });
+      }
+    }
+  }
+
   Future<void> _openThreeDComposer() async {
     final messenger = ScaffoldMessenger.of(context);
     final rawPayload = _threeDAssetPayload;
@@ -6026,10 +6101,11 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           );
     if (payload == null ||
         (threeDAssetFromPayload(payload) == null &&
-            !_hasThreeDImageLayers(payload))) {
+            !_hasThreeDImageLayers(payload) &&
+            !_hasThreeDModelLayers(payload))) {
       messenger.showSnackBar(
         const SnackBar(
-          content: Text('Upload or generate a 3D asset, or add a PNG layer.'),
+          content: Text('Upload a 3D asset, or add a 3D/PNG layer.'),
         ),
       );
       return;
@@ -6508,6 +6584,42 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       onPressed: _uploading ? null : _uploadThreeDImageLayer,
                       icon: const Icon(Icons.layers_outlined),
                       label: const Text('Add PNG Layer'),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _uploading
+                              ? null
+                              : () => _uploadThreeDModelLayer(
+                                    mediaType: DeepXMediaType.triangleMesh,
+                                    accept: '.glb,.gltf',
+                                    allowedExtensions: const <String>{
+                                      'glb',
+                                      'gltf',
+                                    },
+                                  ),
+                          icon: const Icon(Icons.view_in_ar_outlined),
+                          label: const Text('Add Mesh Layer'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _uploading
+                              ? null
+                              : () => _uploadThreeDModelLayer(
+                                    mediaType: DeepXMediaType.gaussianSplat,
+                                    accept: '.ply,.splat,.ksplat',
+                                    allowedExtensions: const <String>{
+                                      'ply',
+                                      'splat',
+                                      'ksplat',
+                                    },
+                                  ),
+                          icon: const Icon(Icons.blur_on_rounded),
+                          label: const Text('Add Splat Layer'),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 10),
                     if (train3dMode) ...[
@@ -10666,6 +10778,11 @@ double _threeDTransformNumber(dynamic value, double fallback) {
   return double.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
+String _threeDColor(dynamic value, String fallback) {
+  final String text = value?.toString().trim() ?? '';
+  return RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(text) ? text : fallback;
+}
+
 Map<String, dynamic> _normalizedThreeDTransform(dynamic value) {
   final Map<String, dynamic> raw = value is Map
       ? Map<String, dynamic>.from(value)
@@ -10708,19 +10825,34 @@ Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
       entry.key: _threeDViewerBool(raw[entry.key], entry.value),
     'selectedLayerId': raw['selectedLayerId']?.toString().trim() ?? '',
     'imageLayers': _normalizedThreeDImageLayers(raw['imageLayers']),
-    'trackingSmoothing':
-        _threeDTransformNumber(raw['trackingSmoothing'], 0.3)
-            .clamp(0.0, 1.0)
-            .toDouble(),
-    'deadZoneX': _threeDTransformNumber(raw['deadZoneX'], 0)
-        .clamp(0.0, 0.2)
+    'modelLayers': _normalizedThreeDModelLayers(raw['modelLayers']),
+    'lightLayers': _normalizedThreeDLightLayers(raw['lightLayers']),
+    'fogStrength': _threeDTransformNumber(raw['fogStrength'], 0.35)
+        .clamp(0.0, 1.0)
         .toDouble(),
-    'deadZoneY': _threeDTransformNumber(raw['deadZoneY'], 0)
-        .clamp(0.0, 0.2)
+    'fogDepth':
+        _threeDTransformNumber(raw['fogDepth'], 9).clamp(0.5, 40.0).toDouble(),
+    'ambientColor': _threeDColor(raw['ambientColor'], '#ffffff'),
+    'ambientIntensity': _threeDTransformNumber(raw['ambientIntensity'], 0.5)
+        .clamp(0.0, 5.0)
         .toDouble(),
-    'deadZoneZ': _threeDTransformNumber(raw['deadZoneZ'], 0)
-        .clamp(0.0, 0.4)
+    'sunColor': _threeDColor(raw['sunColor'], '#ffffff'),
+    'sunIntensity': _threeDTransformNumber(raw['sunIntensity'], 0.8)
+        .clamp(0.0, 10.0)
         .toDouble(),
+    'sunDirection': _threeDTransformVector(
+      raw['sunDirection'],
+      const <double>[1, 1, 1],
+    ),
+    'trackingSmoothing': _threeDTransformNumber(raw['trackingSmoothing'], 0.3)
+        .clamp(0.0, 1.0)
+        .toDouble(),
+    'deadZoneX':
+        _threeDTransformNumber(raw['deadZoneX'], 0).clamp(0.0, 0.2).toDouble(),
+    'deadZoneY':
+        _threeDTransformNumber(raw['deadZoneY'], 0).clamp(0.0, 0.2).toDouble(),
+    'deadZoneZ':
+        _threeDTransformNumber(raw['deadZoneZ'], 0).clamp(0.0, 0.4).toDouble(),
   };
 }
 
@@ -10745,6 +10877,61 @@ List<Map<String, dynamic>> _normalizedThreeDImageLayers(dynamic value) {
           : 'image/png',
       if (raw['bytes'] is num) 'bytes': (raw['bytes'] as num).toInt(),
       'transform': transform,
+    };
+  }).toList();
+}
+
+List<Map<String, dynamic>> _normalizedThreeDModelLayers(dynamic value) {
+  if (value is! List) return <Map<String, dynamic>>[];
+  return value.whereType<Map>().map((layer) {
+    final Map<String, dynamic> raw = Map<String, dynamic>.from(layer);
+    final Map<String, dynamic> transform = _normalizedThreeDTransform(
+      raw['transform'],
+    );
+    final String type = raw['type']?.toString().trim().isNotEmpty == true
+        ? raw['type'].toString().trim()
+        : raw['mediaType']?.toString().trim() ?? '';
+    return <String, dynamic>{
+      'id': raw['id']?.toString().trim().isNotEmpty == true
+          ? raw['id'].toString().trim()
+          : 'model-${DateTime.now().microsecondsSinceEpoch}',
+      'name': raw['name']?.toString().trim().isNotEmpty == true
+          ? raw['name'].toString().trim()
+          : '3D Layer',
+      'type': type,
+      'url': raw['url']?.toString().trim() ?? '',
+      'path': raw['path']?.toString().trim() ?? '',
+      'format': raw['format']?.toString().trim().toLowerCase() ?? '',
+      'contentType': raw['contentType']?.toString().trim().isNotEmpty == true
+          ? raw['contentType'].toString().trim()
+          : 'application/octet-stream',
+      if (raw['bytes'] is num) 'bytes': (raw['bytes'] as num).toInt(),
+      'transform': transform,
+    };
+  }).toList();
+}
+
+List<Map<String, dynamic>> _normalizedThreeDLightLayers(dynamic value) {
+  if (value is! List) return <Map<String, dynamic>>[];
+  return value.whereType<Map>().map((layer) {
+    final Map<String, dynamic> raw = Map<String, dynamic>.from(layer);
+    final String type = raw['type']?.toString().trim().toLowerCase() == 'spot'
+        ? 'spot'
+        : 'point';
+    return <String, dynamic>{
+      'id': raw['id']?.toString().trim().isNotEmpty == true
+          ? raw['id'].toString().trim()
+          : 'light-${DateTime.now().microsecondsSinceEpoch}',
+      'name': raw['name']?.toString().trim().isNotEmpty == true
+          ? raw['name'].toString().trim()
+          : (type == 'spot' ? 'Spot Light' : 'Point Light'),
+      'type': type,
+      'color': _threeDColor(raw['color'], '#ffffff'),
+      'intensity': _threeDTransformNumber(
+        raw['intensity'],
+        type == 'spot' ? 1.2 : 1,
+      ).clamp(0.0, 20.0).toDouble(),
+      'transform': _normalizedThreeDTransform(raw['transform']),
     };
   }).toList();
 }
@@ -10784,6 +10971,20 @@ Map<String, dynamic> _payloadWithThreeDViewerStateSnapshot(
     imageLayers: List<Map<String, dynamic>>.from(
       normalized['imageLayers'] as List,
     ),
+    modelLayers: List<Map<String, dynamic>>.from(
+      normalized['modelLayers'] as List,
+    ),
+    lightLayers: List<Map<String, dynamic>>.from(
+      normalized['lightLayers'] as List,
+    ),
+    fogStrength: _threeDTransformNumber(normalized['fogStrength'], 0.35),
+    fogDepth: _threeDTransformNumber(normalized['fogDepth'], 9),
+    ambientColor: normalized['ambientColor']?.toString(),
+    ambientIntensity:
+        _threeDTransformNumber(normalized['ambientIntensity'], 0.5),
+    sunColor: normalized['sunColor']?.toString(),
+    sunIntensity: _threeDTransformNumber(normalized['sunIntensity'], 0.8),
+    sunDirection: List<double>.from(normalized['sunDirection'] as List),
     trackingSmoothing: _threeDTransformNumber(
       normalized['trackingSmoothing'],
       0.3,
@@ -10800,6 +11001,12 @@ bool _hasThreeDImageLayers(Map<String, dynamic>? payload) {
   return _normalizedThreeDImageLayers(viewer['imageLayers']).isNotEmpty;
 }
 
+bool _hasThreeDModelLayers(Map<String, dynamic>? payload) {
+  if (payload == null || !isThreeDPayload(payload)) return false;
+  final Map<String, dynamic> viewer = _viewerStateFromThreeDPayload(payload);
+  return _normalizedThreeDModelLayers(viewer['modelLayers']).isNotEmpty;
+}
+
 Map<String, dynamic> _payloadWithThreeDImageLayer(
   Map<String, dynamic>? payload,
   UploadedAsset asset, {
@@ -10807,8 +11014,7 @@ Map<String, dynamic> _payloadWithThreeDImageLayer(
   required int byteSize,
   required String contentType,
 }) {
-  final Map<String, dynamic> base = payload == null ||
-          !isThreeDPayload(payload)
+  final Map<String, dynamic> base = payload == null || !isThreeDPayload(payload)
       ? simpleMissingThreeDPayload(
           preferredType: DeepXMediaType.missing3d,
           reason: 'png_layers_only',
@@ -10822,10 +11028,12 @@ Map<String, dynamic> _payloadWithThreeDImageLayer(
   final String id = 'png-${DateTime.now().microsecondsSinceEpoch}';
   layers.add(<String, dynamic>{
     'id': id,
-    'name': name.trim().isEmpty ? 'PNG Layer ${layers.length + 1}' : name.trim(),
+    'name':
+        name.trim().isEmpty ? 'PNG Layer ${layers.length + 1}' : name.trim(),
     'url': asset.publicUrl,
     'path': asset.path,
-    'contentType': contentType.trim().isEmpty ? 'image/png' : contentType.trim(),
+    'contentType':
+        contentType.trim().isEmpty ? 'image/png' : contentType.trim(),
     'bytes': byteSize,
     'transform': <String, dynamic>{
       'position': <double>[0, 0, -0.08 - (layers.length * 0.08)],
@@ -10839,6 +11047,54 @@ Map<String, dynamic> _payloadWithThreeDImageLayer(
       ...viewer,
       'selectedLayerId': id,
       'imageLayers': layers,
+    },
+  );
+}
+
+Map<String, dynamic> _payloadWithThreeDModelLayer(
+  Map<String, dynamic>? payload,
+  UploadedAsset asset, {
+  required DeepXMediaType mediaType,
+  required String name,
+  required String format,
+  required int byteSize,
+  required String contentType,
+}) {
+  final Map<String, dynamic> base = payload == null || !isThreeDPayload(payload)
+      ? simpleMissingThreeDPayload(
+          preferredType: DeepXMediaType.missing3d,
+          reason: 'model_layers_only',
+          editor: 'three_d_model_layers',
+        )
+      : payload;
+  final Map<String, dynamic> viewer = _viewerStateFromThreeDPayload(base);
+  final List<Map<String, dynamic>> layers = _normalizedThreeDModelLayers(
+    viewer['modelLayers'],
+  );
+  final String id = 'model-${DateTime.now().microsecondsSinceEpoch}';
+  layers.add(<String, dynamic>{
+    'id': id,
+    'name': name.trim().isEmpty ? '3D Layer ${layers.length + 1}' : name.trim(),
+    'type': mediaType.databaseValue,
+    'url': asset.publicUrl,
+    'path': asset.path,
+    'format': format.trim().toLowerCase(),
+    'contentType': contentType.trim().isEmpty
+        ? 'application/octet-stream'
+        : contentType.trim(),
+    'bytes': byteSize,
+    'transform': <String, dynamic>{
+      'position': <double>[0, -0.09, -0.08 - (layers.length * 0.08)],
+      'scale': _defaultThreeDScale,
+      'rotation': List<double>.from(_defaultThreeDRotation),
+    },
+  });
+  return _payloadWithThreeDViewerStateSnapshot(
+    base,
+    <String, dynamic>{
+      ...viewer,
+      'selectedLayerId': id,
+      'modelLayers': layers,
     },
   );
 }
@@ -10993,9 +11249,8 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
       final asset = await _repository.uploadAssetBytesWithPath(
         bytes: file.bytes,
         fileName: file.name,
-        contentType: file.contentType.trim().isEmpty
-            ? 'image/png'
-            : file.contentType,
+        contentType:
+            file.contentType.trim().isEmpty ? 'image/png' : file.contentType,
         folder: 'three-image-layers',
         bucket: AppRepository.threeDAssetsBucket,
         onProgress: (progress) {
@@ -11026,11 +11281,72 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     }
   }
 
+  Future<void> _addModelLayer(DeepXMediaType mediaType) async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final bool mesh = mediaType == DeepXMediaType.triangleMesh;
+    setState(() {
+      _uploading = true;
+      _uploadProgress = 0;
+    });
+    try {
+      final file = await pickDeviceFile(
+        accept: mesh ? '.glb,.gltf' : '.ply,.splat,.ksplat',
+      );
+      if (file == null) return;
+      final String ext = _extensionForFileName(file.name);
+      final Set<String> allowed = mesh
+          ? const <String>{'glb', 'gltf'}
+          : const <String>{'ply', 'splat', 'ksplat'};
+      if (!allowed.contains(ext)) {
+        throw Exception('Unsupported file type .$ext');
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType.trim().isEmpty
+            ? 'application/octet-stream'
+            : file.contentType,
+        folder: mesh ? 'triangle-meshes' : 'gaussian-splats',
+        bucket: AppRepository.threeDAssetsBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress.clamp(0, 1).toDouble());
+        },
+      );
+      setState(() {
+        _payload = _payloadWithThreeDModelLayer(
+          _payload,
+          asset,
+          mediaType: mediaType,
+          name: file.name,
+          format: ext,
+          byteSize: file.bytes.length,
+          contentType: file.contentType.trim().isEmpty
+              ? 'application/octet-stream'
+              : file.contentType,
+        );
+        _transformDraft = _transformFromThreeDPayload(_payload);
+        _viewerDraft = _viewerStateFromThreeDPayload(_payload);
+        _uploadProgress = 1;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('3D layer upload failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     final messenger = ScaffoldMessenger.of(context);
     if (threeDAssetFromPayload(_payload) == null &&
-        mediaTypeFromPayload(_payload) != DeepXMediaType.missing3d) {
+        mediaTypeFromPayload(_payload) != DeepXMediaType.missing3d &&
+        !_hasThreeDImageLayers(_payload) &&
+        !_hasThreeDModelLayers(_payload)) {
       messenger.showSnackBar(
         const SnackBar(content: Text('Upload a valid 3D asset first.')),
       );
@@ -11152,6 +11468,31 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                     onPressed: _uploading ? null : _addImageLayer,
                     icon: const Icon(Icons.layers_outlined),
                     label: const Text('Add PNG Layer'),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _uploading
+                            ? null
+                            : () => _addModelLayer(
+                                  DeepXMediaType.triangleMesh,
+                                ),
+                        icon: const Icon(Icons.view_in_ar_outlined),
+                        label: const Text('Add Mesh Layer'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _uploading
+                            ? null
+                            : () => _addModelLayer(
+                                  DeepXMediaType.gaussianSplat,
+                                ),
+                        icon: const Icon(Icons.blur_on_rounded),
+                        label: const Text('Add Splat Layer'),
+                      ),
+                    ],
                   ),
                   if (_uploading) ...[
                     const SizedBox(height: 10),

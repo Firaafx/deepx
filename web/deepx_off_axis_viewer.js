@@ -13,6 +13,8 @@
     fogReachTowardViewer: 2.5,
     gridColor: 0x333333,
     gridOpacity: 0.72,
+    defaultFogStrength: 0.35,
+    defaultFogDepth: 9,
     lineColor: 0xffffff,
     numTargets: 10,
     numInFront: 3,
@@ -41,6 +43,15 @@
     objectVisible: true,
     selectedLayerId: '',
     imageLayers: Object.freeze([]),
+    modelLayers: Object.freeze([]),
+    lightLayers: Object.freeze([]),
+    fogStrength: 0.35,
+    fogDepth: 9,
+    ambientColor: '#ffffff',
+    ambientIntensity: 0.5,
+    sunColor: '#ffffff',
+    sunIntensity: 0.8,
+    sunDirection: Object.freeze([1, 1, 1]),
     trackingSmoothing: 0.3,
     deadZoneX: 0,
     deadZoneY: 0,
@@ -151,6 +162,26 @@
       }
       .dx-layer-select option {
         color: #111827;
+      }
+      .dx-control-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .dx-color-control {
+        display: grid;
+        grid-template-columns: 1fr 44px;
+        align-items: center;
+        gap: 8px;
+      }
+      .dx-color-control input[type=color] {
+        width: 44px;
+        height: 28px;
+        padding: 0;
+        border: 1px solid rgba(255,255,255,0.22);
+        border-radius: 4px;
+        background: transparent;
+        cursor: pointer;
       }
       .dx-control-group {
         display: grid;
@@ -477,6 +508,28 @@
     return clamp(resolved, min, max);
   }
 
+  function safeColor(value, fallback) {
+    const raw = String(value || '').trim();
+    return /^#[0-9a-f]{6}$/i.test(raw) ? raw : fallback;
+  }
+
+  function vectorSnapshot(values) {
+    return numberList(values, [0, 0, 0]).map((value) => Number(Number(value).toFixed(5)));
+  }
+
+  function layerAsset(raw, fallbackType) {
+    const value = raw && typeof raw === 'object' ? raw : {};
+    const type = normalizeType(value.type || value.mediaType || fallbackType || '');
+    return {
+      type,
+      url: String(value.url || value.assetUrl || '').trim(),
+      path: String(value.path || value.assetPath || '').trim(),
+      format: String(value.format || '').trim().toLowerCase(),
+      contentType: String(value.contentType || 'application/octet-stream').trim() || 'application/octet-stream',
+      bytes: Number.isFinite(Number(value.bytes)) ? Number(value.bytes) : undefined
+    };
+  }
+
   function imageLayersFromValue(value) {
     if (!Array.isArray(value)) return [];
     return value.map((raw, index) => {
@@ -510,16 +563,95 @@
     };
   }
 
+  function modelLayersFromValue(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((raw, index) => {
+      const layer = raw && typeof raw === 'object' ? raw : {};
+      const asset = layerAsset(layer, layer.type || layer.mediaType || 'triangle_mesh');
+      const fallbackTransform = {
+        position: [0, -0.09, -0.03 - index * 0.08],
+        scale: DEFAULT_TRANSFORM.scale,
+        rotation: DEFAULT_TRANSFORM.rotation
+      };
+      return {
+        id: String(layer.id || `model-${index}`).trim() || `model-${index}`,
+        name: String(layer.name || `3D Layer ${index + 1}`).trim() || `3D Layer ${index + 1}`,
+        ...asset,
+        transform: transformFromRaw(layer.transform, fallbackTransform)
+      };
+    }).filter((layer) => layer.url && (supportedMesh(layer) || supportedSplat(layer)));
+  }
+
+  function modelLayerSnapshot(layer) {
+    return {
+      id: String(layer.id || ''),
+      name: String(layer.name || '3D Layer'),
+      type: normalizeType(layer.type),
+      url: String(layer.url || ''),
+      path: String(layer.path || ''),
+      format: String(layer.format || ''),
+      contentType: String(layer.contentType || 'application/octet-stream'),
+      ...(Number.isFinite(Number(layer.bytes)) ? { bytes: Number(layer.bytes) } : {}),
+      transform: transformSnapshot(layer.transform)
+    };
+  }
+
+  function lightLayersFromValue(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((raw, index) => {
+      const layer = raw && typeof raw === 'object' ? raw : {};
+      const type = String(layer.type || '').trim().toLowerCase() === 'spot' ? 'spot' : 'point';
+      const fallbackTransform = {
+        position: [0.15 * (index + 1), 0.15, 0.25],
+        scale: 0.25,
+        rotation: [-0.5, -0.5, 0]
+      };
+      return {
+        id: String(layer.id || `${type}-${index}`).trim() || `${type}-${index}`,
+        name: String(layer.name || `${type === 'spot' ? 'Spot' : 'Point'} Light ${index + 1}`).trim(),
+        type,
+        color: safeColor(layer.color, '#ffffff'),
+        intensity: safeNumber(layer.intensity, type === 'spot' ? 1.2 : 1, 0, 20),
+        transform: transformFromRaw(layer.transform, fallbackTransform)
+      };
+    });
+  }
+
+  function lightLayerSnapshot(layer) {
+    return {
+      id: String(layer.id || ''),
+      name: String(layer.name || 'Light'),
+      type: String(layer.type || 'point'),
+      color: safeColor(layer.color, '#ffffff'),
+      intensity: Number(Number(layer.intensity).toFixed(3)),
+      transform: transformSnapshot(layer.transform)
+    };
+  }
+
   function viewerStateFromPayload(payload) {
     const raw = payload && typeof payload.viewer === 'object' ? payload.viewer : {};
     const imageLayers = imageLayersFromValue(raw.imageLayers);
+    const modelLayers = modelLayersFromValue(raw.modelLayers);
+    const lightLayers = lightLayersFromValue(raw.lightLayers);
     const rawSelected = String(raw.selectedLayerId || '').trim();
     return {
       gridVisible: safeBool(raw.gridVisible, DEFAULT_VIEWER_STATE.gridVisible),
       dartsVisible: safeBool(raw.dartsVisible, DEFAULT_VIEWER_STATE.dartsVisible),
       objectVisible: safeBool(raw.objectVisible, DEFAULT_VIEWER_STATE.objectVisible),
-      selectedLayerId: rawSelected || (imageLayers[0] ? imageLayers[0].id : ''),
+      selectedLayerId: rawSelected ||
+        (imageLayers[0] ? imageLayers[0].id : '') ||
+        (modelLayers[0] ? modelLayers[0].id : '') ||
+        (lightLayers[0] ? lightLayers[0].id : ''),
       imageLayers,
+      modelLayers,
+      lightLayers,
+      fogStrength: safeNumber(raw.fogStrength, DEFAULT_VIEWER_STATE.fogStrength, 0, 1),
+      fogDepth: safeNumber(raw.fogDepth, DEFAULT_VIEWER_STATE.fogDepth, 0.5, 40),
+      ambientColor: safeColor(raw.ambientColor, DEFAULT_VIEWER_STATE.ambientColor),
+      ambientIntensity: safeNumber(raw.ambientIntensity, DEFAULT_VIEWER_STATE.ambientIntensity, 0, 5),
+      sunColor: safeColor(raw.sunColor, DEFAULT_VIEWER_STATE.sunColor),
+      sunIntensity: safeNumber(raw.sunIntensity, DEFAULT_VIEWER_STATE.sunIntensity, 0, 10),
+      sunDirection: numberList(raw.sunDirection, DEFAULT_VIEWER_STATE.sunDirection),
       trackingSmoothing: safeNumber(raw.trackingSmoothing, DEFAULT_VIEWER_STATE.trackingSmoothing, 0, 1),
       deadZoneX: safeNumber(raw.deadZoneX, DEFAULT_VIEWER_STATE.deadZoneX, 0, 0.2),
       deadZoneY: safeNumber(raw.deadZoneY, DEFAULT_VIEWER_STATE.deadZoneY, 0, 0.2),
@@ -534,6 +666,15 @@
       objectVisible: ctx.objectVisible !== false,
       selectedLayerId: ctx.selectedLayerId || '',
       imageLayers: (ctx.imageLayers || []).map(imageLayerSnapshot),
+      modelLayers: (ctx.modelLayers || []).map(modelLayerSnapshot),
+      lightLayers: (ctx.lightLayers || []).map(lightLayerSnapshot),
+      fogStrength: Number(Number(ctx.fogStrength).toFixed(3)),
+      fogDepth: Number(Number(ctx.fogDepth).toFixed(3)),
+      ambientColor: safeColor(ctx.ambientColor, DEFAULT_VIEWER_STATE.ambientColor),
+      ambientIntensity: Number(Number(ctx.ambientIntensity).toFixed(3)),
+      sunColor: safeColor(ctx.sunColor, DEFAULT_VIEWER_STATE.sunColor),
+      sunIntensity: Number(Number(ctx.sunIntensity).toFixed(3)),
+      sunDirection: vectorSnapshot(ctx.sunDirection),
       trackingSmoothing: Number(Number(ctx.trackingSmoothing).toFixed(3)),
       deadZoneX: Number(Number(ctx.deadZoneX).toFixed(3)),
       deadZoneY: Number(Number(ctx.deadZoneY).toFixed(3)),
@@ -544,6 +685,11 @@
   function hasImageLayers(payload) {
     const state = viewerStateFromPayload(payload);
     return state.imageLayers.length > 0;
+  }
+
+  function hasModelLayers(payload) {
+    const state = viewerStateFromPayload(payload);
+    return state.modelLayers.length > 0;
   }
 
   function transformKey(transform) {
@@ -729,7 +875,7 @@
       const normalizedY = headPose ? headPose.y : 0.5;
       const normalizedZ = headPose ? headPose.z : 1;
       return {
-        x: -(normalizedX - 0.5) * this.screenWidthWorld * movementScale,
+        x: (normalizedX - 0.5) * this.screenWidthWorld * movementScale,
         y: -(normalizedY - 0.5) * this.screenHeightWorld * movementScale,
         z: this.calibration.viewingDistanceCm * worldScale * (1 / normalizedZ)
       };
@@ -989,7 +1135,28 @@
           rotation: [0, 0, 0]
         })
       }));
+      this.modelLayers = this.viewerState.modelLayers.map((layer) => ({
+        ...layer,
+        transform: transformFromRaw(layer.transform, DEFAULT_TRANSFORM)
+      }));
+      this.lightLayers = this.viewerState.lightLayers.map((layer) => ({
+        ...layer,
+        transform: transformFromRaw(layer.transform, {
+          position: [0.15, 0.15, 0.25],
+          scale: 0.25,
+          rotation: [-0.5, -0.5, 0]
+        })
+      }));
       this.selectedLayerId = this.viewerState.selectedLayerId || (this.imageLayers[0] ? this.imageLayers[0].id : '');
+      if (!this.selectedLayerId && this.modelLayers[0]) this.selectedLayerId = this.modelLayers[0].id;
+      if (!this.selectedLayerId && this.lightLayers[0]) this.selectedLayerId = this.lightLayers[0].id;
+      this.fogStrength = this.viewerState.fogStrength;
+      this.fogDepth = this.viewerState.fogDepth;
+      this.ambientColor = this.viewerState.ambientColor;
+      this.ambientIntensity = this.viewerState.ambientIntensity;
+      this.sunColor = this.viewerState.sunColor;
+      this.sunIntensity = this.viewerState.sunIntensity;
+      this.sunDirection = numberList(this.viewerState.sunDirection, DEFAULT_VIEWER_STATE.sunDirection);
       this.trackingSmoothing = this.viewerState.trackingSmoothing;
       this.deadZoneX = this.viewerState.deadZoneX;
       this.deadZoneY = this.viewerState.deadZoneY;
@@ -1012,6 +1179,10 @@
       this.imageLayerObjects = [];
       this.imageLayerPromises = [];
       this.imageLayerGroup = null;
+      this.modelLayerObjects = new Map();
+      this.modelLayerPromises = [];
+      this.lightLayerObjects = new Map();
+      this.animationMixers = [];
       this.disposed = false;
       this.raf = 0;
       this.resizeObserver = null;
@@ -1027,9 +1198,11 @@
 
       this.scene = new this.THREE.Scene();
       this.scene.background = new this.THREE.Color(0x000000);
-      this.scene.fog = new this.THREE.Fog(0x000000, 0.6, 1.6);
+      this.fog = new this.THREE.Fog(0x000000, 0.6, 1.6);
+      this.scene.fog = this.fog;
       this.camera = new this.THREE.PerspectiveCamera(75, 1, 0.05, 1000);
       this.camera.position.z = 5;
+      this.clock = new this.THREE.Clock();
       const calibration = {
         ...getCalibration(),
         pixelWidth: Math.max(1, this.root.clientWidth),
@@ -1050,6 +1223,7 @@
       this.createWireframeRoom();
       this.createDarts();
       this.createImageLayers();
+      this.createLightLayers();
       this.createDebugHelpers();
       this.buildChrome();
       this.installContextLossHandler();
@@ -1064,13 +1238,25 @@
     }
 
     addLights() {
-      this.scene.add(new this.THREE.AmbientLight(0xffffff, 0.5));
-      const lightOne = new this.THREE.DirectionalLight(0xffffff, 0.8);
-      lightOne.position.set(1, 1, 1);
-      this.scene.add(lightOne);
-      const lightTwo = new this.THREE.DirectionalLight(0xffffff, 0.5);
-      lightTwo.position.set(-1, -1, 0.5);
-      this.scene.add(lightTwo);
+      this.ambientLight = new this.THREE.AmbientLight(this.ambientColor, this.ambientIntensity);
+      this.sunLight = new this.THREE.DirectionalLight(this.sunColor, this.sunIntensity);
+      this.scene.add(this.ambientLight);
+      this.scene.add(this.sunLight);
+      this.applySceneLighting();
+    }
+
+    applySceneLighting() {
+      if (this.ambientLight) {
+        this.ambientLight.color.set(this.ambientColor);
+        this.ambientLight.intensity = this.ambientIntensity;
+      }
+      if (this.sunLight) {
+        this.sunLight.color.set(this.sunColor);
+        this.sunLight.intensity = this.sunIntensity;
+        const direction = numberList(this.sunDirection, DEFAULT_VIEWER_STATE.sunDirection);
+        const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
+        this.sunLight.position.set(direction[0] / length, direction[1] / length, direction[2] / length);
+      }
     }
 
     installContextLossHandler() {
@@ -1084,7 +1270,7 @@
 
     async loadAsset() {
       if (!this.asset.url || (!supportedMesh(this.asset) && !supportedSplat(this.asset))) {
-        await this.waitForImageLayers();
+        await Promise.allSettled([this.waitForImageLayers(), this.loadModelLayers()]);
         if (this.disposed) return;
         this.assetLoaded = true;
         this.applyObjectVisibility();
@@ -1097,11 +1283,13 @@
       this.updateLoading('Loading 3D asset');
       try {
         this.object = supportedMesh(this.asset)
-          ? await this.addTriangleMesh()
-          : await this.addGaussianSplat();
+          ? await this.addTriangleMesh(this.asset, 'Loading 3D mesh')
+          : await this.addGaussianSplat(this.asset, 'Loading 3D asset');
+        await this.loadModelLayers();
         if (this.disposed) return;
         this.assetLoaded = true;
         this.applyTransform();
+        this.applyModelLayerTransforms();
         this.applyObjectVisibility();
         this.updateModelBounds();
         this.computeScaleRange();
@@ -1116,6 +1304,32 @@
         console.error(error);
         const label = error && error.message ? error.message : 'Unable to load 3D asset.';
         notifyLoadState(this.elementId, 'error', null, label);
+      }
+    }
+
+    async loadModelLayers() {
+      this.modelLayerPromises = this.modelLayers.map((layer) => this.loadModelLayer(layer));
+      await Promise.allSettled(this.modelLayerPromises);
+    }
+
+    async loadModelLayer(layer) {
+      if (!layer || !layer.url) return null;
+      const existing = this.modelLayerObjects.get(layer.id);
+      if (existing) return existing;
+      try {
+        const object = supportedMesh(layer)
+          ? await this.addTriangleMesh(layer, `Loading ${layer.name}`)
+          : await this.addGaussianSplat(layer, `Loading ${layer.name}`);
+        if (this.disposed) return null;
+        object.userData = object.userData || {};
+        object.userData.deepxModelLayerId = layer.id;
+        this.modelLayerObjects.set(layer.id, object);
+        this.applyModelLayerTransform(layer);
+        this.applyObjectVisibility();
+        return object;
+      } catch (error) {
+        console.warn('Unable to load 3D layer:', error);
+        return null;
       }
     }
 
@@ -1180,8 +1394,9 @@
       setRootLoadingMessage(this.root, label, progress);
     }
 
-    async addTriangleMesh() {
-      const key = `${assetCacheKey(this.asset)}|gltf`;
+    async addTriangleMesh(asset, label) {
+      const source = asset || this.asset;
+      const key = `${assetCacheKey(source)}|gltf`;
       let entry = assetCache.get(key);
       if (!entry) {
         entry = {};
@@ -1189,7 +1404,7 @@
       }
       if (!entry.gltf) {
         if (!entry.promise) {
-          entry.promise = this.loadGltfForCache(key);
+          entry.promise = this.loadGltfForCache(source, key, label || 'Loading 3D mesh');
         }
         entry.gltf = await entry.promise;
       }
@@ -1202,10 +1417,11 @@
         }
       });
       this.scene.add(object);
+      this.playAnimations(object, entry.gltf.animations);
       return object;
     }
 
-    async loadGltfForCache(key) {
+    async loadGltfForCache(asset, key, label) {
       const loader = new this.modules.GLTFLoader();
       let dracoLoader = null;
       if (this.modules.DRACOLoader) {
@@ -1214,16 +1430,16 @@
         dracoLoader.setDecoderConfig({ type: 'js' });
         loader.setDRACOLoader(dracoLoader);
       }
-      let loadUrl = this.asset.url;
-      if (assetLooksLike(this.asset, 'glb')) {
-        loadUrl = await this.fetchObjectUrl(this.asset.url, 'Loading 3D mesh', `${assetCacheKey(this.asset)}|blob`);
+      let loadUrl = asset.url;
+      if (assetLooksLike(asset, 'glb')) {
+        loadUrl = await this.fetchObjectUrl(asset.url, label || 'Loading 3D mesh', `${assetCacheKey(asset)}|blob`);
       } else {
-        this.updateLoading('Loading 3D mesh');
+        this.updateLoading(label || 'Loading 3D mesh');
       }
       try {
         const gltf = await loader.loadAsync(loadUrl, (event) => {
           if (event && Number.isFinite(event.total) && event.total > 0) {
-            this.updateLoading('Loading 3D mesh', event.loaded / event.total);
+            this.updateLoading(label || 'Loading 3D mesh', event.loaded / event.total);
           }
         });
         assetCache.set(key, { gltf });
@@ -1233,6 +1449,15 @@
       }
     }
 
+    playAnimations(object, clips) {
+      if (!object || !Array.isArray(clips) || !clips.length) return;
+      const mixer = new this.THREE.AnimationMixer(object);
+      for (const clip of clips) {
+        try { mixer.clipAction(clip).play(); } catch (_) {}
+      }
+      this.animationMixers.push(mixer);
+    }
+
     markSharedAsset(object) {
       object.traverse((node) => {
         node.userData = node.userData || {};
@@ -1240,16 +1465,17 @@
       });
     }
 
-    async addGaussianSplat() {
+    async addGaussianSplat(asset, label) {
+      const source = asset || this.asset;
       const spark = this.modules.spark;
       if (!spark) throw new Error('Spark module failed to load.');
       const Candidate =
         spark.SplatMesh || spark.SparkSplatMesh || spark.GaussianSplatMesh || spark.SplatObject;
       if (!Candidate) throw new Error('Spark loaded, but no supported splat mesh export was found.');
-      const loadUrl = await this.fetchObjectUrl(this.asset.url, 'Loading 3D asset', `${assetCacheKey(this.asset)}|blob`);
+      const loadUrl = await this.fetchObjectUrl(source.url, label || 'Loading 3D asset', `${assetCacheKey(source)}|blob`);
       let object;
       try {
-        object = new Candidate({ url: loadUrl, fileType: this.asset.format || undefined });
+        object = new Candidate({ url: loadUrl, fileType: source.format || undefined });
       } catch (_) {
         object = new Candidate(loadUrl);
       }
@@ -1498,6 +1724,174 @@
       for (const layer of this.imageLayers) this.applyImageLayerTransform(layer);
     }
 
+    selectedModelLayer() {
+      if (!this.selectedLayerId) return null;
+      return this.modelLayers.find((layer) => layer.id === this.selectedLayerId) || null;
+    }
+
+    modelLayerObject(id) {
+      return this.modelLayerObjects.get(id) || null;
+    }
+
+    applyModelLayerTransform(layer) {
+      const object = layer ? this.modelLayerObject(layer.id) : null;
+      if (!object) return;
+      const transform = layer.transform;
+      object.position.set(transform.position[0], transform.position[1], transform.position[2]);
+      object.scale.set(transform.scale, transform.scale, transform.scale);
+      object.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
+    }
+
+    applyModelLayerTransforms() {
+      for (const layer of this.modelLayers) this.applyModelLayerTransform(layer);
+    }
+
+    removeModelLayers() {
+      for (const object of this.modelLayerObjects.values()) {
+        this.scene.remove(object);
+        this.disposeObject(object);
+      }
+      this.modelLayerObjects.clear();
+      this.modelLayerPromises = [];
+    }
+
+    syncModelLayers(nextLayers) {
+      const nextIds = new Set(nextLayers.map((layer) => layer.id));
+      for (const [id, object] of this.modelLayerObjects.entries()) {
+        if (!nextIds.has(id)) {
+          this.scene.remove(object);
+          this.disposeObject(object);
+          this.modelLayerObjects.delete(id);
+        }
+      }
+      this.modelLayers = nextLayers;
+      for (const layer of this.modelLayers) {
+        if (this.modelLayerObjects.has(layer.id)) {
+          this.applyModelLayerTransform(layer);
+        } else {
+          this.loadModelLayer(layer);
+        }
+      }
+    }
+
+    createLightLayers() {
+      this.removeLightLayers();
+      for (const layer of this.lightLayers) this.addLightLayerObject(layer);
+      this.applyObjectVisibility();
+    }
+
+    addLightLayer(type) {
+      const normalizedType = type === 'spot' ? 'spot' : 'point';
+      const id = `${normalizedType}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const layer = {
+        id,
+        name: `${normalizedType === 'spot' ? 'Spot' : 'Point'} Light ${this.lightLayers.length + 1}`,
+        type: normalizedType,
+        color: '#ffffff',
+        intensity: normalizedType === 'spot' ? 1.2 : 1,
+        transform: {
+          position: [0.18, 0.16, 0.28],
+          scale: 0.25,
+          rotation: [-0.55, -0.45, 0]
+        }
+      };
+      this.lightLayers.push(layer);
+      this.selectedLayerId = id;
+      this.addLightLayerObject(layer);
+      this.applyObjectVisibility();
+      notifyViewerStateChanged(this);
+      this.refreshControlPanel();
+    }
+
+    addLightLayerObject(layer) {
+      let light;
+      let target = null;
+      if (layer.type === 'spot') {
+        light = new this.THREE.SpotLight(layer.color, layer.intensity, 0, Math.PI / 5, 0.35, 1);
+        target = new this.THREE.Object3D();
+        light.target = target;
+        this.scene.add(target);
+      } else {
+        light = new this.THREE.PointLight(layer.color, layer.intensity, 0, 1);
+      }
+      light.userData = light.userData || {};
+      light.userData.deepxLightLayerId = layer.id;
+      this.scene.add(light);
+      this.lightLayerObjects.set(layer.id, { light, target });
+      this.applyLightLayerTransform(layer);
+    }
+
+    selectedLightLayer() {
+      if (!this.selectedLayerId) return null;
+      return this.lightLayers.find((layer) => layer.id === this.selectedLayerId) || null;
+    }
+
+    lightLayerObject(id) {
+      return this.lightLayerObjects.get(id) || null;
+    }
+
+    applyLightLayerTransform(layer) {
+      const entry = layer ? this.lightLayerObject(layer.id) : null;
+      if (!entry || !entry.light) return;
+      const transform = layer.transform;
+      entry.light.position.set(transform.position[0], transform.position[1], transform.position[2]);
+      entry.light.color.set(layer.color);
+      entry.light.intensity = layer.intensity;
+      const distance = Math.max(0, transform.scale * 20);
+      entry.light.distance = distance;
+      if (layer.type === 'spot') {
+        entry.light.angle = clamp(transform.scale, 0.03, Math.PI / 2);
+        const direction = new this.THREE.Vector3(0, 0, -1).applyEuler(
+          new this.THREE.Euler(transform.rotation[0], transform.rotation[1], transform.rotation[2])
+        );
+        if (entry.target) {
+          entry.target.position.set(
+            transform.position[0] + direction.x,
+            transform.position[1] + direction.y,
+            transform.position[2] + direction.z
+          );
+          entry.target.updateMatrixWorld();
+        }
+      }
+    }
+
+    applyLightLayerTransforms() {
+      for (const layer of this.lightLayers) this.applyLightLayerTransform(layer);
+    }
+
+    removeLightLayers() {
+      for (const entry of this.lightLayerObjects.values()) {
+        if (entry.light) {
+          this.scene.remove(entry.light);
+          this.disposeObject(entry.light);
+        }
+        if (entry.target) this.scene.remove(entry.target);
+      }
+      this.lightLayerObjects.clear();
+    }
+
+    syncLightLayers(nextLayers) {
+      const nextIds = new Set(nextLayers.map((layer) => layer.id));
+      for (const [id, entry] of this.lightLayerObjects.entries()) {
+        if (!nextIds.has(id)) {
+          if (entry.light) {
+            this.scene.remove(entry.light);
+            this.disposeObject(entry.light);
+          }
+          if (entry.target) this.scene.remove(entry.target);
+          this.lightLayerObjects.delete(id);
+        }
+      }
+      this.lightLayers = nextLayers;
+      for (const layer of this.lightLayers) {
+        if (this.lightLayerObjects.has(layer.id)) {
+          this.applyLightLayerTransform(layer);
+        } else {
+          this.addLightLayerObject(layer);
+        }
+      }
+    }
+
     createDebugHelpers() {
       const axes = new this.THREE.AxesHelper(0.1);
       axes.visible = false;
@@ -1532,14 +1926,45 @@
       return layer ? layer.transform : null;
     }
 
+    activeModelLayerTransform() {
+      const layer = this.selectedModelLayer();
+      return layer ? layer.transform : null;
+    }
+
+    activeLightLayerTransform() {
+      const layer = this.selectedLightLayer();
+      return layer ? layer.transform : null;
+    }
+
     activeTransform() {
-      return this.activeImageLayerTransform() || this.transform;
+      return this.activeImageLayerTransform() ||
+        this.activeModelLayerTransform() ||
+        this.activeLightLayerTransform() ||
+        this.transform;
     }
 
     computeScaleRange() {
+      const lightTransform = this.activeLightLayerTransform();
+      if (lightTransform) {
+        const current = Math.max(Number(lightTransform.scale) || 0.25, 0.001);
+        this.scaleRange = {
+          min: clamp(Math.min(0.001, current / 20), 0.001, 100),
+          max: clamp(Math.max(2, current * 20), 0.001, 100)
+        };
+        return this.scaleRange;
+      }
       const layerTransform = this.activeImageLayerTransform();
       if (layerTransform) {
         const current = Math.max(Number(layerTransform.scale) || 0.25, 0.001);
+        this.scaleRange = {
+          min: clamp(Math.min(0.001, current / 20), 0.001, 100),
+          max: clamp(Math.max(2, current * 20), 0.001, 100)
+        };
+        return this.scaleRange;
+      }
+      const modelTransform = this.activeModelLayerTransform();
+      if (modelTransform) {
+        const current = Math.max(Number(modelTransform.scale) || DEFAULT_TRANSFORM.scale, 0.001);
         this.scaleRange = {
           min: clamp(Math.min(0.001, current / 20), 0.001, 100),
           max: clamp(Math.max(2, current * 20), 0.001, 100)
@@ -1630,7 +2055,9 @@
       panel.appendChild(header);
       const body = document.createElement('div');
       body.className = 'dx-model-body';
-      if (this.imageLayers.length) {
+      body.appendChild(this.makeSceneControls());
+      body.appendChild(this.makeAddLightControls());
+      if (this.imageLayers.length || this.modelLayers.length || this.lightLayers.length) {
         body.appendChild(this.makeLayerSelector());
       }
       const active = this.activeTransform();
@@ -1649,8 +2076,41 @@
       rotationGroup.appendChild(this.makeRange('Rotation Y', active.rotation[1], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(1, value), formatDegrees));
       rotationGroup.appendChild(this.makeRange('Rotation Z', active.rotation[2], -Math.PI, Math.PI, 0.001, (value) => this.setRotationAxis(2, value), formatDegrees));
       body.appendChild(rotationGroup);
+      const selectedLight = this.selectedLightLayer();
+      if (selectedLight) {
+        const lightGroup = document.createElement('div');
+        lightGroup.className = 'dx-control-group';
+        lightGroup.appendChild(this.makeRange('Light Intensity', selectedLight.intensity, 0, 20, 0.001, (value) => this.setSelectedLightIntensity(value)));
+        lightGroup.appendChild(this.makeColorControl('Light Color', selectedLight.color, (value) => this.setSelectedLightColor(value)));
+        body.appendChild(lightGroup);
+      }
       panel.appendChild(body);
       this.modelPanel.appendChild(panel);
+    }
+
+    makeSceneControls() {
+      const group = document.createElement('div');
+      group.className = 'dx-control-group';
+      group.appendChild(this.makeRange('Fog Strength', this.fogStrength, 0, 1, 0.001, (value) => this.setSceneSetting('fogStrength', value)));
+      group.appendChild(this.makeRange('Fog Length', this.fogDepth, 0.5, 40, 0.001, (value) => this.setSceneSetting('fogDepth', value)));
+      group.appendChild(this.makeRange('Ambient Light', this.ambientIntensity, 0, 5, 0.001, (value) => this.setSceneSetting('ambientIntensity', value)));
+      group.appendChild(this.makeColorControl('Ambient Color', this.ambientColor, (value) => this.setSceneSetting('ambientColor', value)));
+      group.appendChild(this.makeRange('Sun Light', this.sunIntensity, 0, 10, 0.001, (value) => this.setSceneSetting('sunIntensity', value)));
+      group.appendChild(this.makeColorControl('Sun Color', this.sunColor, (value) => this.setSceneSetting('sunColor', value)));
+      group.appendChild(this.makeRange('Sun Dir X', this.sunDirection[0], -2, 2, 0.001, (value) => this.setSunDirectionAxis(0, value)));
+      group.appendChild(this.makeRange('Sun Dir Y', this.sunDirection[1], -2, 2, 0.001, (value) => this.setSunDirectionAxis(1, value)));
+      group.appendChild(this.makeRange('Sun Dir Z', this.sunDirection[2], -2, 2, 0.001, (value) => this.setSunDirectionAxis(2, value)));
+      return group;
+    }
+
+    makeAddLightControls() {
+      const row = document.createElement('div');
+      row.className = 'dx-control-row';
+      row.append(
+        this.makeButton('+ POINT', 'Add point light', () => this.addLightLayer('point')),
+        this.makeButton('+ SPOT', 'Add spot light', () => this.addLightLayer('spot'))
+      );
+      return row;
     }
 
     makeLayerSelector() {
@@ -1667,16 +2127,34 @@
         option.textContent = '3D Object';
         select.appendChild(option);
       }
+      for (const layer of this.modelLayers) {
+        const option = document.createElement('option');
+        option.value = layer.id;
+        option.textContent = `3D: ${layer.name}`;
+        select.appendChild(option);
+      }
       for (const layer of this.imageLayers) {
         const option = document.createElement('option');
         option.value = layer.id;
-        option.textContent = layer.name;
+        option.textContent = `PNG: ${layer.name}`;
         select.appendChild(option);
       }
-      if (!canSelectObject && this.imageLayers.length && !this.selectedImageLayer()) {
-        this.selectedLayerId = this.imageLayers[0].id;
+      for (const layer of this.lightLayers) {
+        const option = document.createElement('option');
+        option.value = layer.id;
+        option.textContent = `${layer.type === 'spot' ? 'Spot' : 'Point'}: ${layer.name}`;
+        select.appendChild(option);
       }
-      select.value = this.selectedImageLayer() ? this.selectedLayerId : '__object__';
+      if (!canSelectObject && !this.selectedImageLayer() && !this.selectedModelLayer() && !this.selectedLightLayer()) {
+        this.selectedLayerId =
+          (this.modelLayers[0] && this.modelLayers[0].id) ||
+          (this.imageLayers[0] && this.imageLayers[0].id) ||
+          (this.lightLayers[0] && this.lightLayers[0].id) ||
+          '';
+      }
+      select.value = (this.selectedImageLayer() || this.selectedModelLayer() || this.selectedLightLayer())
+        ? this.selectedLayerId
+        : '__object__';
       select.addEventListener('change', () => {
         this.selectedLayerId = select.value === '__object__' ? '' : select.value;
         notifyViewerStateChanged(this);
@@ -1745,6 +2223,23 @@
       });
       wrap.appendChild(text);
       wrap.appendChild(input);
+      return wrap;
+    }
+
+    makeColorControl(label, value, onInput) {
+      const wrap = document.createElement('label');
+      wrap.className = 'dx-color-control';
+      const text = document.createElement('span');
+      text.textContent = `${label}: ${safeColor(value, '#ffffff')}`;
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = safeColor(value, '#ffffff');
+      input.addEventListener('input', () => {
+        const next = safeColor(input.value, '#ffffff');
+        text.textContent = `${label}: ${next}`;
+        onInput(next);
+      });
+      wrap.append(text, input);
       return wrap;
     }
 
@@ -1885,6 +2380,10 @@
       this.createWireframeRoom();
       this.createDarts();
       this.applyImageLayerTransforms();
+      this.applyModelLayerTransforms();
+      this.applyLightLayerTransforms();
+      this.applySceneLighting();
+      this.updateFog();
       this.setGridVisible(this.gridVisible, { notify: false, preference: false });
       this.setDartsVisible(this.dartsVisible, false);
     }
@@ -1895,6 +2394,7 @@
         this.gridPreference = this.gridVisible;
       }
       for (const obj of this.roomObjects) obj.visible = this.gridVisible;
+      this.updateFog();
       if (this.gridButton) this.gridButton.classList.toggle('is-active', this.gridPreference === true);
       if (options && options.notify) notifyViewerStateChanged(this);
     }
@@ -1916,6 +2416,25 @@
     applyObjectVisibility() {
       if (this.object) this.object.visible = this.objectVisible;
       if (this.imageLayerGroup) this.imageLayerGroup.visible = this.objectVisible;
+      for (const object of this.modelLayerObjects.values()) object.visible = this.objectVisible;
+    }
+
+    setSceneSetting(key, value) {
+      if (key === 'fogStrength') this.fogStrength = safeNumber(value, this.fogStrength, 0, 1);
+      if (key === 'fogDepth') this.fogDepth = safeNumber(value, this.fogDepth, 0.5, 40);
+      if (key === 'ambientIntensity') this.ambientIntensity = safeNumber(value, this.ambientIntensity, 0, 5);
+      if (key === 'ambientColor') this.ambientColor = safeColor(value, this.ambientColor);
+      if (key === 'sunIntensity') this.sunIntensity = safeNumber(value, this.sunIntensity, 0, 10);
+      if (key === 'sunColor') this.sunColor = safeColor(value, this.sunColor);
+      this.applySceneLighting();
+      this.updateFog();
+      notifyViewerStateChanged(this);
+    }
+
+    setSunDirectionAxis(index, value) {
+      this.sunDirection[index] = safeNumber(value, this.sunDirection[index], -2, 2);
+      this.applySceneLighting();
+      notifyViewerStateChanged(this);
     }
 
     setViewerState(state, notify) {
@@ -1933,13 +2452,40 @@
       const newLayerKey = JSON.stringify(incomingLayers.map(imageLayerSnapshot));
       if (oldLayerKey !== newLayerKey) {
         this.imageLayers = incomingLayers;
-        this.selectedLayerId = String(next.selectedLayerId || '').trim() || (this.imageLayers[0] ? this.imageLayers[0].id : '');
+        this.selectedLayerId = String(next.selectedLayerId || '').trim() ||
+          (this.imageLayers[0] ? this.imageLayers[0].id : '') ||
+          (this.modelLayers[0] ? this.modelLayers[0].id : '') ||
+          (this.lightLayers[0] ? this.lightLayers[0].id : '');
         this.createImageLayers();
         this.applyObjectVisibility();
         if (this.controlsOpen) this.refreshControlPanel();
       } else {
         this.selectedLayerId = String(next.selectedLayerId || '').trim();
       }
+      const incomingModels = modelLayersFromValue(next.modelLayers);
+      const oldModelKey = JSON.stringify((this.modelLayers || []).map(modelLayerSnapshot));
+      const newModelKey = JSON.stringify(incomingModels.map(modelLayerSnapshot));
+      if (oldModelKey !== newModelKey) {
+        this.syncModelLayers(incomingModels);
+        this.applyObjectVisibility();
+        if (this.controlsOpen) this.refreshControlPanel();
+      }
+      const incomingLights = lightLayersFromValue(next.lightLayers);
+      const oldLightKey = JSON.stringify((this.lightLayers || []).map(lightLayerSnapshot));
+      const newLightKey = JSON.stringify(incomingLights.map(lightLayerSnapshot));
+      if (oldLightKey !== newLightKey) {
+        this.syncLightLayers(incomingLights);
+        if (this.controlsOpen) this.refreshControlPanel();
+      }
+      this.fogStrength = safeNumber(next.fogStrength, DEFAULT_VIEWER_STATE.fogStrength, 0, 1);
+      this.fogDepth = safeNumber(next.fogDepth, DEFAULT_VIEWER_STATE.fogDepth, 0.5, 40);
+      this.ambientColor = safeColor(next.ambientColor, DEFAULT_VIEWER_STATE.ambientColor);
+      this.ambientIntensity = safeNumber(next.ambientIntensity, DEFAULT_VIEWER_STATE.ambientIntensity, 0, 5);
+      this.sunColor = safeColor(next.sunColor, DEFAULT_VIEWER_STATE.sunColor);
+      this.sunIntensity = safeNumber(next.sunIntensity, DEFAULT_VIEWER_STATE.sunIntensity, 0, 10);
+      this.sunDirection = numberList(next.sunDirection, DEFAULT_VIEWER_STATE.sunDirection);
+      this.applySceneLighting();
+      this.updateFog();
       this.setTrackingSettings({
         trackingSmoothing: safeNumber(next.trackingSmoothing, DEFAULT_VIEWER_STATE.trackingSmoothing, 0, 1),
         deadZoneX: safeNumber(next.deadZoneX, DEFAULT_VIEWER_STATE.deadZoneX, 0, 0.2),
@@ -2044,11 +2590,41 @@
       ].join('');
     }
 
+    setSelectedLightIntensity(value) {
+      const layer = this.selectedLightLayer();
+      if (!layer) return;
+      layer.intensity = safeNumber(value, layer.intensity, 0, 20);
+      this.applyLightLayerTransform(layer);
+      notifyViewerStateChanged(this);
+    }
+
+    setSelectedLightColor(value) {
+      const layer = this.selectedLightLayer();
+      if (!layer) return;
+      layer.color = safeColor(value, layer.color);
+      this.applyLightLayerTransform(layer);
+      notifyViewerStateChanged(this);
+    }
+
     setPositionAxis(index, value) {
       const layer = this.selectedImageLayer();
       if (layer) {
         layer.transform.position[index] = value;
         this.applyImageLayerTransform(layer);
+        notifyViewerStateChanged(this);
+        return;
+      }
+      const modelLayer = this.selectedModelLayer();
+      if (modelLayer) {
+        modelLayer.transform.position[index] = value;
+        this.applyModelLayerTransform(modelLayer);
+        notifyViewerStateChanged(this);
+        return;
+      }
+      const lightLayer = this.selectedLightLayer();
+      if (lightLayer) {
+        lightLayer.transform.position[index] = value;
+        this.applyLightLayerTransform(lightLayer);
         notifyViewerStateChanged(this);
         return;
       }
@@ -2065,6 +2641,20 @@
         notifyViewerStateChanged(this);
         return;
       }
+      const modelLayer = this.selectedModelLayer();
+      if (modelLayer) {
+        modelLayer.transform.rotation[index] = value;
+        this.applyModelLayerTransform(modelLayer);
+        notifyViewerStateChanged(this);
+        return;
+      }
+      const lightLayer = this.selectedLightLayer();
+      if (lightLayer) {
+        lightLayer.transform.rotation[index] = value;
+        this.applyLightLayerTransform(lightLayer);
+        notifyViewerStateChanged(this);
+        return;
+      }
       this.transform.rotation[index] = value;
       this.applyTransform();
       notifyTransformChanged(this);
@@ -2075,6 +2665,22 @@
       if (layer) {
         layer.transform.scale = value;
         this.applyImageLayerTransform(layer);
+        this.computeScaleRange();
+        notifyViewerStateChanged(this);
+        return;
+      }
+      const modelLayer = this.selectedModelLayer();
+      if (modelLayer) {
+        modelLayer.transform.scale = value;
+        this.applyModelLayerTransform(modelLayer);
+        this.computeScaleRange();
+        notifyViewerStateChanged(this);
+        return;
+      }
+      const lightLayer = this.selectedLightLayer();
+      if (lightLayer) {
+        lightLayer.transform.scale = value;
+        this.applyLightLayerTransform(lightLayer);
         this.computeScaleRange();
         notifyViewerStateChanged(this);
         return;
@@ -2133,12 +2739,18 @@
     }
 
     updateFog() {
-      if (!this.scene || !this.scene.fog) return;
+      if (!this.scene || !this.fog) return;
+      if (!this.gridVisible || this.fogStrength <= 0) {
+        this.scene.fog = null;
+        return;
+      }
+      this.scene.fog = this.fog;
       const screenDims = this.offAxisCamera.getScreenDimensions();
       const headZ = this.worldHeadPosition ? this.worldHeadPosition.z : this.camera.position.z;
       const start = Math.max(0.001, headZ - screenDims.height * WII_ROOM.fogReachTowardViewer);
-      this.scene.fog.near = start;
-      this.scene.fog.far = start + screenDims.height * WII_ROOM.fogDepth;
+      const strength = clamp(this.fogStrength, 0.001, 1);
+      this.fog.near = start;
+      this.fog.far = start + (screenDims.height * this.fogDepth) / strength;
     }
 
     ensureTracking() {
@@ -2168,6 +2780,11 @@
       if (!this.rendering || this.disposed) return;
       this.raf = requestAnimationFrame(() => this.animate());
       const now = performance.now();
+      const delta = this.lastFrameAt ? (now - this.lastFrameAt) / 1000 : 0;
+      this.lastFrameAt = now;
+      for (const mixer of this.animationMixers) {
+        try { mixer.update(delta); } catch (_) {}
+      }
       this.frameCounter++;
       if (now - this.fpsStartedAt >= 500) {
         this.fps = this.frameCounter * 1000 / (now - this.fpsStartedAt);
@@ -2193,6 +2810,10 @@
       this.createWireframeRoom();
       this.createDarts();
       this.applyImageLayerTransforms();
+      this.applyModelLayerTransforms();
+      this.applyLightLayerTransforms();
+      this.applySceneLighting();
+      this.updateFog();
       this.setGridVisible(this.gridVisible, { notify: false, preference: false });
       this.setDartsVisible(this.dartsVisible, false);
       this.computeScaleRange();
@@ -2263,22 +2884,24 @@
     const options = parseJson(optionsJson);
     const asset = payloadAsset(payload);
     const imageLayerScene = hasImageLayers(payload);
-    if (!asset.url && !imageLayerScene) {
+    const modelLayerScene = hasModelLayers(payload);
+    const layeredScene = imageLayerScene || modelLayerScene;
+    if (!asset.url && !layeredScene) {
       notifyLoadState(elementId, 'missing', null, missingLabel(asset));
       setMessage(root, missingLabel(asset));
       return;
     }
-    if (asset.url && !supportedMesh(asset) && !supportedSplat(asset) && !imageLayerScene) {
+    if (asset.url && !supportedMesh(asset) && !supportedSplat(asset) && !layeredScene) {
       notifyLoadState(elementId, 'missing', null, missingLabel(asset));
       setMessage(root, missingLabel(asset));
       return;
     }
-    setMessage(root, imageLayerScene && !asset.url ? 'Loading image layers...' : 'Loading 3D asset...');
+    setMessage(root, layeredScene && !asset.url ? 'Loading scene layers...' : 'Loading 3D asset...');
     notifyLoadState(
       elementId,
       'loading',
       null,
-      imageLayerScene && !asset.url ? 'Loading image layers' : 'Loading 3D asset'
+      layeredScene && !asset.url ? 'Loading scene layers' : 'Loading 3D asset'
     );
     try {
       const modules = await loadModules();

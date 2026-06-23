@@ -193,6 +193,15 @@ Map<String, dynamic> payloadWithThreeDViewerState(
   bool? objectVisible,
   String? selectedLayerId,
   List<Map<String, dynamic>>? imageLayers,
+  List<Map<String, dynamic>>? modelLayers,
+  List<Map<String, dynamic>>? lightLayers,
+  double? fogStrength,
+  double? fogDepth,
+  String? ambientColor,
+  double? ambientIntensity,
+  String? sunColor,
+  double? sunIntensity,
+  List<double>? sunDirection,
   double? trackingSmoothing,
   double? deadZoneX,
   double? deadZoneY,
@@ -208,6 +217,15 @@ Map<String, dynamic> payloadWithThreeDViewerState(
       if (objectVisible != null) 'objectVisible': objectVisible,
       if (selectedLayerId != null) 'selectedLayerId': selectedLayerId,
       if (imageLayers != null) 'imageLayers': imageLayers,
+      if (modelLayers != null) 'modelLayers': modelLayers,
+      if (lightLayers != null) 'lightLayers': lightLayers,
+      if (fogStrength != null) 'fogStrength': fogStrength,
+      if (fogDepth != null) 'fogDepth': fogDepth,
+      if (ambientColor != null) 'ambientColor': ambientColor,
+      if (ambientIntensity != null) 'ambientIntensity': ambientIntensity,
+      if (sunColor != null) 'sunColor': sunColor,
+      if (sunIntensity != null) 'sunIntensity': sunIntensity,
+      if (sunDirection != null) 'sunDirection': sunDirection,
       if (trackingSmoothing != null) 'trackingSmoothing': trackingSmoothing,
       if (deadZoneX != null) 'deadZoneX': deadZoneX,
       if (deadZoneY != null) 'deadZoneY': deadZoneY,
@@ -288,6 +306,15 @@ Map<String, dynamic> _defaultViewerState() {
     'objectVisible': true,
     'selectedLayerId': '',
     'imageLayers': <Map<String, dynamic>>[],
+    'modelLayers': <Map<String, dynamic>>[],
+    'lightLayers': <Map<String, dynamic>>[],
+    'fogStrength': 0.35,
+    'fogDepth': 9.0,
+    'ambientColor': '#ffffff',
+    'ambientIntensity': 0.5,
+    'sunColor': '#ffffff',
+    'sunIntensity': 0.8,
+    'sunDirection': <double>[1, 1, 1],
     'trackingSmoothing': 0.3,
     'deadZoneX': 0.0,
     'deadZoneY': 0.0,
@@ -303,6 +330,18 @@ Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
           .map((layer) => _deepCopyMap(Map<String, dynamic>.from(layer)))
           .toList()
       : <Map<String, dynamic>>[];
+  final List<Map<String, dynamic>> modelLayers = value['modelLayers'] is List
+      ? (value['modelLayers'] as List)
+          .whereType<Map>()
+          .map((layer) => _deepCopyMap(Map<String, dynamic>.from(layer)))
+          .toList()
+      : <Map<String, dynamic>>[];
+  final List<Map<String, dynamic>> lightLayers = value['lightLayers'] is List
+      ? (value['lightLayers'] as List)
+          .whereType<Map>()
+          .map((layer) => _deepCopyMap(Map<String, dynamic>.from(layer)))
+          .toList()
+      : <Map<String, dynamic>>[];
   return <String, dynamic>{
     'gridVisible': _safeBool(value['gridVisible'], fallback['gridVisible']!),
     'dartsVisible': _safeBool(value['dartsVisible'], fallback['dartsVisible']!),
@@ -310,6 +349,18 @@ Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
         _safeBool(value['objectVisible'], fallback['objectVisible']!),
     'selectedLayerId': _string(value['selectedLayerId']),
     'imageLayers': imageLayers,
+    'modelLayers': modelLayers,
+    'lightLayers': lightLayers,
+    'fogStrength':
+        _safeDouble(value['fogStrength'], 0.35).clamp(0, 1).toDouble(),
+    'fogDepth': _safeDouble(value['fogDepth'], 9).clamp(0.5, 40).toDouble(),
+    'ambientColor': _safeColor(value['ambientColor'], '#ffffff'),
+    'ambientIntensity':
+        _safeDouble(value['ambientIntensity'], 0.5).clamp(0, 5).toDouble(),
+    'sunColor': _safeColor(value['sunColor'], '#ffffff'),
+    'sunIntensity':
+        _safeDouble(value['sunIntensity'], 0.8).clamp(0, 10).toDouble(),
+    'sunDirection': _vector3(value['sunDirection'], const <double>[1, 1, 1]),
     'trackingSmoothing':
         _safeDouble(value['trackingSmoothing'], 0.3).clamp(0, 1).toDouble(),
     'deadZoneX': _safeDouble(value['deadZoneX'], 0).clamp(0, 0.2).toDouble(),
@@ -321,6 +372,11 @@ Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
 double _safeDouble(dynamic value, double fallback) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+String _safeColor(dynamic value, String fallback) {
+  final String text = value?.toString().trim() ?? '';
+  return RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(text) ? text : fallback;
 }
 
 bool _safeBool(dynamic value, bool fallback) {
