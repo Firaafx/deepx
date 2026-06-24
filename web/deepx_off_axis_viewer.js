@@ -2388,7 +2388,7 @@
       const scaleGroup = document.createElement('div');
       scaleGroup.className = 'dx-control-group';
       this.computeScaleRange();
-      scaleGroup.appendChild(this.makeRange('Scale', active.scale, this.scaleRange.min, this.scaleRange.max, 0.001, (value) => this.setScale(value)));
+      scaleGroup.appendChild(this.makeLogRange('Scale', active.scale, this.scaleRange.min, this.scaleRange.max, (value) => this.setScale(value)));
       body.appendChild(scaleGroup);
       const rotationGroup = document.createElement('div');
       rotationGroup.className = 'dx-control-group';
@@ -2539,6 +2539,41 @@
       input.value = String(clamp(value, min, max));
       input.addEventListener('input', () => {
         const next = Number(input.value);
+        renderValue(next);
+        onInput(next);
+      });
+      wrap.appendChild(text);
+      wrap.appendChild(input);
+      return wrap;
+    }
+
+    makeLogRange(label, value, min, max, onInput) {
+      const safeMin = Math.max(0.001, Number(min) || 0.001);
+      const safeMax = Math.max(safeMin * 1.001, Number(max) || safeMin * 1.001);
+      const ratio = safeMax / safeMin;
+      const wrap = document.createElement('div');
+      wrap.className = 'dx-control';
+      const text = document.createElement('label');
+      const renderValue = (next) => {
+        text.textContent = `${label}: ${Number(next).toFixed(4)}`;
+      };
+      const toSlider = (next) => {
+        const clamped = clamp(Number(next) || safeMin, safeMin, safeMax);
+        return clamp(Math.log(clamped / safeMin) / Math.log(ratio), 0, 1);
+      };
+      const fromSlider = (next) => {
+        const scaled = safeMin * Math.pow(ratio, clamp(Number(next) || 0, 0, 1));
+        return clamp(Number(scaled.toFixed(5)), safeMin, safeMax);
+      };
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = '0';
+      input.max = '1';
+      input.step = '0.001';
+      input.value = String(toSlider(value));
+      renderValue(clamp(Number(value) || safeMin, safeMin, safeMax));
+      input.addEventListener('input', () => {
+        const next = fromSlider(input.value);
         renderValue(next);
         onInput(next);
       });
@@ -3028,6 +3063,9 @@
     }
 
     setScale(value) {
+      const nextScale = Number(value);
+      if (!Number.isFinite(nextScale)) return;
+      value = clamp(nextScale, 0.001, 100);
       const layer = this.selectedImageLayer();
       if (layer) {
         if (layer.locked === true) return;

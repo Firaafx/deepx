@@ -11253,6 +11253,9 @@ Map<String, dynamic> _payloadWithThreeDModelLayer(
 
 double _threeDRound(double value) => double.parse(value.toStringAsFixed(3));
 
+double _threeDScaleRound(double value) =>
+    double.parse(value.clamp(0.001, 100.0).toStringAsFixed(5));
+
 String _threeDHexFromColor(Color color) {
   final int value = color.toARGB32();
   final int red = (value >> 16) & 0xFF;
@@ -12103,11 +12106,11 @@ Widget _buildThreeDViewerControlsPanel({
           onChanged:
               selectedLayerLocked ? null : (value) => updatePosition(2, value),
         ),
-        _ThreeDPanelSlider(
+        _ThreeDScaleSlider(
           label: 'Scale',
           value: scale,
           min: 0.001,
-          max: kind == 'primary' ? 100 : 4,
+          max: kind == 'image' ? 4 : 100,
           onChanged: selectedLayerLocked ? null : updateScale,
         ),
         for (int i = 0; i < 3; i++)
@@ -12190,6 +12193,66 @@ class _ThreeDPanelSlider extends StatelessWidget {
           onChanged: onChanged == null
               ? null
               : (value) => onChanged!(_threeDRound(value)),
+        ),
+      ],
+    );
+  }
+}
+
+class _ThreeDScaleSlider extends StatelessWidget {
+  const _ThreeDScaleSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final ValueChanged<double>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme cs = Theme.of(context).colorScheme;
+    final double safeMin = math.max(0.001, min);
+    final double safeMax = math.max(safeMin * 1.001, max);
+    final double clamped = value.clamp(safeMin, safeMax).toDouble();
+    final double ratio = safeMax / safeMin;
+    final double sliderValue = ratio <= 1
+        ? 0
+        : (math.log(clamped / safeMin) / math.log(ratio))
+            .clamp(0.0, 1.0)
+            .toDouble();
+
+    double scaleFromSlider(double slider) {
+      final double next = safeMin * math.pow(ratio, slider).toDouble();
+      return _threeDScaleRound(next);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(label, style: TextStyle(color: cs.onSurface)),
+            ),
+            Text(
+              clamped.toStringAsFixed(4),
+              style: TextStyle(color: cs.onSurfaceVariant),
+            ),
+          ],
+        ),
+        Slider(
+          value: sliderValue,
+          min: 0,
+          max: 1,
+          onChanged: onChanged == null
+              ? null
+              : (value) => onChanged!(scaleFromSlider(value)),
         ),
       ],
     );
