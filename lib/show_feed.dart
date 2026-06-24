@@ -5920,7 +5920,11 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           byteSize: file.bytes.length,
           sourceKind: 'manual',
           transform: _threeDTransformDraft,
-          viewer: _threeDViewerDraft,
+          viewer: <String, dynamic>{
+            ..._threeDViewerDraft,
+            'autoFitPrimary': true,
+            'autoFitNonce': DateTime.now().microsecondsSinceEpoch,
+          },
           meta: <String, dynamic>{'sourceName': file.name},
         );
         _threeDTransformDraft =
@@ -6087,6 +6091,71 @@ class _PostStudioTabState extends State<_PostStudioTab> {
     }
   }
 
+  Future<void> _uploadThreeDEnvironment() async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _uploading = true;
+      _threeDProgress = 0;
+      _threeDStage = 'Uploading environment...';
+    });
+    try {
+      final file =
+          await pickDeviceFile(accept: '.exr,application/octet-stream');
+      if (file == null) {
+        if (mounted) setState(() => _threeDStage = 'Environment cancelled');
+        return;
+      }
+      final String ext = _extensionForFile(file.name);
+      if (ext != 'exr') {
+        throw Exception('Only .exr environments are supported.');
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType.trim().isEmpty
+            ? 'application/octet-stream'
+            : file.contentType,
+        folder: 'three-environments',
+        bucket: AppRepository.threeDAssetsBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _threeDProgress = progress.clamp(0, 1).toDouble();
+            _threeDStage =
+                'Uploading environment ${(_threeDProgress * 100).round()}%';
+          });
+        },
+      );
+      _applyThreeDViewerDraft(<String, dynamic>{
+        ..._threeDViewerDraft,
+        'environment': <String, dynamic>{
+          'url': asset.publicUrl,
+          'path': asset.path,
+          'name': file.name,
+          'format': ext,
+          'contentType': file.contentType.trim().isEmpty
+              ? 'application/octet-stream'
+              : file.contentType,
+          'bytes': file.bytes.length,
+        },
+      });
+      if (mounted) {
+        setState(() {
+          _threeDProgress = 1;
+          _threeDStage = 'Environment ready';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Environment upload failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
   Future<void> _openThreeDComposer() async {
     final messenger = ScaffoldMessenger.of(context);
     final rawPayload = _threeDAssetPayload;
@@ -6238,7 +6307,11 @@ class _PostStudioTabState extends State<_PostStudioTab> {
             );
             _threeDAssetPayload = _payloadWithThreeDViewerStateSnapshot(
               _threeDAssetPayload!,
-              _threeDViewerDraft,
+              <String, dynamic>{
+                ..._threeDViewerDraft,
+                'autoFitPrimary': true,
+                'autoFitNonce': DateTime.now().microsecondsSinceEpoch,
+              },
             );
             _threeDTransformDraft =
                 _transformFromThreeDPayload(_threeDAssetPayload!);
@@ -6634,6 +6707,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                           threeDAssetFromPayload(_threeDAssetPayload!) != null,
                       onTransformChanged: _applyThreeDTransformDraft,
                       onViewerStateChanged: _applyThreeDViewerDraft,
+                      onUploadEnvironment:
+                          _uploading ? null : _uploadThreeDEnvironment,
                     ),
                     const SizedBox(height: 14),
                     if (train3dMode) ...[
@@ -10837,6 +10912,7 @@ Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
   return <String, dynamic>{
     for (final entry in _defaultThreeDViewerState.entries)
       entry.key: _threeDViewerBool(raw[entry.key], entry.value),
+    'fogVisible': _threeDViewerBool(raw['fogVisible'], true),
     'selectedLayerId': raw['selectedLayerId']?.toString().trim() ?? '',
     'imageLayers': _normalizedThreeDImageLayers(raw['imageLayers']),
     'modelLayers': _normalizedThreeDModelLayers(raw['modelLayers']),
@@ -10846,6 +10922,9 @@ Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
         .toDouble(),
     'fogDepth':
         _threeDTransformNumber(raw['fogDepth'], 9).clamp(0.5, 40.0).toDouble(),
+    'fogColor': _threeDColor(raw['fogColor'], '#000000'),
+    'backgroundColor': _threeDColor(raw['backgroundColor'], '#000000'),
+    'gridColor': _threeDColor(raw['gridColor'], '#333333'),
     'ambientColor': _threeDColor(raw['ambientColor'], '#ffffff'),
     'ambientIntensity': _threeDTransformNumber(raw['ambientIntensity'], 0.5)
         .clamp(0.0, 5.0)
@@ -10858,6 +10937,16 @@ Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
       raw['sunDirection'],
       const <double>[1, 1, 1],
     ),
+    'environment': _normalizedThreeDEnvironment(raw['environment']),
+    'environmentLightingEnabled': _threeDViewerBool(
+      raw['environmentLightingEnabled'],
+      false,
+    ),
+    'autoFitPrimary': _threeDViewerBool(raw['autoFitPrimary'], false),
+    'autoFitTargetId': raw['autoFitTargetId']?.toString().trim() ?? '',
+    'autoFitNonce': raw['autoFitNonce'] is num
+        ? (raw['autoFitNonce'] as num).toInt()
+        : int.tryParse(raw['autoFitNonce']?.toString() ?? '') ?? 0,
     'trackingSmoothing': _threeDTransformNumber(raw['trackingSmoothing'], 0.3)
         .clamp(0.0, 1.0)
         .toDouble(),
@@ -10867,6 +10956,29 @@ Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
         _threeDTransformNumber(raw['deadZoneY'], 0).clamp(0.0, 0.2).toDouble(),
     'deadZoneZ':
         _threeDTransformNumber(raw['deadZoneZ'], 0).clamp(0.0, 0.4).toDouble(),
+  };
+}
+
+Map<String, dynamic> _normalizedThreeDEnvironment(dynamic value) {
+  if (value is! Map) return <String, dynamic>{};
+  final Map<String, dynamic> raw = Map<String, dynamic>.from(value);
+  final String url =
+      raw['url']?.toString().trim() ?? raw['assetUrl']?.toString().trim() ?? '';
+  if (url.isEmpty) return <String, dynamic>{};
+  final String format = raw['format']?.toString().trim().toLowerCase() ?? '';
+  return <String, dynamic>{
+    'url': url,
+    'path': raw['path']?.toString().trim() ??
+        raw['assetPath']?.toString().trim() ??
+        '',
+    'name': raw['name']?.toString().trim().isNotEmpty == true
+        ? raw['name'].toString().trim()
+        : 'Environment',
+    'format': format,
+    'contentType': raw['contentType']?.toString().trim().isNotEmpty == true
+        ? raw['contentType'].toString().trim()
+        : 'application/octet-stream',
+    if (raw['bytes'] is num) 'bytes': (raw['bytes'] as num).toInt(),
   };
 }
 
@@ -10892,6 +11004,7 @@ List<Map<String, dynamic>> _normalizedThreeDImageLayers(dynamic value) {
       if (raw['bytes'] is num) 'bytes': (raw['bytes'] as num).toInt(),
       'visible': _threeDViewerBool(raw['visible'], true),
       'locked': _threeDViewerBool(raw['locked'], false),
+      'autoFit': _threeDViewerBool(raw['autoFit'], false),
       'transform': transform,
     };
   }).toList();
@@ -10985,6 +11098,7 @@ Map<String, dynamic> _payloadWithThreeDViewerStateSnapshot(
   return payloadWithThreeDViewerState(
     payload,
     gridVisible: normalized['gridVisible'] == true,
+    fogVisible: normalized['fogVisible'] == true,
     dartsVisible: normalized['dartsVisible'] == true,
     objectVisible: normalized['objectVisible'] == true,
     selectedLayerId: normalized['selectedLayerId']?.toString() ?? '',
@@ -10999,12 +11113,25 @@ Map<String, dynamic> _payloadWithThreeDViewerStateSnapshot(
     ),
     fogStrength: _threeDTransformNumber(normalized['fogStrength'], 0.35),
     fogDepth: _threeDTransformNumber(normalized['fogDepth'], 9),
+    fogColor: normalized['fogColor']?.toString(),
+    backgroundColor: normalized['backgroundColor']?.toString(),
+    gridColor: normalized['gridColor']?.toString(),
     ambientColor: normalized['ambientColor']?.toString(),
     ambientIntensity:
         _threeDTransformNumber(normalized['ambientIntensity'], 0.5),
     sunColor: normalized['sunColor']?.toString(),
     sunIntensity: _threeDTransformNumber(normalized['sunIntensity'], 0.8),
     sunDirection: List<double>.from(normalized['sunDirection'] as List),
+    environment: Map<String, dynamic>.from(
+      normalized['environment'] as Map,
+    ),
+    environmentLightingEnabled:
+        normalized['environmentLightingEnabled'] == true,
+    autoFitPrimary: normalized['autoFitPrimary'] == true,
+    autoFitTargetId: normalized['autoFitTargetId']?.toString(),
+    autoFitNonce: normalized['autoFitNonce'] is num
+        ? (normalized['autoFitNonce'] as num).toInt()
+        : 0,
     trackingSmoothing: _threeDTransformNumber(
       normalized['trackingSmoothing'],
       0.3,
@@ -11107,6 +11234,7 @@ Map<String, dynamic> _payloadWithThreeDModelLayer(
     'bytes': byteSize,
     'visible': true,
     'locked': false,
+    'autoFit': true,
     'transform': <String, dynamic>{
       'position': <double>[0, -0.09, -0.08 - (layers.length * 0.08)],
       'scale': _defaultThreeDScale,
@@ -11141,61 +11269,116 @@ Future<void> _pickThreeDViewerColor({
   required String initialHex,
   required ValueChanged<String> onPicked,
 }) async {
-  Color selected = _cardAccentColorFromHex(initialHex);
-  int red(Color color) => (color.toARGB32() >> 16) & 0xFF;
-  int green(Color color) => (color.toARGB32() >> 8) & 0xFF;
-  int blue(Color color) => color.toARGB32() & 0xFF;
+  HSVColor selected = HSVColor.fromColor(
+    _cardAccentColorFromHex(initialHex, fallback: Colors.white),
+  );
   final Color? result = await showDialog<Color>(
     context: context,
     builder: (dialogContext) {
       return StatefulBuilder(
         builder: (context, setDialogState) {
-          void update(Color color) => setDialogState(() => selected = color);
+          void updateSaturationValue(Offset local, Size size) {
+            final double saturation =
+                (local.dx / size.width).clamp(0.0, 1.0).toDouble();
+            final double value =
+                (1 - (local.dy / size.height)).clamp(0.0, 1.0).toDouble();
+            setDialogState(() {
+              selected = selected.withSaturation(saturation).withValue(value);
+            });
+          }
+
+          void updateHue(Offset local, Size size) {
+            final double hue =
+                (local.dx / size.width).clamp(0.0, 1.0).toDouble() * 360;
+            setDialogState(() => selected = selected.withHue(hue));
+          }
+
           return AlertDialog(
             title: const Text('Choose color'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _RgbSlider(
-                  label: 'Red',
-                  value: red(selected),
-                  color: Colors.red,
-                  onChanged: (value) => update(
-                    Color.fromARGB(
-                      255,
-                      value.round(),
-                      green(selected),
-                      blue(selected),
-                    ),
+            content: SizedBox(
+              width: 280,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final Size pickerSize = Size(
+                        constraints.maxWidth,
+                        176,
+                      );
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanDown: (details) => updateSaturationValue(
+                          details.localPosition,
+                          pickerSize,
+                        ),
+                        onPanUpdate: (details) => updateSaturationValue(
+                          details.localPosition,
+                          pickerSize,
+                        ),
+                        child: CustomPaint(
+                          size: pickerSize,
+                          painter: _ThreeDColorSpectrumPainter(selected.hue),
+                          foregroundPainter: _ThreeDColorKnobPainter(
+                            Offset(
+                              selected.saturation * pickerSize.width,
+                              (1 - selected.value) * pickerSize.height,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ),
-                _RgbSlider(
-                  label: 'Green',
-                  value: green(selected),
-                  color: Colors.green,
-                  onChanged: (value) => update(
-                    Color.fromARGB(
-                      255,
-                      red(selected),
-                      value.round(),
-                      blue(selected),
-                    ),
+                  const SizedBox(height: 14),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final Size hueSize = Size(constraints.maxWidth, 26);
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanDown: (details) =>
+                            updateHue(details.localPosition, hueSize),
+                        onPanUpdate: (details) =>
+                            updateHue(details.localPosition, hueSize),
+                        child: CustomPaint(
+                          size: hueSize,
+                          painter: _ThreeDColorHuePainter(),
+                          foregroundPainter: _ThreeDColorKnobPainter(
+                            Offset(
+                              (selected.hue / 360) * hueSize.width,
+                              hueSize.height / 2,
+                            ),
+                            radius: 7,
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ),
-                _RgbSlider(
-                  label: 'Blue',
-                  value: blue(selected),
-                  color: Colors.blue,
-                  onChanged: (value) => update(
-                    Color.fromARGB(
-                      255,
-                      red(selected),
-                      green(selected),
-                      value.round(),
-                    ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _threeDHexFromColor(selected.toColor()),
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: selected.toColor(),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .outline
+                                .withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: const SizedBox(width: 42, height: 28),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -11203,7 +11386,8 @@ Future<void> _pickThreeDViewerColor({
                 child: const Text('Cancel'),
               ),
               FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, selected),
+                onPressed: () =>
+                    Navigator.pop(dialogContext, selected.toColor()),
                 child: const Text('Apply'),
               ),
             ],
@@ -11215,6 +11399,98 @@ Future<void> _pickThreeDViewerColor({
   if (result != null) onPicked(_threeDHexFromColor(result));
 }
 
+class _ThreeDColorSpectrumPainter extends CustomPainter {
+  const _ThreeDColorSpectrumPainter(this.hue);
+
+  final double hue;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect rect = Offset.zero & size;
+    final Paint huePaint = Paint()
+      ..shader = LinearGradient(
+        colors: <Color>[
+          Colors.white,
+          HSVColor.fromAHSV(1, hue, 1, 1).toColor(),
+        ],
+      ).createShader(rect);
+    canvas.drawRect(rect, huePaint);
+    final Paint valuePaint = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: <Color>[Colors.transparent, Colors.black],
+      ).createShader(rect);
+    canvas.drawRect(rect, valuePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ThreeDColorSpectrumPainter oldDelegate) {
+    return oldDelegate.hue != hue;
+  }
+}
+
+class _ThreeDColorHuePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect rect = Offset.zero & size;
+    final Paint paint = Paint()
+      ..shader = const LinearGradient(
+        colors: <Color>[
+          Color(0xFFFF0000),
+          Color(0xFFFFFF00),
+          Color(0xFF00FF00),
+          Color(0xFF00FFFF),
+          Color(0xFF0000FF),
+          Color(0xFFFF00FF),
+          Color(0xFFFF0000),
+        ],
+      ).createShader(rect);
+    final RRect rounded =
+        RRect.fromRectAndRadius(rect, const Radius.circular(6));
+    canvas.drawRRect(rounded, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ThreeDColorHuePainter oldDelegate) => false;
+}
+
+class _ThreeDColorKnobPainter extends CustomPainter {
+  const _ThreeDColorKnobPainter(this.position, {this.radius = 8});
+
+  final Offset position;
+  final double radius;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Offset clamped = Offset(
+      position.dx.clamp(0.0, size.width).toDouble(),
+      position.dy.clamp(0.0, size.height).toDouble(),
+    );
+    canvas.drawCircle(
+      clamped,
+      radius,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    canvas.drawCircle(
+      clamped,
+      radius + 2,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ThreeDColorKnobPainter oldDelegate) {
+    return oldDelegate.position != position || oldDelegate.radius != radius;
+  }
+}
+
 Widget _buildThreeDViewerControlsPanel({
   required BuildContext context,
   required ColorScheme cs,
@@ -11223,6 +11499,7 @@ Widget _buildThreeDViewerControlsPanel({
   required bool hasPrimaryObject,
   required ValueChanged<Map<String, dynamic>> onTransformChanged,
   required ValueChanged<Map<String, dynamic>> onViewerStateChanged,
+  Future<void> Function()? onUploadEnvironment,
 }) {
   final Map<String, dynamic> viewer = _normalizedThreeDViewerState(viewerState);
   final Map<String, dynamic> primaryTransform =
@@ -11373,6 +11650,16 @@ Widget _buildThreeDViewerControlsPanel({
     });
   }
 
+  void requestAutoFit() {
+    if (kind == 'light') return;
+    if (selectedLayer()['locked'] == true) return;
+    emitViewer(<String, dynamic>{
+      ...viewer,
+      'autoFitTargetId': kind == 'primary' ? '' : selectedId,
+      'autoFitNonce': DateTime.now().microsecondsSinceEpoch,
+    });
+  }
+
   void updatePosition(int index, double value) {
     final Map<String, dynamic> transform = activeTransform();
     final List<double> position = List<double>.from(
@@ -11459,16 +11746,20 @@ Widget _buildThreeDViewerControlsPanel({
       kind != 'primary' && selectedLayerState.isNotEmpty;
   final bool selectedLayerVisible = selectedLayerState['visible'] != false;
   final bool selectedLayerLocked = selectedLayerState['locked'] == true;
+  final bool hasAnyTarget = hasPrimaryObject ||
+      images.isNotEmpty ||
+      models.isNotEmpty ||
+      lights.isNotEmpty;
+  final bool canAutoFit = hasAnyTarget && kind != 'light';
+  final Map<String, dynamic> environment = Map<String, dynamic>.from(
+    viewer['environment'] is Map ? viewer['environment'] as Map : const {},
+  );
   final Map<String, dynamic>? selectedLight = kind == 'light'
       ? lights.firstWhere(
           (entry) => entry['id']?.toString() == selectedId,
           orElse: () => const <String, dynamic>{},
         )
       : null;
-  final bool hasAnyTarget = hasPrimaryObject ||
-      images.isNotEmpty ||
-      models.isNotEmpty ||
-      lights.isNotEmpty;
 
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
@@ -11482,10 +11773,20 @@ Widget _buildThreeDViewerControlsPanel({
         dense: true,
         contentPadding: EdgeInsets.zero,
         value: viewer['gridVisible'] == true,
-        title: const Text('Grid + fog'),
+        title: const Text('Grid'),
         onChanged: (value) => emitViewer(<String, dynamic>{
           ...viewer,
           'gridVisible': value,
+        }),
+      ),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: viewer['fogVisible'] == true,
+        title: const Text('Fog'),
+        onChanged: (value) => emitViewer(<String, dynamic>{
+          ...viewer,
+          'fogVisible': value,
         }),
       ),
       SwitchListTile(
@@ -11559,42 +11860,51 @@ Widget _buildThreeDViewerControlsPanel({
                 })
             : null,
       ),
-      if (hasSelectedLayer) ...[
+      if (canAutoFit || hasSelectedLayer) ...[
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            OutlinedButton.icon(
-              onPressed: () => updateSelectedLayerState(
-                visible: !selectedLayerVisible,
+            if (canAutoFit)
+              OutlinedButton.icon(
+                onPressed: selectedLayerLocked ? null : requestAutoFit,
+                icon: const Icon(Icons.center_focus_strong_rounded),
+                label: const Text('Auto-fit'),
               ),
-              icon: Icon(
-                selectedLayerVisible
-                    ? Icons.visibility_off_outlined
-                    : Icons.visibility_outlined,
+            if (hasSelectedLayer)
+              OutlinedButton.icon(
+                onPressed: () => updateSelectedLayerState(
+                  visible: !selectedLayerVisible,
+                ),
+                icon: Icon(
+                  selectedLayerVisible
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                ),
+                label: Text(selectedLayerVisible ? 'Hide' : 'Show'),
               ),
-              label: Text(selectedLayerVisible ? 'Hide' : 'Show'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => updateSelectedLayerState(
-                locked: !selectedLayerLocked,
+            if (hasSelectedLayer)
+              OutlinedButton.icon(
+                onPressed: () => updateSelectedLayerState(
+                  locked: !selectedLayerLocked,
+                ),
+                icon: Icon(
+                  selectedLayerLocked
+                      ? Icons.lock_open_rounded
+                      : Icons.lock_outline_rounded,
+                ),
+                label: Text(selectedLayerLocked ? 'Unlock' : 'Lock'),
               ),
-              icon: Icon(
-                selectedLayerLocked
-                    ? Icons.lock_open_rounded
-                    : Icons.lock_outline_rounded,
+            if (hasSelectedLayer)
+              OutlinedButton.icon(
+                onPressed: selectedLayerLocked ? null : deleteSelectedLayer,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: cs.error,
+                ),
+                icon: const Icon(Icons.delete_outline_rounded),
+                label: const Text('Delete'),
               ),
-              label: Text(selectedLayerLocked ? 'Unlock' : 'Lock'),
-            ),
-            OutlinedButton.icon(
-              onPressed: selectedLayerLocked ? null : deleteSelectedLayer,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: cs.error,
-              ),
-              icon: const Icon(Icons.delete_outline_rounded),
-              label: const Text('Delete'),
-            ),
           ],
         ),
       ],
@@ -11616,6 +11926,18 @@ Widget _buildThreeDViewerControlsPanel({
         ],
       ),
       const SizedBox(height: 12),
+      _ThreeDColorRow(
+        label: 'Grid Color',
+        value: viewer['gridColor']?.toString() ?? '#333333',
+        onTap: () => _pickThreeDViewerColor(
+          context: context,
+          initialHex: viewer['gridColor']?.toString() ?? '#333333',
+          onPicked: (value) => emitViewer(<String, dynamic>{
+            ...viewer,
+            'gridColor': value,
+          }),
+        ),
+      ),
       _ThreeDPanelSlider(
         label: 'Fog Strength',
         value: _threeDTransformNumber(viewer['fogStrength'], 0.35),
@@ -11635,6 +11957,59 @@ Widget _buildThreeDViewerControlsPanel({
           ...viewer,
           'fogDepth': _threeDRound(value),
         }),
+      ),
+      _ThreeDColorRow(
+        label: 'Fog Color',
+        value: viewer['fogColor']?.toString() ?? '#000000',
+        onTap: () => _pickThreeDViewerColor(
+          context: context,
+          initialHex: viewer['fogColor']?.toString() ?? '#000000',
+          onPicked: (value) => emitViewer(<String, dynamic>{
+            ...viewer,
+            'fogColor': value,
+          }),
+        ),
+      ),
+      _ThreeDColorRow(
+        label: 'Background Color',
+        value: viewer['backgroundColor']?.toString() ?? '#000000',
+        onTap: () => _pickThreeDViewerColor(
+          context: context,
+          initialHex: viewer['backgroundColor']?.toString() ?? '#000000',
+          onPicked: (value) => emitViewer(<String, dynamic>{
+            ...viewer,
+            'backgroundColor': value,
+          }),
+        ),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        onPressed: onUploadEnvironment,
+        icon: const Icon(Icons.panorama_horizontal_outlined),
+        label: Text(
+          environment.isEmpty ? 'Upload Environment' : 'Replace Environment',
+        ),
+      ),
+      if (environment.isNotEmpty) ...[
+        const SizedBox(height: 6),
+        Text(
+          environment['name']?.toString() ?? 'Environment',
+          style: TextStyle(color: cs.onSurfaceVariant),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: viewer['environmentLightingEnabled'] == true,
+        title: const Text('Environment Lighting'),
+        onChanged: environment.isEmpty
+            ? null
+            : (value) => emitViewer(<String, dynamic>{
+                  ...viewer,
+                  'environmentLightingEnabled': value,
+                }),
       ),
       const SizedBox(height: 8),
       _ThreeDPanelSlider(
@@ -11964,6 +12339,9 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
         },
       );
       final old = ThreeDAssetPayload.fromMap(_payload);
+      final Map<String, dynamic> viewer = _normalizedThreeDViewerState(
+        old.viewer,
+      );
       setState(() {
         _payload = simpleThreeDPayload(
           mediaType: mediaType,
@@ -11974,7 +12352,11 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
           byteSize: file.bytes.length,
           sourceKind: 'manual_update',
           transform: old.transform,
-          viewer: old.viewer,
+          viewer: <String, dynamic>{
+            ...viewer,
+            'autoFitPrimary': true,
+            'autoFitNonce': DateTime.now().microsecondsSinceEpoch,
+          },
           meta: <String, dynamic>{'sourceName': file.name},
         );
         _transformDraft = _transformFromThreeDPayload(_payload);
@@ -12090,6 +12472,58 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
       if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text('3D layer upload failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _uploadEnvironment() async {
+    if (_uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _uploading = true;
+      _uploadProgress = 0;
+    });
+    try {
+      final file =
+          await pickDeviceFile(accept: '.exr,application/octet-stream');
+      if (file == null) return;
+      final String ext = _extensionForFileName(file.name);
+      if (ext != 'exr') {
+        throw Exception('Only .exr environments are supported.');
+      }
+      final asset = await _repository.uploadAssetBytesWithPath(
+        bytes: file.bytes,
+        fileName: file.name,
+        contentType: file.contentType.trim().isEmpty
+            ? 'application/octet-stream'
+            : file.contentType,
+        folder: 'three-environments',
+        bucket: AppRepository.threeDAssetsBucket,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress.clamp(0, 1).toDouble());
+        },
+      );
+      _applyViewerState(<String, dynamic>{
+        ..._viewerDraft,
+        'environment': <String, dynamic>{
+          'url': asset.publicUrl,
+          'path': asset.path,
+          'name': file.name,
+          'format': ext,
+          'contentType': file.contentType.trim().isEmpty
+              ? 'application/octet-stream'
+              : file.contentType,
+          'bytes': file.bytes.length,
+        },
+      });
+      if (mounted) setState(() => _uploadProgress = 1);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Environment upload failed: $e')),
       );
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -12259,6 +12693,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                     hasPrimaryObject: threeDAssetFromPayload(_payload) != null,
                     onTransformChanged: _applyTransform,
                     onViewerStateChanged: _applyViewerState,
+                    onUploadEnvironment: _uploading ? null : _uploadEnvironment,
                   ),
                   if (_uploading) ...[
                     const SizedBox(height: 10),

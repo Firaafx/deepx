@@ -189,6 +189,7 @@ Map<String, dynamic> payloadWithThreeDTransform(
 Map<String, dynamic> payloadWithThreeDViewerState(
   Map<String, dynamic> payload, {
   bool? gridVisible,
+  bool? fogVisible,
   bool? dartsVisible,
   bool? objectVisible,
   String? selectedLayerId,
@@ -197,11 +198,19 @@ Map<String, dynamic> payloadWithThreeDViewerState(
   List<Map<String, dynamic>>? lightLayers,
   double? fogStrength,
   double? fogDepth,
+  String? fogColor,
+  String? backgroundColor,
+  String? gridColor,
   String? ambientColor,
   double? ambientIntensity,
   String? sunColor,
   double? sunIntensity,
   List<double>? sunDirection,
+  Map<String, dynamic>? environment,
+  bool? environmentLightingEnabled,
+  bool? autoFitPrimary,
+  String? autoFitTargetId,
+  int? autoFitNonce,
   double? trackingSmoothing,
   double? deadZoneX,
   double? deadZoneY,
@@ -213,6 +222,7 @@ Map<String, dynamic> payloadWithThreeDViewerState(
     viewer: <String, dynamic>{
       ...current,
       if (gridVisible != null) 'gridVisible': gridVisible,
+      if (fogVisible != null) 'fogVisible': fogVisible,
       if (dartsVisible != null) 'dartsVisible': dartsVisible,
       if (objectVisible != null) 'objectVisible': objectVisible,
       if (selectedLayerId != null) 'selectedLayerId': selectedLayerId,
@@ -221,11 +231,20 @@ Map<String, dynamic> payloadWithThreeDViewerState(
       if (lightLayers != null) 'lightLayers': lightLayers,
       if (fogStrength != null) 'fogStrength': fogStrength,
       if (fogDepth != null) 'fogDepth': fogDepth,
+      if (fogColor != null) 'fogColor': fogColor,
+      if (backgroundColor != null) 'backgroundColor': backgroundColor,
+      if (gridColor != null) 'gridColor': gridColor,
       if (ambientColor != null) 'ambientColor': ambientColor,
       if (ambientIntensity != null) 'ambientIntensity': ambientIntensity,
       if (sunColor != null) 'sunColor': sunColor,
       if (sunIntensity != null) 'sunIntensity': sunIntensity,
       if (sunDirection != null) 'sunDirection': sunDirection,
+      if (environment != null) 'environment': environment,
+      if (environmentLightingEnabled != null)
+        'environmentLightingEnabled': environmentLightingEnabled,
+      if (autoFitPrimary != null) 'autoFitPrimary': autoFitPrimary,
+      if (autoFitTargetId != null) 'autoFitTargetId': autoFitTargetId,
+      if (autoFitNonce != null) 'autoFitNonce': autoFitNonce,
       if (trackingSmoothing != null) 'trackingSmoothing': trackingSmoothing,
       if (deadZoneX != null) 'deadZoneX': deadZoneX,
       if (deadZoneY != null) 'deadZoneY': deadZoneY,
@@ -302,6 +321,7 @@ Map<String, dynamic> _defaultCamera() {
 Map<String, dynamic> _defaultViewerState() {
   return <String, dynamic>{
     'gridVisible': true,
+    'fogVisible': true,
     'dartsVisible': false,
     'objectVisible': true,
     'selectedLayerId': '',
@@ -310,11 +330,19 @@ Map<String, dynamic> _defaultViewerState() {
     'lightLayers': <Map<String, dynamic>>[],
     'fogStrength': 0.35,
     'fogDepth': 9.0,
+    'fogColor': '#000000',
+    'backgroundColor': '#000000',
+    'gridColor': '#333333',
     'ambientColor': '#ffffff',
     'ambientIntensity': 0.5,
     'sunColor': '#ffffff',
     'sunIntensity': 0.8,
     'sunDirection': <double>[1, 1, 1],
+    'environment': <String, dynamic>{},
+    'environmentLightingEnabled': false,
+    'autoFitPrimary': false,
+    'autoFitTargetId': '',
+    'autoFitNonce': 0,
     'trackingSmoothing': 0.3,
     'deadZoneX': 0.0,
     'deadZoneY': 0.0,
@@ -344,6 +372,7 @@ Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
       : <Map<String, dynamic>>[];
   return <String, dynamic>{
     'gridVisible': _safeBool(value['gridVisible'], fallback['gridVisible']!),
+    'fogVisible': _safeBool(value['fogVisible'], fallback['fogVisible']!),
     'dartsVisible': _safeBool(value['dartsVisible'], fallback['dartsVisible']!),
     'objectVisible':
         _safeBool(value['objectVisible'], fallback['objectVisible']!),
@@ -354,6 +383,9 @@ Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
     'fogStrength':
         _safeDouble(value['fogStrength'], 0.35).clamp(0, 1).toDouble(),
     'fogDepth': _safeDouble(value['fogDepth'], 9).clamp(0.5, 40).toDouble(),
+    'fogColor': _safeColor(value['fogColor'], '#000000'),
+    'backgroundColor': _safeColor(value['backgroundColor'], '#000000'),
+    'gridColor': _safeColor(value['gridColor'], '#333333'),
     'ambientColor': _safeColor(value['ambientColor'], '#ffffff'),
     'ambientIntensity':
         _safeDouble(value['ambientIntensity'], 0.5).clamp(0, 5).toDouble(),
@@ -361,6 +393,16 @@ Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
     'sunIntensity':
         _safeDouble(value['sunIntensity'], 0.8).clamp(0, 10).toDouble(),
     'sunDirection': _vector3(value['sunDirection'], const <double>[1, 1, 1]),
+    'environment': value['environment'] is Map
+        ? _deepCopyMap(Map<String, dynamic>.from(value['environment'] as Map))
+        : <String, dynamic>{},
+    'environmentLightingEnabled': _safeBool(
+      value['environmentLightingEnabled'],
+      fallback['environmentLightingEnabled']!,
+    ),
+    'autoFitPrimary': _safeBool(value['autoFitPrimary'], false),
+    'autoFitTargetId': _string(value['autoFitTargetId']),
+    'autoFitNonce': _nullableInt(value['autoFitNonce']) ?? 0,
     'trackingSmoothing':
         _safeDouble(value['trackingSmoothing'], 0.3).clamp(0, 1).toDouble(),
     'deadZoneX': _safeDouble(value['deadZoneX'], 0).clamp(0, 0.2).toDouble(),

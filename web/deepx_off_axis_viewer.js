@@ -39,6 +39,7 @@
 
   const DEFAULT_VIEWER_STATE = Object.freeze({
     gridVisible: true,
+    fogVisible: true,
     dartsVisible: false,
     objectVisible: true,
     selectedLayerId: '',
@@ -47,11 +48,19 @@
     lightLayers: Object.freeze([]),
     fogStrength: 0.35,
     fogDepth: 9,
+    fogColor: '#000000',
+    backgroundColor: '#000000',
+    gridColor: '#333333',
     ambientColor: '#ffffff',
     ambientIntensity: 0.5,
     sunColor: '#ffffff',
     sunIntensity: 0.8,
     sunDirection: Object.freeze([1, 1, 1]),
+    environment: Object.freeze({}),
+    environmentLightingEnabled: false,
+    autoFitPrimary: false,
+    autoFitTargetId: '',
+    autoFitNonce: 0,
     trackingSmoothing: 0.3,
     deadZoneX: 0,
     deadZoneY: 0,
@@ -372,11 +381,13 @@
         import('https://esm.sh/three@0.180.0'),
         import('https://esm.sh/three@0.180.0/examples/jsm/loaders/GLTFLoader.js'),
         import('https://esm.sh/three@0.180.0/examples/jsm/loaders/DRACOLoader.js'),
+        import('https://esm.sh/three@0.180.0/examples/jsm/loaders/EXRLoader.js'),
         import('https://esm.sh/@sparkjsdev/spark@2.1.0?deps=three@0.180.0').catch(() => null)
-      ]).then(([three, gltf, draco, spark]) => ({
+      ]).then(([three, gltf, draco, exr, spark]) => ({
         THREE: three,
         GLTFLoader: gltf.GLTFLoader,
         DRACOLoader: draco.DRACOLoader,
+        EXRLoader: exr.EXRLoader,
         spark
       }));
     }
@@ -589,6 +600,7 @@
         ...asset,
         visible: safeBool(layer.visible, true),
         locked: safeBool(layer.locked, false),
+        autoFit: safeBool(layer.autoFit, false),
         transform: transformFromRaw(layer.transform, fallbackTransform)
       };
     }).filter((layer) => layer.url && (supportedMesh(layer) || supportedSplat(layer)));
@@ -606,6 +618,7 @@
       ...(Number.isFinite(Number(layer.bytes)) ? { bytes: Number(layer.bytes) } : {}),
       visible: layer.visible !== false,
       locked: layer.locked === true,
+      autoFit: layer.autoFit === true,
       transform: transformSnapshot(layer.transform)
     };
   }
@@ -646,6 +659,33 @@
     };
   }
 
+  function environmentFromValue(value) {
+    const raw = value && typeof value === 'object' ? value : {};
+    const url = String(raw.url || raw.assetUrl || '').trim();
+    if (!url) return {};
+    return {
+      url,
+      path: String(raw.path || raw.assetPath || '').trim(),
+      name: String(raw.name || 'Environment').trim() || 'Environment',
+      format: String(raw.format || '').trim().toLowerCase(),
+      contentType: String(raw.contentType || 'application/octet-stream').trim() || 'application/octet-stream',
+      bytes: Number.isFinite(Number(raw.bytes)) ? Number(raw.bytes) : undefined
+    };
+  }
+
+  function environmentSnapshot(environment) {
+    const next = environmentFromValue(environment);
+    if (!next.url) return {};
+    return {
+      url: next.url,
+      path: next.path,
+      name: next.name,
+      format: next.format,
+      contentType: next.contentType,
+      ...(Number.isFinite(Number(next.bytes)) ? { bytes: Number(next.bytes) } : {})
+    };
+  }
+
   function viewerStateFromPayload(payload) {
     const raw = payload && typeof payload.viewer === 'object' ? payload.viewer : {};
     const imageLayers = imageLayersFromValue(raw.imageLayers);
@@ -654,6 +694,7 @@
     const rawSelected = String(raw.selectedLayerId || '').trim();
     return {
       gridVisible: safeBool(raw.gridVisible, DEFAULT_VIEWER_STATE.gridVisible),
+      fogVisible: safeBool(raw.fogVisible, DEFAULT_VIEWER_STATE.fogVisible),
       dartsVisible: safeBool(raw.dartsVisible, DEFAULT_VIEWER_STATE.dartsVisible),
       objectVisible: safeBool(raw.objectVisible, DEFAULT_VIEWER_STATE.objectVisible),
       selectedLayerId: rawSelected ||
@@ -665,11 +706,19 @@
       lightLayers,
       fogStrength: safeNumber(raw.fogStrength, DEFAULT_VIEWER_STATE.fogStrength, 0, 1),
       fogDepth: safeNumber(raw.fogDepth, DEFAULT_VIEWER_STATE.fogDepth, 0.5, 40),
+      fogColor: safeColor(raw.fogColor, DEFAULT_VIEWER_STATE.fogColor),
+      backgroundColor: safeColor(raw.backgroundColor, DEFAULT_VIEWER_STATE.backgroundColor),
+      gridColor: safeColor(raw.gridColor, DEFAULT_VIEWER_STATE.gridColor),
       ambientColor: safeColor(raw.ambientColor, DEFAULT_VIEWER_STATE.ambientColor),
       ambientIntensity: safeNumber(raw.ambientIntensity, DEFAULT_VIEWER_STATE.ambientIntensity, 0, 5),
       sunColor: safeColor(raw.sunColor, DEFAULT_VIEWER_STATE.sunColor),
       sunIntensity: safeNumber(raw.sunIntensity, DEFAULT_VIEWER_STATE.sunIntensity, 0, 10),
       sunDirection: numberList(raw.sunDirection, DEFAULT_VIEWER_STATE.sunDirection),
+      environment: environmentFromValue(raw.environment),
+      environmentLightingEnabled: safeBool(raw.environmentLightingEnabled, DEFAULT_VIEWER_STATE.environmentLightingEnabled),
+      autoFitPrimary: safeBool(raw.autoFitPrimary, DEFAULT_VIEWER_STATE.autoFitPrimary),
+      autoFitTargetId: String(raw.autoFitTargetId || '').trim(),
+      autoFitNonce: Number.isFinite(Number(raw.autoFitNonce)) ? Number(raw.autoFitNonce) : 0,
       trackingSmoothing: safeNumber(raw.trackingSmoothing, DEFAULT_VIEWER_STATE.trackingSmoothing, 0, 1),
       deadZoneX: safeNumber(raw.deadZoneX, DEFAULT_VIEWER_STATE.deadZoneX, 0, 0.2),
       deadZoneY: safeNumber(raw.deadZoneY, DEFAULT_VIEWER_STATE.deadZoneY, 0, 0.2),
@@ -680,6 +729,7 @@
   function viewerStateSnapshot(ctx) {
     return {
       gridVisible: ctx.gridPreference === true,
+      fogVisible: ctx.fogVisible === true,
       dartsVisible: ctx.dartsVisible === true,
       objectVisible: ctx.objectVisible !== false,
       selectedLayerId: ctx.selectedLayerId || '',
@@ -688,11 +738,19 @@
       lightLayers: (ctx.lightLayers || []).map(lightLayerSnapshot),
       fogStrength: Number(Number(ctx.fogStrength).toFixed(3)),
       fogDepth: Number(Number(ctx.fogDepth).toFixed(3)),
+      fogColor: safeColor(ctx.fogColor, DEFAULT_VIEWER_STATE.fogColor),
+      backgroundColor: safeColor(ctx.backgroundColor, DEFAULT_VIEWER_STATE.backgroundColor),
+      gridColor: safeColor(ctx.gridColor, DEFAULT_VIEWER_STATE.gridColor),
       ambientColor: safeColor(ctx.ambientColor, DEFAULT_VIEWER_STATE.ambientColor),
       ambientIntensity: Number(Number(ctx.ambientIntensity).toFixed(3)),
       sunColor: safeColor(ctx.sunColor, DEFAULT_VIEWER_STATE.sunColor),
       sunIntensity: Number(Number(ctx.sunIntensity).toFixed(3)),
       sunDirection: vectorSnapshot(ctx.sunDirection),
+      environment: environmentSnapshot(ctx.environment),
+      environmentLightingEnabled: ctx.environmentLightingEnabled === true,
+      autoFitPrimary: ctx.autoFitPrimary === true,
+      autoFitTargetId: ctx.autoFitTargetId || '',
+      autoFitNonce: Number.isFinite(Number(ctx.autoFitNonce)) ? Number(ctx.autoFitNonce) : 0,
       trackingSmoothing: Number(Number(ctx.trackingSmoothing).toFixed(3)),
       deadZoneX: Number(Number(ctx.deadZoneX).toFixed(3)),
       deadZoneY: Number(Number(ctx.deadZoneY).toFixed(3)),
@@ -1143,6 +1201,7 @@
       this.previewVisible = false;
       this.gridPreference = this.viewerState.gridVisible;
       this.gridVisible = true;
+      this.fogVisible = this.viewerState.fogVisible;
       this.dartsVisible = this.viewerState.dartsVisible;
       this.objectVisible = this.viewerState.objectVisible;
       this.imageLayers = this.viewerState.imageLayers.map((layer) => ({
@@ -1170,11 +1229,23 @@
       if (!this.selectedLayerId && this.lightLayers[0]) this.selectedLayerId = this.lightLayers[0].id;
       this.fogStrength = this.viewerState.fogStrength;
       this.fogDepth = this.viewerState.fogDepth;
+      this.fogColor = this.viewerState.fogColor;
+      this.backgroundColor = this.viewerState.backgroundColor;
+      this.gridColor = this.viewerState.gridColor;
       this.ambientColor = this.viewerState.ambientColor;
       this.ambientIntensity = this.viewerState.ambientIntensity;
       this.sunColor = this.viewerState.sunColor;
       this.sunIntensity = this.viewerState.sunIntensity;
       this.sunDirection = numberList(this.viewerState.sunDirection, DEFAULT_VIEWER_STATE.sunDirection);
+      this.environment = environmentFromValue(this.viewerState.environment);
+      this.environmentLightingEnabled = this.viewerState.environmentLightingEnabled;
+      this.environmentTexture = null;
+      this.environmentPmrem = null;
+      this.environmentLoadKey = '';
+      this.autoFitPrimary = this.viewerState.autoFitPrimary;
+      this.autoFitTargetId = this.viewerState.autoFitTargetId;
+      this.autoFitNonce = this.viewerState.autoFitNonce;
+      this.lastAppliedAutoFitNonce = 0;
       this.trackingSmoothing = this.viewerState.trackingSmoothing;
       this.deadZoneX = this.viewerState.deadZoneX;
       this.deadZoneY = this.viewerState.deadZoneY;
@@ -1215,8 +1286,8 @@
       this.root.style.touchAction = 'none';
 
       this.scene = new this.THREE.Scene();
-      this.scene.background = new this.THREE.Color(0x000000);
-      this.fog = new this.THREE.Fog(0x000000, 0.6, 1.6);
+      this.scene.background = new this.THREE.Color(this.backgroundColor);
+      this.fog = new this.THREE.Fog(this.fogColor, 0.6, 1.6);
       this.scene.fog = this.fog;
       this.camera = new this.THREE.PerspectiveCamera(75, 1, 0.05, 1000);
       this.camera.position.z = 5;
@@ -1233,10 +1304,12 @@
       this.renderer.outputColorSpace = this.THREE.SRGBColorSpace;
       this.renderer.domElement.className = 'dx-render-canvas';
       this.root.appendChild(this.renderer.domElement);
+      this.pmremGenerator = new this.THREE.PMREMGenerator(this.renderer);
 
       if (this.modules.spark && this.modules.spark.SparkRenderer) {
         this.scene.add(new this.modules.spark.SparkRenderer({ renderer: this.renderer }));
       }
+      this.applySceneBackground();
       this.addLights();
       this.createWireframeRoom();
       this.createDarts();
@@ -1250,6 +1323,7 @@
       this.resize();
       this.resumeRender();
       this.ensureTracking();
+      this.applyEnvironment();
       notifyViewerStateChanged(this, true);
       notifyTransformChanged(this, true);
       await this.loadAsset();
@@ -1263,6 +1337,16 @@
       this.applySceneLighting();
     }
 
+    applySceneBackground() {
+      if (!this.scene) return;
+      if (this.environmentTexture) {
+        this.scene.background = this.environmentTexture;
+      } else {
+        this.scene.background = new this.THREE.Color(this.backgroundColor);
+      }
+      if (this.root) this.root.style.background = this.backgroundColor;
+    }
+
     applySceneLighting() {
       if (this.ambientLight) {
         this.ambientLight.color.set(this.ambientColor);
@@ -1274,6 +1358,68 @@
         const direction = numberList(this.sunDirection, DEFAULT_VIEWER_STATE.sunDirection);
         const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
         this.sunLight.position.set(direction[0] / length, direction[1] / length, direction[2] / length);
+      }
+      if (this.scene) {
+        this.scene.environment = this.environmentLightingEnabled
+          ? (this.environmentPmrem || this.environmentTexture || null)
+          : null;
+      }
+    }
+
+    async loadEnvironmentTexture(environment) {
+      const env = environmentFromValue(environment);
+      if (!env.url || !this.modules.EXRLoader) return null;
+      const key = `${env.url}|environment|${env.format || 'exr'}`;
+      const cached = textureCache.get(key);
+      if (cached) return cached;
+      const loader = new this.modules.EXRLoader();
+      const promise = loader.loadAsync(env.url).then((texture) => {
+        texture.mapping = this.THREE.EquirectangularReflectionMapping;
+        texture.userData = texture.userData || {};
+        texture.userData.deepxCachedTexture = true;
+        return texture;
+      });
+      textureCache.set(key, promise);
+      return promise;
+    }
+
+    async applyEnvironment() {
+      const env = environmentFromValue(this.environment);
+      const key = env.url ? `${env.url}|${env.format || 'exr'}` : '';
+      if (key === this.environmentLoadKey) {
+        this.applySceneBackground();
+        this.applySceneLighting();
+        return;
+      }
+      this.environmentLoadKey = key;
+      this.environmentTexture = null;
+      if (this.environmentPmrem && typeof this.environmentPmrem.dispose === 'function') {
+        try { this.environmentPmrem.dispose(); } catch (_) {}
+      }
+      this.environmentPmrem = null;
+      if (!env.url) {
+        this.applySceneBackground();
+        this.applySceneLighting();
+        return;
+      }
+      try {
+        const texture = await this.loadEnvironmentTexture(env);
+        if (this.disposed || key !== this.environmentLoadKey) return;
+        this.environmentTexture = texture;
+        if (this.pmremGenerator) {
+          const pmrem = this.pmremGenerator.fromEquirectangular(texture);
+          this.environmentPmrem = pmrem && pmrem.texture ? pmrem.texture : null;
+        }
+        this.applySceneBackground();
+        this.applySceneLighting();
+      } catch (error) {
+        console.warn('Unable to load EXR environment:', error);
+        if (key === this.environmentLoadKey) {
+          this.environmentTexture = null;
+          this.environmentPmrem = null;
+          this.applySceneBackground();
+          this.applySceneLighting();
+        }
       }
     }
 
@@ -1292,6 +1438,7 @@
         if (this.disposed) return;
         this.assetLoaded = true;
         this.applyObjectVisibility();
+        this.applyAutoFitRequest();
         this.setGridVisible(this.gridPreference, { notify: false, preference: false });
         if (this.controlsOpen) this.refreshControlPanel();
         notifyViewerStateChanged(this, true);
@@ -1307,10 +1454,14 @@
         if (this.disposed) return;
         this.assetLoaded = true;
         this.applyTransform();
+        if (this.autoFitPrimary === true) {
+          if (this.autoFitPrimaryObject(true)) this.autoFitPrimary = false;
+        }
         this.applyModelLayerTransforms();
         this.applyObjectVisibility();
         this.updateModelBounds();
         this.computeScaleRange();
+        this.applyAutoFitRequest();
         this.setGridVisible(this.gridPreference, { notify: false, preference: false });
         this.resize();
         if (this.controlsOpen) this.refreshControlPanel();
@@ -1343,6 +1494,10 @@
         object.userData.deepxModelLayerId = layer.id;
         this.modelLayerObjects.set(layer.id, object);
         this.applyModelLayerTransform(layer);
+        if (layer.autoFit === true) {
+          if (this.autoFitModelLayer(layer, true)) layer.autoFit = false;
+        }
+        this.applyAutoFitRequest();
         this.applyObjectVisibility();
         return object;
       } catch (error) {
@@ -1511,28 +1666,39 @@
       const roomHeight = screenDims.height;
       const roomDepth = roomHeight * (WII_ROOM.boxDepth / 2);
       const gridDivisions = WII_ROOM.numGridlines;
-      const wallMaterial = new this.THREE.LineBasicMaterial({
-        color: WII_ROOM.gridColor,
+      const thickness = Math.max(roomHeight, roomWidth) / 900;
+      const wallMaterial = new this.THREE.MeshStandardMaterial({
+        color: this.gridColor || DEFAULT_VIEWER_STATE.gridColor,
         transparent: true,
         opacity: WII_ROOM.gridOpacity,
         depthTest: true,
         depthWrite: true,
         fog: true,
-        linewidth: 1
+        roughness: 0.82,
+        metalness: 0
       });
       const createGridWall = (width, height, includeEdges) => {
-        const geometry = new this.THREE.BufferGeometry();
-        const vertices = [];
+        const group = new this.THREE.Group();
         for (let i = 0; i <= gridDivisions; i++) {
           if (!includeEdges && (i === 0 || i === gridDivisions)) continue;
           const t = i / gridDivisions;
-          vertices.push(-width / 2 + t * width, -height / 2, 0);
-          vertices.push(-width / 2 + t * width, height / 2, 0);
-          vertices.push(-width / 2, -height / 2 + t * height, 0);
-          vertices.push(width / 2, -height / 2 + t * height, 0);
+          const x = -width / 2 + t * width;
+          const y = -height / 2 + t * height;
+          const vertical = new this.THREE.Mesh(
+            new this.THREE.BoxGeometry(thickness, height, thickness),
+            wallMaterial
+          );
+          vertical.position.x = x;
+          const horizontal = new this.THREE.Mesh(
+            new this.THREE.BoxGeometry(width, thickness, thickness),
+            wallMaterial
+          );
+          horizontal.position.y = y;
+          vertical.receiveShadow = true;
+          horizontal.receiveShadow = true;
+          group.add(vertical, horizontal);
         }
-        geometry.setAttribute('position', new this.THREE.Float32BufferAttribute(vertices, 3));
-        return new this.THREE.LineSegments(geometry, wallMaterial);
+        return group;
       };
       const backWall = createGridWall(roomWidth, roomHeight, false);
       backWall.position.z = -roomDepth;
@@ -1562,8 +1728,7 @@
     removeWireframeRoom() {
       for (const obj of this.roomObjects) {
         this.scene.remove(obj);
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material && typeof obj.material.dispose === 'function') obj.material.dispose();
+        this.disposeObject(obj);
       }
       this.roomObjects = [];
     }
@@ -1700,6 +1865,10 @@
             mesh.userData.deepxImageLayerAspect = width / Math.max(height, 1);
             material.needsUpdate = true;
             this.applyImageLayerTransform(layer);
+            if (layer.autoFit === true) {
+              if (this.autoFitImageLayer(layer, true)) layer.autoFit = false;
+            }
+            this.applyAutoFitRequest();
           })
           .catch((error) => console.warn('Unable to load PNG layer:', error));
         this.imageLayerPromises.push(promise);
@@ -1765,6 +1934,124 @@
 
     applyModelLayerTransforms() {
       for (const layer of this.modelLayers) this.applyModelLayerTransform(layer);
+    }
+
+    finiteBox(box) {
+      if (!box || typeof box.isEmpty !== 'function' || box.isEmpty()) return false;
+      const values = [
+        box.min.x, box.min.y, box.min.z,
+        box.max.x, box.max.y, box.max.z
+      ];
+      return values.every((value) => Number.isFinite(value));
+    }
+
+    fitObjectTransformToGrid(object, transform, applyTransform) {
+      if (!object || !transform || typeof applyTransform !== 'function') return false;
+      const screenDims = this.offAxisCamera.getScreenDimensions();
+      applyTransform();
+      object.updateMatrixWorld(true);
+      const box = new this.THREE.Box3().setFromObject(object);
+      if (!this.finiteBox(box)) {
+        transform.position = [0, 0, -screenDims.height * 0.72];
+        transform.scale = clamp(transform.scale || DEFAULT_TRANSFORM.scale, 0.001, 100);
+        applyTransform();
+        return true;
+      }
+      const size = new this.THREE.Vector3();
+      box.getSize(size);
+      const fitWidth = screenDims.width * 0.58;
+      const fitHeight = screenDims.height * 0.58;
+      const fitDepth = screenDims.height * 2.5;
+      const factors = [
+        size.x > 1e-6 ? fitWidth / size.x : Number.POSITIVE_INFINITY,
+        size.y > 1e-6 ? fitHeight / size.y : Number.POSITIVE_INFINITY,
+        size.z > 1e-6 ? fitDepth / size.z : Number.POSITIVE_INFINITY
+      ].filter((value) => Number.isFinite(value) && value > 0);
+      const factor = factors.length ? Math.min(...factors) : 1;
+      transform.scale = clamp((transform.scale || DEFAULT_TRANSFORM.scale) * factor, 0.001, 100);
+      applyTransform();
+      object.updateMatrixWorld(true);
+      const fittedBox = new this.THREE.Box3().setFromObject(object);
+      if (!this.finiteBox(fittedBox)) return true;
+      const center = new this.THREE.Vector3();
+      fittedBox.getCenter(center);
+      const targetZ = -screenDims.height * 0.72;
+      transform.position = [
+        Number((transform.position[0] - center.x).toFixed(5)),
+        Number((transform.position[1] - center.y).toFixed(5)),
+        Number((transform.position[2] + targetZ - center.z).toFixed(5))
+      ];
+      applyTransform();
+      return true;
+    }
+
+    autoFitPrimaryObject(force) {
+      if (!this.object) return false;
+      if (!force && this.selectedLayerId) return false;
+      const fitted = this.fitObjectTransformToGrid(
+        this.object,
+        this.transform,
+        () => this.applyTransform()
+      );
+      if (fitted) {
+        this.updateModelBounds();
+        this.computeScaleRange();
+        notifyTransformChanged(this, true);
+      }
+      return fitted;
+    }
+
+    autoFitModelLayer(layer, force) {
+      if (!layer || (!force && layer.locked === true)) return false;
+      const object = this.modelLayerObject(layer.id);
+      if (!object) return false;
+      const fitted = this.fitObjectTransformToGrid(
+        object,
+        layer.transform,
+        () => this.applyModelLayerTransform(layer)
+      );
+      if (fitted) {
+        this.computeScaleRange();
+        notifyViewerStateChanged(this, true);
+      }
+      return fitted;
+    }
+
+    autoFitImageLayer(layer, force) {
+      if (!layer || (!force && layer.locked === true)) return false;
+      const object = this.imageLayerMesh(layer.id);
+      if (!object) return false;
+      const fitted = this.fitObjectTransformToGrid(
+        object,
+        layer.transform,
+        () => this.applyImageLayerTransform(layer)
+      );
+      if (fitted) {
+        this.computeScaleRange();
+        notifyViewerStateChanged(this, true);
+      }
+      return fitted;
+    }
+
+    applyAutoFitRequest() {
+      if (!Number.isFinite(Number(this.autoFitNonce)) || this.autoFitNonce <= 0) return;
+      if (this.autoFitNonce === this.lastAppliedAutoFitNonce) return;
+      const targetId = String(this.autoFitTargetId || '').trim();
+      let fitted = false;
+      if (!targetId) {
+        fitted = this.autoFitPrimaryObject(true);
+      } else {
+        const modelLayer = this.modelLayers.find((layer) => layer.id === targetId);
+        const imageLayer = this.imageLayers.find((layer) => layer.id === targetId);
+        if (modelLayer) fitted = this.autoFitModelLayer(modelLayer, false);
+        if (imageLayer) fitted = this.autoFitImageLayer(imageLayer, false);
+      }
+      if (fitted) {
+        this.lastAppliedAutoFitNonce = this.autoFitNonce;
+        this.autoFitPrimary = false;
+        notifyViewerStateChanged(this, true);
+        if (this.controlsOpen) this.refreshControlPanel();
+      }
     }
 
     removeModelLayers() {
@@ -2428,9 +2715,14 @@
         this.gridPreference = this.gridVisible;
       }
       for (const obj of this.roomObjects) obj.visible = this.gridVisible;
-      this.updateFog();
       if (this.gridButton) this.gridButton.classList.toggle('is-active', this.gridPreference === true);
       if (options && options.notify) notifyViewerStateChanged(this);
+    }
+
+    setFogVisible(visible, notify) {
+      this.fogVisible = visible === true;
+      this.updateFog();
+      if (notify) notifyViewerStateChanged(this);
     }
 
     setDartsVisible(visible, notify) {
@@ -2462,12 +2754,20 @@
     setSceneSetting(key, value) {
       if (key === 'fogStrength') this.fogStrength = safeNumber(value, this.fogStrength, 0, 1);
       if (key === 'fogDepth') this.fogDepth = safeNumber(value, this.fogDepth, 0.5, 40);
+      if (key === 'fogColor') this.fogColor = safeColor(value, this.fogColor);
+      if (key === 'backgroundColor') this.backgroundColor = safeColor(value, this.backgroundColor);
+      if (key === 'gridColor') this.gridColor = safeColor(value, this.gridColor);
       if (key === 'ambientIntensity') this.ambientIntensity = safeNumber(value, this.ambientIntensity, 0, 5);
       if (key === 'ambientColor') this.ambientColor = safeColor(value, this.ambientColor);
       if (key === 'sunIntensity') this.sunIntensity = safeNumber(value, this.sunIntensity, 0, 10);
       if (key === 'sunColor') this.sunColor = safeColor(value, this.sunColor);
+      if (key === 'environmentLightingEnabled') this.environmentLightingEnabled = value === true;
+      if (key === 'environment') this.environment = environmentFromValue(value);
+      if (key === 'gridColor') this.createWireframeRoom();
+      this.applySceneBackground();
       this.applySceneLighting();
       this.updateFog();
+      if (key === 'environment') this.applyEnvironment();
       notifyViewerStateChanged(this);
     }
 
@@ -2483,6 +2783,7 @@
         ...(state && typeof state === 'object' ? state : {})
       };
       this.gridPreference = safeBool(next.gridVisible, DEFAULT_VIEWER_STATE.gridVisible);
+      this.fogVisible = safeBool(next.fogVisible, DEFAULT_VIEWER_STATE.fogVisible);
       const shouldShowGrid = this.assetLoaded ? this.gridPreference : (this.gridPreference || !this.assetLoaded);
       this.setGridVisible(shouldShowGrid, { notify: false, preference: false });
       this.setDartsVisible(safeBool(next.dartsVisible, DEFAULT_VIEWER_STATE.dartsVisible), false);
@@ -2519,13 +2820,31 @@
       }
       this.fogStrength = safeNumber(next.fogStrength, DEFAULT_VIEWER_STATE.fogStrength, 0, 1);
       this.fogDepth = safeNumber(next.fogDepth, DEFAULT_VIEWER_STATE.fogDepth, 0.5, 40);
+      this.fogColor = safeColor(next.fogColor, DEFAULT_VIEWER_STATE.fogColor);
+      const nextBackgroundColor = safeColor(next.backgroundColor, DEFAULT_VIEWER_STATE.backgroundColor);
+      const nextGridColor = safeColor(next.gridColor, DEFAULT_VIEWER_STATE.gridColor);
+      const gridColorChanged = nextGridColor !== this.gridColor;
+      this.backgroundColor = nextBackgroundColor;
+      this.gridColor = nextGridColor;
       this.ambientColor = safeColor(next.ambientColor, DEFAULT_VIEWER_STATE.ambientColor);
       this.ambientIntensity = safeNumber(next.ambientIntensity, DEFAULT_VIEWER_STATE.ambientIntensity, 0, 5);
       this.sunColor = safeColor(next.sunColor, DEFAULT_VIEWER_STATE.sunColor);
       this.sunIntensity = safeNumber(next.sunIntensity, DEFAULT_VIEWER_STATE.sunIntensity, 0, 10);
       this.sunDirection = numberList(next.sunDirection, DEFAULT_VIEWER_STATE.sunDirection);
+      this.environment = environmentFromValue(next.environment);
+      this.environmentLightingEnabled = safeBool(next.environmentLightingEnabled, DEFAULT_VIEWER_STATE.environmentLightingEnabled);
+      this.autoFitPrimary = safeBool(next.autoFitPrimary, DEFAULT_VIEWER_STATE.autoFitPrimary);
+      this.autoFitTargetId = String(next.autoFitTargetId || '').trim();
+      this.autoFitNonce = Number.isFinite(Number(next.autoFitNonce)) ? Number(next.autoFitNonce) : 0;
+      if (gridColorChanged) this.createWireframeRoom();
+      this.applySceneBackground();
       this.applySceneLighting();
       this.updateFog();
+      this.applyEnvironment();
+      if (this.autoFitPrimary === true && this.object) {
+        if (this.autoFitPrimaryObject(true)) this.autoFitPrimary = false;
+      }
+      this.applyAutoFitRequest();
       this.setTrackingSettings({
         trackingSmoothing: safeNumber(next.trackingSmoothing, DEFAULT_VIEWER_STATE.trackingSmoothing, 0, 1),
         deadZoneX: safeNumber(next.deadZoneX, DEFAULT_VIEWER_STATE.deadZoneX, 0, 0.2),
@@ -2791,11 +3110,12 @@
 
     updateFog() {
       if (!this.scene || !this.fog) return;
-      if (!this.gridVisible || this.fogStrength <= 0) {
+      if (!this.fogVisible || this.fogStrength <= 0) {
         this.scene.fog = null;
         return;
       }
       this.scene.fog = this.fog;
+      this.fog.color.set(this.fogColor || DEFAULT_VIEWER_STATE.fogColor);
       const screenDims = this.offAxisCamera.getScreenDimensions();
       const headZ = this.worldHeadPosition ? this.worldHeadPosition.z : this.camera.position.z;
       const start = Math.max(0.001, headZ - screenDims.height * WII_ROOM.fogReachTowardViewer);
@@ -2883,6 +3203,12 @@
         try { cleanup(); } catch (_) {}
       }
       if (this.calibrationModal) this.calibrationModal.remove();
+      if (this.environmentPmrem && typeof this.environmentPmrem.dispose === 'function') {
+        try { this.environmentPmrem.dispose(); } catch (_) {}
+      }
+      if (this.pmremGenerator && typeof this.pmremGenerator.dispose === 'function') {
+        try { this.pmremGenerator.dispose(); } catch (_) {}
+      }
       this.disposeObject(this.scene);
       if (this.renderer) {
         try { this.renderer.renderLists && this.renderer.renderLists.dispose && this.renderer.renderLists.dispose(); } catch (_) {}
