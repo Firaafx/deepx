@@ -111,6 +111,10 @@
       }
       .dx-viewer-button:hover { background: rgba(0,0,0,0.72); }
       .dx-viewer-button.is-active { background: #2563eb; }
+      .dx-viewer-button.dx-spatial-button {
+        min-width: 92px;
+        padding: 0 9px;
+      }
       .dx-viewer-button:disabled {
         cursor: default;
         opacity: 0.4;
@@ -519,6 +523,46 @@
     return fallback;
   }
 
+  function normalizeSpatialEye(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    return raw === 'left' || raw === 'right' ? raw : '';
+  }
+
+  function defaultHeadPose() {
+    return {
+      x: 0.5,
+      y: 0.5,
+      z: 1,
+      eyes: {
+        left: { x: 0.53, y: 0.5 },
+        right: { x: 0.47, y: 0.5 }
+      }
+    };
+  }
+
+  function cloneHeadPose(pose) {
+    const fallback = defaultHeadPose();
+    const source = pose && typeof pose === 'object' ? pose : fallback;
+    const eyes = source.eyes && typeof source.eyes === 'object' ? source.eyes : fallback.eyes;
+    const left = eyes.left && typeof eyes.left === 'object' ? eyes.left : fallback.eyes.left;
+    const right = eyes.right && typeof eyes.right === 'object' ? eyes.right : fallback.eyes.right;
+    return {
+      x: Number.isFinite(Number(source.x)) ? Number(source.x) : fallback.x,
+      y: Number.isFinite(Number(source.y)) ? Number(source.y) : fallback.y,
+      z: Number.isFinite(Number(source.z)) ? Number(source.z) : fallback.z,
+      eyes: {
+        left: {
+          x: Number.isFinite(Number(left.x)) ? Number(left.x) : fallback.eyes.left.x,
+          y: Number.isFinite(Number(left.y)) ? Number(left.y) : fallback.eyes.left.y
+        },
+        right: {
+          x: Number.isFinite(Number(right.x)) ? Number(right.x) : fallback.eyes.right.x,
+          y: Number.isFinite(Number(right.y)) ? Number(right.y) : fallback.eyes.right.y
+        }
+      }
+    };
+  }
+
   function safeNumber(value, fallback, min, max) {
     const next = Number(value);
     const resolved = Number.isFinite(next) ? next : fallback;
@@ -858,7 +902,7 @@
   class HeadPoseTracker {
     constructor() {
       this.baseInterOcularDistance = 0.1;
-      this.smoothedPose = { x: 0.5, y: 0.5, z: 1 };
+      this.smoothedPose = defaultHeadPose();
       this.hasPose = false;
       this.smoothingAmount = DEFAULT_VIEWER_STATE.trackingSmoothing;
       this.deadZoneX = DEFAULT_VIEWER_STATE.deadZoneX;
@@ -874,25 +918,42 @@
       this.deadZoneZ = safeNumber(next.deadZoneZ, this.deadZoneZ, 0, 0.4);
     }
 
+    eyeCenter(face, centerIndex, irisIndexes, fallbackIndexes) {
+      const center = face[centerIndex];
+      if (center) return center;
+      const iris = irisIndexes.map((index) => face[index]).filter(Boolean);
+      const points = iris.length ? iris : fallbackIndexes.map((index) => face[index]).filter(Boolean);
+      if (!points.length) return null;
+      return points.reduce(
+        (sum, point) => ({
+          x: sum.x + point.x / points.length,
+          y: sum.y + point.y / points.length
+        }),
+        { x: 0, y: 0 }
+      );
+    }
+
     extractHeadPoseFromLandmarks(landmarks) {
       if (!landmarks || landmarks.length === 0) return null;
       const firstFace = landmarks[0];
       if (!firstFace || firstFace.length < 468) return null;
 
+      const rightEyePupil = this.eyeCenter(firstFace, 468, [469, 470, 471, 472], [33, 133]);
+      const leftEyePupil = this.eyeCenter(firstFace, 473, [474, 475, 476, 477], [362, 263]);
+      const noseTip = firstFace[1];
       const leftEyeInner = firstFace[133];
       const rightEyeInner = firstFace[362];
-      const noseTip = firstFace[1];
       const leftEyeOuter = firstFace[33];
       const rightEyeOuter = firstFace[263];
-      if (!leftEyeInner || !rightEyeInner || !noseTip || !leftEyeOuter || !rightEyeOuter) {
+      if (!leftEyePupil || !rightEyePupil || !leftEyeInner || !rightEyeInner || !noseTip || !leftEyeOuter || !rightEyeOuter) {
         return null;
       }
 
-      const faceX = (leftEyeInner.x + rightEyeInner.x + noseTip.x) / 3;
-      const faceY = (leftEyeInner.y + rightEyeInner.y + noseTip.y) / 3;
+      const faceX = (leftEyePupil.x + rightEyePupil.x + noseTip.x) / 3;
+      const faceY = (leftEyePupil.y + rightEyePupil.y + noseTip.y) / 3;
       const interOcularDist = Math.hypot(
-        rightEyeInner.x - leftEyeInner.x,
-        rightEyeInner.y - leftEyeInner.y
+        leftEyePupil.x - rightEyePupil.x,
+        leftEyePupil.y - rightEyePupil.y
       );
       const eyeWidth = Math.hypot(
         rightEyeOuter.x - leftEyeOuter.x,
@@ -902,28 +963,50 @@
       const clamped = {
         x: clamp(faceX, 0.2, 0.8),
         y: clamp(faceY, 0.2, 0.8),
-        z: clamp(depthProxy, 0.5, 2)
+        z: clamp(depthProxy, 0.5, 2),
+        eyes: {
+          left: {
+            x: clamp(leftEyePupil.x, 0.05, 0.95),
+            y: clamp(leftEyePupil.y, 0.05, 0.95)
+          },
+          right: {
+            x: clamp(rightEyePupil.x, 0.05, 0.95),
+            y: clamp(rightEyePupil.y, 0.05, 0.95)
+          }
+        }
       };
       if (!this.hasPose) {
-        this.smoothedPose = { ...clamped };
+        this.smoothedPose = cloneHeadPose(clamped);
         this.hasPose = true;
-        return { ...this.smoothedPose };
+        return cloneHeadPose(this.smoothedPose);
       }
       const alpha = clamp(1 - this.smoothingAmount, 0.05, 1);
-      const applyAxis = (axis, target, deadZone) => {
-        const current = this.smoothedPose[axis];
+      const applyValue = (current, target, deadZone) => {
         const delta = target - current;
         if (Math.abs(delta) <= deadZone) return current;
         return current + alpha * delta;
       };
-      this.smoothedPose.x = applyAxis('x', clamped.x, this.deadZoneX);
-      this.smoothedPose.y = applyAxis('y', clamped.y, this.deadZoneY);
-      this.smoothedPose.z = applyAxis('z', clamped.z, this.deadZoneZ);
-      return { ...this.smoothedPose };
+      this.smoothedPose = cloneHeadPose(this.smoothedPose);
+      this.smoothedPose.x = applyValue(this.smoothedPose.x, clamped.x, this.deadZoneX);
+      this.smoothedPose.y = applyValue(this.smoothedPose.y, clamped.y, this.deadZoneY);
+      this.smoothedPose.z = applyValue(this.smoothedPose.z, clamped.z, this.deadZoneZ);
+      for (const eye of ['left', 'right']) {
+        this.smoothedPose.eyes[eye].x = applyValue(
+          this.smoothedPose.eyes[eye].x,
+          clamped.eyes[eye].x,
+          this.deadZoneX
+        );
+        this.smoothedPose.eyes[eye].y = applyValue(
+          this.smoothedPose.eyes[eye].y,
+          clamped.eyes[eye].y,
+          this.deadZoneY
+        );
+      }
+      return cloneHeadPose(this.smoothedPose);
     }
 
     reset() {
-      this.smoothedPose = { x: 0.5, y: 0.5, z: 1 };
+      this.smoothedPose = defaultHeadPose();
       this.hasPose = false;
     }
   }
@@ -940,8 +1023,15 @@
     updateCalibration(calibration) {
       this.calibration = { ...DEFAULT_CALIBRATION, ...calibration };
       const worldScale = 0.01;
-      this.screenWidthWorld = this.calibration.screenWidthCm * worldScale;
-      this.screenHeightWorld = this.calibration.screenHeightCm * worldScale;
+      const calibratedWidth = this.calibration.screenWidthCm * worldScale;
+      const calibratedHeight = this.calibration.screenHeightCm * worldScale;
+      const pixelAspect = this.calibration.pixelWidth > 0 && this.calibration.pixelHeight > 0
+        ? this.calibration.pixelWidth / this.calibration.pixelHeight
+        : 0;
+      this.screenWidthWorld = calibratedWidth;
+      this.screenHeightWorld = pixelAspect > 0
+        ? calibratedWidth / pixelAspect
+        : calibratedHeight;
     }
 
     headPoseToWorldPosition(headPose) {
@@ -984,7 +1074,7 @@
     }
 
     updateFromHeadPose(headPose) {
-      const worldPosition = this.headPoseToWorldPosition(headPose || { x: 0.5, y: 0.5, z: 1 });
+      const worldPosition = this.headPoseToWorldPosition(headPose || defaultHeadPose());
       this.setCameraPosition(worldPosition);
       this.updateProjectionMatrix(worldPosition);
     }
@@ -1004,7 +1094,7 @@
     raf: 0,
     running: false,
     sending: false,
-    lastPose: { x: 0.5, y: 0.5, z: 1 },
+    lastPose: defaultHeadPose(),
     lastWorldPosition: { x: 0, y: 0, z: 0.6 },
     lastSentAt: 0,
     lastResultsAt: 0,
@@ -1065,7 +1155,7 @@
       });
       this.faceMesh.setOptions({
         maxNumFaces: 1,
-        refineLandmarks: false,
+        refineLandmarks: true,
         selfieMode: false,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.65
@@ -1106,7 +1196,7 @@
       const firstFace = landmarks[0] || null;
       this.poseTracker.updateSettings(this.activeTrackingSettings());
       const pose = this.poseTracker.extractHeadPoseFromLandmarks(landmarks);
-      this.lastPose = pose || this.lastPose || { x: 0.5, y: 0.5, z: 1 };
+      this.lastPose = cloneHeadPose(pose || this.lastPose || defaultHeadPose());
       this.lastResultsAt = now;
       const blink = this.extractBlinkState(firstFace);
       this.stats = {
@@ -1177,7 +1267,7 @@
       for (const ctx of viewers.values()) ctx.clearPreview();
       if (reason && reason !== 'no-viewers') {
         for (const ctx of viewers.values()) {
-          if (ctx.trackingEnabled) ctx.headPose = { x: 0.5, y: 0.5, z: 1 };
+          if (ctx.trackingEnabled) ctx.headPose = defaultHeadPose();
         }
       }
     }
@@ -1197,6 +1287,8 @@
       this.editable = options.editable === true;
       this.showModelControls = options.showModelControls === true;
       this.trackingEnabled = options.trackingEnabled === true;
+      this.showSpatialViewButton = options.showSpatialViewButton === true;
+      this.spatialEye = normalizeSpatialEye(options.spatialEye);
       this.viewerState = viewerStateFromPayload(payload);
       this.previewVisible = false;
       this.gridPreference = this.viewerState.gridVisible;
@@ -1251,7 +1343,7 @@
       this.deadZoneY = this.viewerState.deadZoneY;
       this.deadZoneZ = this.viewerState.deadZoneZ;
       this.debugMode = false;
-      this.headPose = { x: 0.5, y: 0.5, z: 1 };
+      this.headPose = defaultHeadPose();
       this.worldHeadPosition = { x: 0, y: 0, z: 0.6 };
       this.assetLoaded = false;
       this.modelBounds = null;
@@ -2625,10 +2717,13 @@
         preview.classList.toggle('is-active', this.previewVisible);
       });
       const reset = this.makeButton('RST', 'Reset model transform', () => this.resetTransform());
+      const spatial = this.makeButton('Spatial View', 'Open spatial view', () => this.requestSpatialView());
+      spatial.classList.add('dx-spatial-button');
       this.gridButton = grid;
       this.dartsButton = darts;
       this.objectButton = object;
       this.previewButton = preview;
+      if (this.showSpatialViewButton) buttons.append(spatial);
       buttons.append(fullscreen, settings, debug, grid, darts, object, preview, reset);
       this.root.appendChild(buttons);
       document.addEventListener('fullscreenchange', () => {
@@ -2671,6 +2766,13 @@
       } catch (error) {
         console.warn('Fullscreen failed:', error);
       }
+    }
+
+    requestSpatialView() {
+      window.parent.postMessage({
+        type: 'deepx-off-axis-spatial-view-requested',
+        elementId: this.elementId
+      }, '*');
     }
 
     showCalibration() {
@@ -2965,7 +3067,7 @@
       if (!this.statsPanel || !this.previewVisible) return;
       const stats = faceTracker.stats || {};
       const age = faceTracker.lastResultsAt ? performance.now() - faceTracker.lastResultsAt : null;
-      const pose = this.headPose || { x: 0.5, y: 0.5, z: 1 };
+      const pose = this.headPose || defaultHeadPose();
       const world = this.worldHeadPosition || this.offAxisCamera.headPoseToWorldPosition(pose);
       const calibration = this.offAxisCamera.calibration || getCalibration();
       const item = (label, value) => `<span>${label}: ${value}</span>`;
@@ -3130,12 +3232,26 @@
     }
 
     receiveHeadPose(headPose) {
-      this.headPose = headPose || { x: 0.5, y: 0.5, z: 1 };
+      this.headPose = cloneHeadPose(headPose);
       this.updateOffAxisCamera();
     }
 
+    activeCameraPose(basePose) {
+      const pose = cloneHeadPose(basePose);
+      if (!this.spatialEye) return pose;
+      const eye = pose.eyes && pose.eyes[this.spatialEye];
+      if (!eye) return pose;
+      return {
+        x: eye.x,
+        y: eye.y,
+        z: pose.z
+      };
+    }
+
     updateOffAxisCamera() {
-      const pose = this.trackingEnabled ? this.headPose : { x: 0.5, y: 0.5, z: 1 };
+      const pose = this.activeCameraPose(
+        this.trackingEnabled ? this.headPose : defaultHeadPose()
+      );
       this.worldHeadPosition = this.offAxisCamera.headPoseToWorldPosition(pose);
       this.offAxisCamera.setCameraPosition(this.worldHeadPosition);
       this.offAxisCamera.updateProjectionMatrix(this.worldHeadPosition);

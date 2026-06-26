@@ -16,9 +16,12 @@ class ThreeDViewer extends StatefulWidget {
     this.trackingEnabled = false,
     this.showModelControls = false,
     this.showLoadingProgress = true,
+    this.showSpatialViewButton = true,
+    this.spatialEye,
     this.transformOverride,
     this.onTransformChanged,
     this.onViewerStateChanged,
+    this.onSpatialViewRequested,
   });
 
   final Map<String, dynamic> payload;
@@ -26,9 +29,12 @@ class ThreeDViewer extends StatefulWidget {
   final bool trackingEnabled;
   final bool showModelControls;
   final bool showLoadingProgress;
+  final bool showSpatialViewButton;
+  final String? spatialEye;
   final Map<String, dynamic>? transformOverride;
   final ValueChanged<Map<String, dynamic>>? onTransformChanged;
   final ValueChanged<Map<String, dynamic>>? onViewerStateChanged;
+  final VoidCallback? onSpatialViewRequested;
 
   @override
   State<ThreeDViewer> createState() => _ThreeDViewerState();
@@ -43,6 +49,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   StreamSubscription<html.Event>? _resizeSub;
   StreamSubscription<html.Event>? _visibilitySub;
   Timer? _mountRetryTimer;
+  Timer? _resizePulseTimer;
   bool _factoryRegistered = false;
   String _mountedAssetKey = '';
   String _mountedOptionsJson = '';
@@ -80,6 +87,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       viewer.callMethod('dispose', <Object>[_elementId]);
     }
     _mountRetryTimer?.cancel();
+    _resizePulseTimer?.cancel();
     _messageSub?.cancel();
     _resizeSub?.cancel();
     _visibilitySub?.cancel();
@@ -92,6 +100,14 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       _scheduleMountRetry(forceMount: forceMount);
       return;
     }
+    final html.Element? host = html.document.getElementById(_elementId);
+    if (host == null ||
+        host.isConnected != true ||
+        host.clientWidth <= 0 ||
+        host.clientHeight <= 0) {
+      _scheduleMountRetry(forceMount: forceMount);
+      return;
+    }
     _mountRetryTimer?.cancel();
     _mountRetryTimer = null;
     final String nextAssetKey = _assetKey(widget.payload);
@@ -100,6 +116,9 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       'editable': widget.editable,
       'trackingEnabled': widget.trackingEnabled,
       'showModelControls': widget.showModelControls,
+      'showSpatialViewButton':
+          widget.showSpatialViewButton && widget.onSpatialViewRequested != null,
+      'spatialEye': widget.spatialEye ?? '',
     });
     final String transformJson =
         jsonEncode(widget.transformOverride ?? _transformFromPayload());
@@ -123,6 +142,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       }
       viewer
           .callMethod('mount', <Object>[_elementId, payloadJson, optionsJson]);
+      _scheduleResizePulses();
       return;
     }
     if (_lastTransformJson != transformJson) {
@@ -134,6 +154,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       viewer.callMethod('setViewerState', <Object>[_elementId, viewerJson]);
     }
     viewer.callMethod('setEditable', <Object>[_elementId, widget.editable]);
+    _scheduleResizePulses();
   }
 
   void _scheduleMountRetry({bool forceMount = false}) {
@@ -164,6 +185,27 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _mountOrUpdate(forceMount: true);
     });
+  }
+
+  void _scheduleResizePulses() {
+    _resizePulseTimer?.cancel();
+    int remaining = 8;
+    _resizePulseTimer =
+        Timer.periodic(const Duration(milliseconds: 120), (timer) {
+      if (!mounted || remaining-- <= 0) {
+        timer.cancel();
+        return;
+      }
+      _resizeIfAlive();
+    });
+  }
+
+  void _resizeIfAlive() {
+    final dynamic viewer = js.context['DeepXOffAxisViewer'];
+    if (viewer == null || !_viewerAlive(viewer)) return;
+    try {
+      viewer.callMethod('resize', <Object>[_elementId]);
+    } catch (_) {}
   }
 
   String _assetKey(Map<String, dynamic> payload) {
@@ -227,6 +269,10 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       if (viewerState == null) return;
       _lastViewerJson = jsonEncode(viewerState);
       callback(viewerState);
+      return;
+    }
+    if (data['type'] == 'deepx-off-axis-spatial-view-requested') {
+      widget.onSpatialViewRequested?.call();
     }
   }
 

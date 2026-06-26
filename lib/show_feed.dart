@@ -4130,6 +4130,7 @@ class _SharedPresetPreview extends StatelessWidget {
     this.fit = BoxFit.cover,
     this.allowImage = true,
     this.trackingEnabled = false,
+    this.onSpatialViewRequested,
   });
 
   final Map<String, dynamic> payload;
@@ -4139,6 +4140,7 @@ class _SharedPresetPreview extends StatelessWidget {
   final BoxFit fit;
   final bool allowImage;
   final bool trackingEnabled;
+  final VoidCallback? onSpatialViewRequested;
 
   @override
   Widget build(BuildContext context) {
@@ -4146,6 +4148,11 @@ class _SharedPresetPreview extends StatelessWidget {
       final Widget viewer = ThreeDViewer(
         payload: payload,
         trackingEnabled: trackingEnabled,
+        onSpatialViewRequested: onSpatialViewRequested ??
+            () => _openThreeDSpatialView(
+                  context,
+                  payload: payload,
+                ),
       );
       if (clipper != null) {
         return ClipPath(
@@ -4345,6 +4352,167 @@ class _DetailFullscreenViewerPage extends StatelessWidget {
   }
 }
 
+Future<void> _openThreeDSpatialView(
+  BuildContext context, {
+  required Map<String, dynamic> payload,
+  Map<String, dynamic>? transformOverride,
+  Map<String, dynamic>? viewerStateOverride,
+}) {
+  Map<String, dynamic> spatialPayload = payload;
+  if (transformOverride != null) {
+    spatialPayload = _payloadWithThreeDTransformSnapshot(
+      spatialPayload,
+      _normalizedThreeDTransform(transformOverride),
+    );
+  }
+  if (viewerStateOverride != null) {
+    spatialPayload = _payloadWithThreeDViewerStateSnapshot(
+      spatialPayload,
+      _normalizedThreeDViewerState(viewerStateOverride),
+    );
+  }
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      settings: const RouteSettings(name: '/three-d/spatial-view'),
+      builder: (_) => _ThreeDSpatialViewPage(payload: spatialPayload),
+    ),
+  );
+}
+
+class _ThreeDSpatialViewPage extends StatelessWidget {
+  const _ThreeDSpatialViewPage({required this.payload});
+
+  final Map<String, dynamic> payload;
+
+  @override
+  Widget build(BuildContext context) {
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          Navigator.maybePop(context);
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final double width = constraints.maxWidth;
+                    final double height = width * 3 / 8;
+                    return Center(
+                      child: SizedBox(
+                        width: width,
+                        height: height,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: _SpatialEyePane(
+                                payload: payload,
+                                spatialEye: 'right',
+                                marker: const _SpatialAlignmentMarker(
+                                  filled: false,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: _SpatialEyePane(
+                                payload: payload,
+                                spatialEye: 'left',
+                                marker: const _SpatialAlignmentMarker(
+                                  filled: true,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              Positioned(
+                top: 18,
+                left: 14,
+                child: IconButton.filledTonal(
+                  tooltip: 'Back',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SpatialEyePane extends StatelessWidget {
+  const _SpatialEyePane({
+    required this.payload,
+    required this.spatialEye,
+    required this.marker,
+  });
+
+  final Map<String, dynamic> payload;
+  final String spatialEye;
+  final Widget marker;
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 4 / 3,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ThreeDViewer(
+            payload: payload,
+            trackingEnabled: true,
+            showSpatialViewButton: false,
+            spatialEye: spatialEye,
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 18,
+            child: Center(child: marker),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SpatialAlignmentMarker extends StatelessWidget {
+  const _SpatialAlignmentMarker({required this.filled});
+
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: filled ? Colors.white : Colors.transparent,
+          shape: BoxShape.circle,
+          border: filled ? null : Border.all(color: Colors.black, width: 2),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 4,
+            ),
+          ],
+        ),
+        child: SizedBox.square(dimension: filled ? 8 : 14),
+      ),
+    );
+  }
+}
+
 class _PresetDetailPage extends StatefulWidget {
   const _PresetDetailPage({required this.initialPost});
 
@@ -4430,6 +4598,13 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
     );
     if (!mounted || action == null) return;
     await _handleDetailOwnerAction(action);
+  }
+
+  Future<void> _openSpatialView() {
+    return _openThreeDSpatialView(
+      context,
+      payload: _post.preset.payload,
+    );
   }
 
   Future<void> _refreshPost() async {
@@ -5249,6 +5424,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                   fit: BoxFit.contain,
                   allowImage: false,
                   trackingEnabled: true,
+                  onSpatialViewRequested: _openSpatialView,
                 ),
               ),
               Positioned(
@@ -5276,6 +5452,14 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (isThreeDPayload(previewPayload)) ...[
+                      FilledButton.icon(
+                        onPressed: _openSpatialView,
+                        icon: const Icon(Icons.view_column_outlined, size: 18),
+                        label: const Text('Spatial View'),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
                     IconButton.filledTonal(
                       onPressed: _openFullscreenViewer,
                       icon: const Icon(Icons.fullscreen, size: 20),
@@ -6466,6 +6650,12 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                   transformOverride: _threeDTransformDraft,
                   onTransformChanged: _applyThreeDTransformDraft,
                   onViewerStateChanged: _applyThreeDViewerDraft,
+                  onSpatialViewRequested: () => _openThreeDSpatialView(
+                    context,
+                    payload: payload,
+                    transformOverride: _threeDTransformDraft,
+                    viewerStateOverride: _threeDViewerDraft,
+                  ),
                 )
               : _SharedPresetPreview(
                   payload: payload,
@@ -7828,6 +8018,13 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
     await _handleDetailCollectionOwnerAction(action);
   }
 
+  Future<void> _openCollectionSpatialView(CollectionItemSnapshot item) {
+    return _openThreeDSpatialView(
+      context,
+      payload: item.snapshot,
+    );
+  }
+
   Widget _buildCard(
     CollectionItemSnapshot item, {
     required bool active,
@@ -7847,6 +8044,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
           fit: BoxFit.contain,
           allowImage: false,
           trackingEnabled: true,
+          onSpatialViewRequested: () => _openCollectionSpatialView(item),
         ),
       ],
     );
@@ -8278,6 +8476,14 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (isThreeDPayload(activeItem.snapshot)) ...[
+                    FilledButton.icon(
+                      onPressed: () => _openCollectionSpatialView(activeItem),
+                      icon: const Icon(Icons.view_column_outlined, size: 18),
+                      label: const Text('Spatial View'),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
                   IconButton.filledTonal(
                     onPressed: () =>
                         _openCollectionFullscreen(activeItem, _index),
@@ -12351,6 +12557,15 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     });
   }
 
+  Future<void> _openSpatialView() {
+    return _openThreeDSpatialView(
+      context,
+      payload: _payload,
+      transformOverride: _transformDraft,
+      viewerStateOverride: _viewerDraft,
+    );
+  }
+
   void _setMediaType(DeepXMediaType mediaType) {
     setState(() {
       _selectedMediaType = mediaType;
@@ -12669,6 +12884,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                         transformOverride: _transformDraft,
                         onTransformChanged: _applyTransform,
                         onViewerStateChanged: _applyViewerState,
+                        onSpatialViewRequested: _openSpatialView,
                       ),
                     ),
                   ),
