@@ -94,14 +94,13 @@ Map<String, dynamic> normalizeRenderPayload(
   String sourceKind = 'upload',
 }) {
   if (isThreeDPayload(payload)) {
-    return <String, dynamic>{
-      ...payload,
-      'meta': <String, dynamic>{
+    final ThreeDAssetPayload asset = ThreeDAssetPayload.fromMap(payload);
+    return asset.copyWith(
+      meta: <String, dynamic>{
         'editor': editor,
-        if (payload['meta'] is Map)
-          ...Map<String, dynamic>.from(payload['meta'] as Map),
+        ...asset.meta,
       },
-    };
+    ).toMap();
   }
   return simpleMissingThreeDPayload(
     reason: 'image_payload_not_detail_content',

@@ -4379,13 +4379,22 @@ Future<void> _openThreeDSpatialView(
   );
 }
 
-class _ThreeDSpatialViewPage extends StatelessWidget {
+class _ThreeDSpatialViewPage extends StatefulWidget {
   const _ThreeDSpatialViewPage({required this.payload});
 
   final Map<String, dynamic> payload;
 
   @override
+  State<_ThreeDSpatialViewPage> createState() => _ThreeDSpatialViewPageState();
+}
+
+class _ThreeDSpatialViewPageState extends State<_ThreeDSpatialViewPage> {
+  bool _crossEye = true;
+
+  @override
   Widget build(BuildContext context) {
+    final String leftEye = _crossEye ? 'right' : 'left';
+    final String rightEye = _crossEye ? 'left' : 'right';
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.escape): () {
@@ -4411,8 +4420,8 @@ class _ThreeDSpatialViewPage extends StatelessWidget {
                           children: [
                             Expanded(
                               child: _SpatialEyePane(
-                                payload: payload,
-                                spatialEye: 'right',
+                                payload: widget.payload,
+                                spatialEye: leftEye,
                                 marker: const _SpatialAlignmentMarker(
                                   filled: false,
                                 ),
@@ -4420,8 +4429,8 @@ class _ThreeDSpatialViewPage extends StatelessWidget {
                             ),
                             Expanded(
                               child: _SpatialEyePane(
-                                payload: payload,
-                                spatialEye: 'left',
+                                payload: widget.payload,
+                                spatialEye: rightEye,
                                 marker: const _SpatialAlignmentMarker(
                                   filled: true,
                                 ),
@@ -4441,6 +4450,40 @@ class _ThreeDSpatialViewPage extends StatelessWidget {
                   tooltip: 'Back',
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                ),
+              ),
+              Positioned(
+                top: 18,
+                right: 14,
+                child: SegmentedButton<bool>(
+                  style: ButtonStyle(
+                    backgroundColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return Theme.of(context).colorScheme.primaryContainer;
+                      }
+                      return Colors.black.withValues(alpha: 0.44);
+                    }),
+                    foregroundColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return Theme.of(context).colorScheme.onPrimaryContainer;
+                      }
+                      return Colors.white;
+                    }),
+                  ),
+                  segments: const <ButtonSegment<bool>>[
+                    ButtonSegment<bool>(
+                      value: true,
+                      label: Text('Cross Eye'),
+                    ),
+                    ButtonSegment<bool>(
+                      value: false,
+                      label: Text('Parallel'),
+                    ),
+                  ],
+                  selected: <bool>{_crossEye},
+                  onSelectionChanged: (value) {
+                    setState(() => _crossEye = value.first);
+                  },
                 ),
               ),
             ],
@@ -5456,7 +5499,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       FilledButton.icon(
                         onPressed: _openSpatialView,
                         icon: const Icon(Icons.view_column_outlined, size: 18),
-                        label: const Text('Spatial View'),
+                        label: const Text('Free Viewing'),
                       ),
                       const SizedBox(width: 6),
                     ],
@@ -5908,15 +5951,30 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   Future<void> _uploadImage() async {
     if (_uploading) return;
     final messenger = ScaffoldMessenger.of(context);
-    setState(() => _uploading = true);
+    setState(() {
+      _uploading = true;
+      _threeDProgress = 0;
+      _threeDStage = 'Uploading image...';
+    });
     try {
       final file = await pickDeviceFile(accept: 'image/*');
-      if (file == null) return;
+      if (file == null) {
+        if (mounted) setState(() => _threeDStage = 'Image upload cancelled');
+        return;
+      }
       final publicUrl = await _repository.uploadAssetBytes(
         bytes: file.bytes,
         fileName: file.name,
         contentType: file.contentType,
         folder: 'post-images',
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _threeDProgress = progress.clamp(0, 1).toDouble();
+            _threeDStage =
+                'Uploading image ${(_threeDProgress * 100).round()}%';
+          });
+        },
       );
       final payload = simpleImagePayload(
         imageUrl: publicUrl,
@@ -5942,6 +6000,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
           _selectedItemIndex = _draftItems.length - 1;
           _collectionImageThumbnailPayload ??= payload;
         }
+        _threeDProgress = 1;
+        _threeDStage = 'Image ready';
       });
     } catch (e) {
       if (!mounted) return;
@@ -6806,6 +6866,19 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                       label: Text(
                           _uploading ? 'Uploading...' : 'Upload Thumbnail'),
                     ),
+                    if (_uploading) ...[
+                      const SizedBox(height: 10),
+                      LinearProgressIndicator(
+                        value: _threeDProgress.clamp(0, 1).toDouble(),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _threeDStage.isEmpty
+                            ? '${(_threeDProgress * 100).round()}%'
+                            : _threeDStage,
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                    ],
                     const SizedBox(height: 14),
                   ],
                   if (threeDMode) ...[
@@ -8480,7 +8553,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                     FilledButton.icon(
                       onPressed: () => _openCollectionSpatialView(activeItem),
                       icon: const Icon(Icons.view_column_outlined, size: 18),
-                      label: const Text('Spatial View'),
+                      label: const Text('Free Viewing'),
                     ),
                     const SizedBox(width: 6),
                   ],
@@ -11128,9 +11201,9 @@ Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
         .toDouble(),
     'fogDepth':
         _threeDTransformNumber(raw['fogDepth'], 9).clamp(0.5, 40.0).toDouble(),
-    'fogColor': _threeDColor(raw['fogColor'], '#000000'),
-    'backgroundColor': _threeDColor(raw['backgroundColor'], '#000000'),
-    'gridColor': _threeDColor(raw['gridColor'], '#333333'),
+    'fogColor': _threeDColor(raw['fogColor'], '#121212'),
+    'backgroundColor': _threeDColor(raw['backgroundColor'], '#121212'),
+    'gridColor': _threeDColor(raw['gridColor'], '#202020'),
     'ambientColor': _threeDColor(raw['ambientColor'], '#ffffff'),
     'ambientIntensity': _threeDTransformNumber(raw['ambientIntensity'], 0.5)
         .clamp(0.0, 5.0)
@@ -12137,10 +12210,10 @@ Widget _buildThreeDViewerControlsPanel({
       const SizedBox(height: 12),
       _ThreeDColorRow(
         label: 'Grid Color',
-        value: viewer['gridColor']?.toString() ?? '#333333',
+        value: viewer['gridColor']?.toString() ?? '#202020',
         onTap: () => _pickThreeDViewerColor(
           context: context,
-          initialHex: viewer['gridColor']?.toString() ?? '#333333',
+          initialHex: viewer['gridColor']?.toString() ?? '#202020',
           onPicked: (value) => emitViewer(<String, dynamic>{
             ...viewer,
             'gridColor': value,
@@ -12169,10 +12242,10 @@ Widget _buildThreeDViewerControlsPanel({
       ),
       _ThreeDColorRow(
         label: 'Fog Color',
-        value: viewer['fogColor']?.toString() ?? '#000000',
+        value: viewer['fogColor']?.toString() ?? '#121212',
         onTap: () => _pickThreeDViewerColor(
           context: context,
-          initialHex: viewer['fogColor']?.toString() ?? '#000000',
+          initialHex: viewer['fogColor']?.toString() ?? '#121212',
           onPicked: (value) => emitViewer(<String, dynamic>{
             ...viewer,
             'fogColor': value,
@@ -12181,10 +12254,10 @@ Widget _buildThreeDViewerControlsPanel({
       ),
       _ThreeDColorRow(
         label: 'Background Color',
-        value: viewer['backgroundColor']?.toString() ?? '#000000',
+        value: viewer['backgroundColor']?.toString() ?? '#121212',
         onTap: () => _pickThreeDViewerColor(
           context: context,
-          initialHex: viewer['backgroundColor']?.toString() ?? '#000000',
+          initialHex: viewer['backgroundColor']?.toString() ?? '#121212',
           onPicked: (value) => emitViewer(<String, dynamic>{
             ...viewer,
             'backgroundColor': value,
@@ -13096,6 +13169,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   String _accentColorHex = '#FD4687';
   int _thumbnailIndex = 0;
   bool _assetUploading = false;
+  double _assetUploadProgress = 0;
   bool _autoAccentLoading = false;
   late _ComposerImagePane _imagePane;
   late Map<String, dynamic> _postPayload;
@@ -13477,7 +13551,10 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
   Future<void> _uploadImageForActivePane() async {
     if (_assetUploading) return;
     final messenger = ScaffoldMessenger.of(context);
-    setState(() => _assetUploading = true);
+    setState(() {
+      _assetUploading = true;
+      _assetUploadProgress = 0;
+    });
     try {
       final file = await pickDeviceFile(accept: 'image/*');
       if (file == null) return;
@@ -13488,6 +13565,12 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         folder: _imagePane == _ComposerImagePane.card
             ? 'card-images'
             : 'post-images',
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _assetUploadProgress = progress.clamp(0, 1).toDouble();
+          });
+        },
       );
       final String sourceKind = _imagePane == _ComposerImagePane.card
           ? 'custom'
@@ -13503,6 +13586,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
       if (_imagePane == _ComposerImagePane.card) {
         setState(() => _cardSourceKind = 'custom');
       }
+      if (mounted) setState(() => _assetUploadProgress = 1);
       final Color? color =
           await ImageColorService.instance.extractAccentFromBytes(file.bytes);
       if (color != null && mounted) _setAccentColor(color);
@@ -13768,6 +13852,15 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
               : const Icon(Icons.upload_file_rounded),
           label: Text(_assetUploading ? 'Uploading...' : 'Upload Image'),
         ),
+        if (_assetUploading) ...[
+          const SizedBox(height: 10),
+          LinearProgressIndicator(value: _assetUploadProgress),
+          const SizedBox(height: 6),
+          Text(
+            '${(_assetUploadProgress * 100).round()}%',
+            style: TextStyle(color: cs.onSurfaceVariant),
+          ),
+        ],
         const SizedBox(height: 12),
         _TransformSlider(
           label: 'Scale',
@@ -14334,6 +14427,7 @@ class _SettingsTabState extends State<_SettingsTab> {
   bool _profileLoading = true;
   String? _profileError;
   bool _wallpaperUploading = false;
+  double _wallpaperUploadProgress = 0;
 
   @override
   void initState() {
@@ -14392,7 +14486,10 @@ class _SettingsTabState extends State<_SettingsTab> {
   Future<void> _uploadWallpaper() async {
     if (_wallpaperUploading) return;
     final messenger = ScaffoldMessenger.of(context);
-    setState(() => _wallpaperUploading = true);
+    setState(() {
+      _wallpaperUploading = true;
+      _wallpaperUploadProgress = 0;
+    });
     try {
       final file = await pickDeviceFile(accept: 'image/*');
       if (file == null) return;
@@ -14401,8 +14498,15 @@ class _SettingsTabState extends State<_SettingsTab> {
         fileName: file.name,
         contentType: file.contentType,
         folder: 'wallpapers',
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _wallpaperUploadProgress = progress.clamp(0, 1).toDouble();
+          });
+        },
       );
       AppearanceSettingsService.instance.updateWallpaperImageUrl(publicUrl);
+      if (mounted) setState(() => _wallpaperUploadProgress = 1);
     } catch (e) {
       if (!mounted) return;
       messenger
@@ -14679,6 +14783,15 @@ class _SettingsTabState extends State<_SettingsTab> {
                       ),
                     ],
                   ),
+                  if (_wallpaperUploading) ...[
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(value: _wallpaperUploadProgress),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${(_wallpaperUploadProgress * 100).round()}%',
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Row(
                     children: [

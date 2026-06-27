@@ -110,8 +110,9 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     }
     _mountRetryTimer?.cancel();
     _mountRetryTimer = null;
-    final String nextAssetKey = _assetKey(widget.payload);
-    final String payloadJson = jsonEncode(widget.payload);
+    final Map<String, dynamic> effectivePayload = _effectivePayload();
+    final String nextAssetKey = _assetKey(effectivePayload);
+    final String payloadJson = jsonEncode(effectivePayload);
     final String optionsJson = jsonEncode(<String, dynamic>{
       'editable': widget.editable,
       'trackingEnabled': widget.trackingEnabled,
@@ -235,6 +236,16 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
     final dynamic rawViewer = widget.payload['viewer'];
     if (rawViewer is Map) return Map<String, dynamic>.from(rawViewer);
     return const <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _effectivePayload() {
+    final Map<String, dynamic> payload =
+        Map<String, dynamic>.from(widget.payload);
+    final Map<String, dynamic>? transform = widget.transformOverride;
+    if (transform != null) {
+      payload['transform'] = Map<String, dynamic>.from(transform);
+    }
+    return payload;
   }
 
   void _handleMessage(html.MessageEvent event) {

@@ -11,7 +11,7 @@
     boxDepth: 10,
     fogDepth: 5,
     fogReachTowardViewer: 2.5,
-    gridColor: 0x333333,
+    gridColor: 0x202020,
     gridOpacity: 0.72,
     defaultFogStrength: 0.35,
     defaultFogDepth: 9,
@@ -48,9 +48,9 @@
     lightLayers: Object.freeze([]),
     fogStrength: 0.35,
     fogDepth: 9,
-    fogColor: '#000000',
-    backgroundColor: '#000000',
-    gridColor: '#333333',
+    fogColor: '#121212',
+    backgroundColor: '#121212',
+    gridColor: '#202020',
     ambientColor: '#ffffff',
     ambientIntensity: 0.5,
     sunColor: '#ffffff',
@@ -114,6 +114,23 @@
       .dx-viewer-button.dx-spatial-button {
         min-width: 92px;
         padding: 0 9px;
+      }
+      .dx-spatial-group {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .dx-spatial-label {
+        height: 30px;
+        padding: 0 7px;
+        border-radius: 4px;
+        background: rgba(0,0,0,0.42);
+        color: rgba(255,255,255,0.82);
+        display: grid;
+        place-items: center;
+        font: 700 10px/1 system-ui, sans-serif;
+        letter-spacing: 0;
+        pointer-events: none;
       }
       .dx-viewer-button:disabled {
         cursor: default;
@@ -1289,6 +1306,7 @@
       this.trackingEnabled = options.trackingEnabled === true;
       this.showSpatialViewButton = options.showSpatialViewButton === true;
       this.spatialEye = normalizeSpatialEye(options.spatialEye);
+      this.redCyanEnabled = false;
       this.viewerState = viewerStateFromPayload(payload);
       this.previewVisible = false;
       this.gridPreference = this.viewerState.gridVisible;
@@ -2717,13 +2735,24 @@
         preview.classList.toggle('is-active', this.previewVisible);
       });
       const reset = this.makeButton('RST', 'Reset model transform', () => this.resetTransform());
-      const spatial = this.makeButton('Spatial View', 'Open spatial view', () => this.requestSpatialView());
+      const spatialGroup = document.createElement('div');
+      spatialGroup.className = 'dx-spatial-group';
+      const spatialLabel = document.createElement('div');
+      spatialLabel.className = 'dx-spatial-label';
+      spatialLabel.textContent = 'Spatial View';
+      const spatial = this.makeButton('Free Viewing', 'Open free viewing spatial page', () => this.requestSpatialView());
       spatial.classList.add('dx-spatial-button');
+      const redCyan = this.makeButton('Red/Cyan', 'Toggle red cyan spatial view', () => {
+        this.setRedCyanEnabled(!this.redCyanEnabled);
+      });
+      redCyan.classList.add('dx-spatial-button');
+      spatialGroup.append(spatialLabel, spatial, redCyan);
       this.gridButton = grid;
       this.dartsButton = darts;
       this.objectButton = object;
       this.previewButton = preview;
-      if (this.showSpatialViewButton) buttons.append(spatial);
+      this.redCyanButton = redCyan;
+      if (this.showSpatialViewButton) buttons.append(spatialGroup);
       buttons.append(fullscreen, settings, debug, grid, darts, object, preview, reset);
       this.root.appendChild(buttons);
       document.addEventListener('fullscreenchange', () => {
@@ -2773,6 +2802,11 @@
         type: 'deepx-off-axis-spatial-view-requested',
         elementId: this.elementId
       }, '*');
+    }
+
+    setRedCyanEnabled(enabled) {
+      this.redCyanEnabled = enabled === true;
+      if (this.redCyanButton) this.redCyanButton.classList.toggle('is-active', this.redCyanEnabled);
     }
 
     showCalibration() {
@@ -3236,10 +3270,11 @@
       this.updateOffAxisCamera();
     }
 
-    activeCameraPose(basePose) {
+    activeCameraPose(basePose, eyeOverride) {
       const pose = cloneHeadPose(basePose);
-      if (!this.spatialEye) return pose;
-      const eye = pose.eyes && pose.eyes[this.spatialEye];
+      const selectedEye = normalizeSpatialEye(eyeOverride) || this.spatialEye;
+      if (!selectedEye) return pose;
+      const eye = pose.eyes && pose.eyes[selectedEye];
       if (!eye) return pose;
       return {
         x: eye.x,
@@ -3248,18 +3283,44 @@
       };
     }
 
-    updateOffAxisCamera() {
-      const pose = this.activeCameraPose(
-        this.trackingEnabled ? this.headPose : defaultHeadPose()
-      );
+    applyCameraPose(basePose, eyeOverride) {
+      const pose = this.activeCameraPose(basePose, eyeOverride);
       this.worldHeadPosition = this.offAxisCamera.headPoseToWorldPosition(pose);
       this.offAxisCamera.setCameraPosition(this.worldHeadPosition);
       this.offAxisCamera.updateProjectionMatrix(this.worldHeadPosition);
       this.updateFog();
+      return this.worldHeadPosition;
+    }
+
+    updateOffAxisCamera() {
+      this.applyCameraPose(this.trackingEnabled ? this.headPose : defaultHeadPose());
       if (this.debugMode && this.debugHelpers.length > 1) {
         const worldPos = this.worldHeadPosition;
         this.debugHelpers[1].position.set(worldPos.x, worldPos.y, worldPos.z);
       }
+    }
+
+    renderRedCyan() {
+      const gl = this.renderer.getContext();
+      const basePose = this.trackingEnabled ? this.headPose : defaultHeadPose();
+      const previousAutoClear = this.renderer.autoClear;
+      this.renderer.autoClear = false;
+      try {
+        this.renderer.clear(true, true, true);
+
+        this.applyCameraPose(basePose, 'left');
+        gl.colorMask(true, false, false, true);
+        this.renderer.render(this.scene, this.camera);
+
+        this.renderer.clearDepth();
+        this.applyCameraPose(basePose, 'right');
+        gl.colorMask(false, true, true, true);
+        this.renderer.render(this.scene, this.camera);
+      } finally {
+        gl.colorMask(true, true, true, true);
+        this.renderer.autoClear = previousAutoClear;
+      }
+      this.updateStatsPanel();
     }
 
     updateFog() {
@@ -3315,6 +3376,10 @@
         this.fps = this.frameCounter * 1000 / (now - this.fpsStartedAt);
         this.frameCounter = 0;
         this.fpsStartedAt = now;
+      }
+      if (this.redCyanEnabled) {
+        this.renderRedCyan();
+        return;
       }
       this.updateOffAxisCamera();
       this.updateStatsPanel();
