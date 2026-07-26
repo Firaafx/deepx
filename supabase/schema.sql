@@ -1,10 +1,10 @@
--- DeepX production schema for Supabase
+﻿-- RayMax production schema for Supabase
 -- Run this in Supabase SQL Editor after creating your project.
 
 create extension if not exists pgcrypto;
 
 -- ==========================================
--- DeepX completion: watch later + collection engagement + view stats
+-- RayMax completion: watch later + collection engagement + view stats
 -- ==========================================
 
 create table if not exists public.watch_later_items (
@@ -422,7 +422,7 @@ $$;
 grant execute on function public.record_collection_view(uuid) to authenticated;
 
 -- ==========================================
--- DeepX publish/guest schema sync
+-- RayMax publish/guest schema sync
 -- ==========================================
 
 alter table if exists public.presets
@@ -609,7 +609,7 @@ create policy collection_items_select_published_anon
   );
 
 -- ==========================================
--- DeepX web production overhaul extensions
+-- RayMax web production overhaul extensions
 -- ==========================================
 
 -- Profiles + user settings extensions
@@ -1331,8 +1331,8 @@ begin
 end;
 $$;
 
-drop trigger if exists on_auth_user_created_deepx on auth.users;
-create trigger on_auth_user_created_deepx
+drop trigger if exists on_auth_user_created_raymax on auth.users;
+create trigger on_auth_user_created_raymax
 after insert on auth.users
 for each row execute function public.handle_new_user_profile();
 
@@ -2033,41 +2033,41 @@ grant execute on function public.create_group_chat(text, uuid[]) to authenticate
 
 -- Storage buckets for uploads.
 insert into storage.buckets (id, name, public)
-values ('deepx-assets', 'deepx-assets', true)
+values ('raymax-assets', 'raymax-assets', true)
 on conflict (id) do nothing;
 
 insert into storage.buckets (id, name, public)
-values ('deepx-avatars', 'deepx-avatars', true)
+values ('raymax-avatars', 'raymax-avatars', true)
 on conflict (id) do nothing;
 
 DO $$
 BEGIN
-  -- deepx-assets
+  -- raymax-assets
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
-      AND policyname = 'deepx_assets_select_public'
+      AND policyname = 'raymax_assets_select_public'
   ) THEN
-    CREATE POLICY deepx_assets_select_public
+    CREATE POLICY raymax_assets_select_public
       ON storage.objects
       FOR SELECT
       TO authenticated
-      USING (bucket_id = 'deepx-assets');
+      USING (bucket_id = 'raymax-assets');
   END IF;
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
-      AND policyname = 'deepx_assets_insert_own_folder'
+      AND policyname = 'raymax_assets_insert_own_folder'
   ) THEN
-    CREATE POLICY deepx_assets_insert_own_folder
+    CREATE POLICY raymax_assets_insert_own_folder
       ON storage.objects
       FOR INSERT
       TO authenticated
       WITH CHECK (
-        bucket_id = 'deepx-assets'
+        bucket_id = 'raymax-assets'
         AND (storage.foldername(name))[1] = auth.uid()::text
       );
   END IF;
@@ -2076,14 +2076,14 @@ BEGIN
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
-      AND policyname = 'deepx_assets_update_own_folder'
+      AND policyname = 'raymax_assets_update_own_folder'
   ) THEN
-    CREATE POLICY deepx_assets_update_own_folder
+    CREATE POLICY raymax_assets_update_own_folder
       ON storage.objects
       FOR UPDATE
       TO authenticated
       USING (
-        bucket_id = 'deepx-assets'
+        bucket_id = 'raymax-assets'
         AND (storage.foldername(name))[1] = auth.uid()::text
       );
   END IF;
@@ -2092,44 +2092,44 @@ BEGIN
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
-      AND policyname = 'deepx_assets_delete_own_folder'
+      AND policyname = 'raymax_assets_delete_own_folder'
   ) THEN
-    CREATE POLICY deepx_assets_delete_own_folder
+    CREATE POLICY raymax_assets_delete_own_folder
       ON storage.objects
       FOR DELETE
       TO authenticated
       USING (
-        bucket_id = 'deepx-assets'
+        bucket_id = 'raymax-assets'
         AND (storage.foldername(name))[1] = auth.uid()::text
       );
   END IF;
 
-  -- deepx-avatars
+  -- raymax-avatars
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
-      AND policyname = 'deepx_avatars_select_public'
+      AND policyname = 'raymax_avatars_select_public'
   ) THEN
-    CREATE POLICY deepx_avatars_select_public
+    CREATE POLICY raymax_avatars_select_public
       ON storage.objects
       FOR SELECT
       TO authenticated
-      USING (bucket_id = 'deepx-avatars');
+      USING (bucket_id = 'raymax-avatars');
   END IF;
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
-      AND policyname = 'deepx_avatars_insert_own_folder'
+      AND policyname = 'raymax_avatars_insert_own_folder'
   ) THEN
-    CREATE POLICY deepx_avatars_insert_own_folder
+    CREATE POLICY raymax_avatars_insert_own_folder
       ON storage.objects
       FOR INSERT
       TO authenticated
       WITH CHECK (
-        bucket_id = 'deepx-avatars'
+        bucket_id = 'raymax-avatars'
         AND (storage.foldername(name))[1] = auth.uid()::text
       );
   END IF;
@@ -2138,14 +2138,14 @@ BEGIN
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
-      AND policyname = 'deepx_avatars_update_own_folder'
+      AND policyname = 'raymax_avatars_update_own_folder'
   ) THEN
-    CREATE POLICY deepx_avatars_update_own_folder
+    CREATE POLICY raymax_avatars_update_own_folder
       ON storage.objects
       FOR UPDATE
       TO authenticated
       USING (
-        bucket_id = 'deepx-avatars'
+        bucket_id = 'raymax-avatars'
         AND (storage.foldername(name))[1] = auth.uid()::text
       );
   END IF;
@@ -2154,14 +2154,14 @@ BEGIN
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
-      AND policyname = 'deepx_avatars_delete_own_folder'
+      AND policyname = 'raymax_avatars_delete_own_folder'
   ) THEN
-    CREATE POLICY deepx_avatars_delete_own_folder
+    CREATE POLICY raymax_avatars_delete_own_folder
       ON storage.objects
       FOR DELETE
       TO authenticated
       USING (
-        bucket_id = 'deepx-avatars'
+        bucket_id = 'raymax-avatars'
         AND (storage.foldername(name))[1] = auth.uid()::text
       );
   END IF;

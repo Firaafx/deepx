@@ -1,7 +1,7 @@
-import 'models/image_payload.dart';
+﻿import 'models/image_payload.dart';
 import 'models/three_d_payload.dart';
 
-DeepXMediaType mediaTypeFromPayload(Map<String, dynamic> payload) {
+RayMaxMediaType mediaTypeFromPayload(Map<String, dynamic> payload) {
   if (payload['media'] is Map) {
     final media = Map<String, dynamic>.from(payload['media'] as Map);
     return mediaTypeFromString(media['type']?.toString());
@@ -14,7 +14,7 @@ DeepXMediaType mediaTypeFromPayload(Map<String, dynamic> payload) {
 }
 
 bool isThreeDPayload(Map<String, dynamic> payload) {
-  return mediaTypeFromPayload(payload) != DeepXMediaType.image;
+  return mediaTypeFromPayload(payload) != RayMaxMediaType.image;
 }
 
 ThreeDAssetPayload? threeDAssetFromPayload(Map<String, dynamic> payload) {
@@ -24,7 +24,7 @@ ThreeDAssetPayload? threeDAssetFromPayload(Map<String, dynamic> payload) {
 }
 
 Map<String, dynamic> simpleThreeDPayload({
-  required DeepXMediaType mediaType,
+  required RayMaxMediaType mediaType,
   required String assetUrl,
   required String format,
   String assetPath = '',
@@ -57,20 +57,20 @@ Map<String, dynamic> simpleThreeDPayload({
 
 String missingThreeDAssetLabel(Map<String, dynamic> payload) {
   return switch (mediaTypeFromPayload(payload)) {
-    DeepXMediaType.gaussianSplat => 'No 3DGS',
-    DeepXMediaType.triangleMesh => 'No 3D mesh',
-    DeepXMediaType.missing3d || DeepXMediaType.image => 'No 3D',
+    RayMaxMediaType.gaussianSplat => 'No 3DGS',
+    RayMaxMediaType.triangleMesh => 'No 3D mesh',
+    RayMaxMediaType.missing3d || RayMaxMediaType.image => 'No 3D',
   };
 }
 
 Map<String, dynamic> simpleMissingThreeDPayload({
-  DeepXMediaType preferredType = DeepXMediaType.missing3d,
+  RayMaxMediaType preferredType = RayMaxMediaType.missing3d,
   String reason = 'missing_3d_asset',
   String migratedFrom = '',
   String editor = 'missing_3d_payload',
 }) {
-  final DeepXMediaType mediaType = preferredType == DeepXMediaType.image
-      ? DeepXMediaType.missing3d
+  final RayMaxMediaType mediaType = preferredType == RayMaxMediaType.image
+      ? RayMaxMediaType.missing3d
       : preferredType;
   return ThreeDAssetPayload(
     mediaType: mediaType,

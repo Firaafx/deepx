@@ -1,4 +1,4 @@
--- Tracker/chat/upload runtime reliability fixes.
+﻿-- Tracker/chat/upload runtime reliability fixes.
 
 begin;
 
@@ -54,11 +54,11 @@ $$;
 grant execute on function public.create_group_chat(text, uuid[]) to authenticated;
 
 insert into storage.buckets (id, name, public)
-values ('deepx-assets', 'deepx-assets', true)
+values ('raymax-assets', 'raymax-assets', true)
 on conflict (id) do update set public = excluded.public;
 
 insert into storage.buckets (id, name, public)
-values ('deepx-avatars', 'deepx-avatars', true)
+values ('raymax-avatars', 'raymax-avatars', true)
 on conflict (id) do update set public = excluded.public;
 
 commit;

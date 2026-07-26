@@ -1,4 +1,4 @@
--- DeepX 3DGS and mesh posts.
+﻿-- RayMax 3DGS and mesh posts.
 
 alter table if exists public.presets
   add column if not exists media_type text not null default 'image';
@@ -20,9 +20,9 @@ create table if not exists public.splat_generation_jobs (
     check (status in ('queued', 'uploading', 'running', 'finalizing', 'succeeded', 'failed')),
   progress integer not null default 0 check (progress >= 0 and progress <= 100),
   stage text not null default 'Queued',
-  source_bucket text not null default 'deepx-3d-sources',
+  source_bucket text not null default 'raymax-3d-sources',
   source_image_paths text[] not null default '{}'::text[],
-  output_bucket text not null default 'deepx-3d-assets',
+  output_bucket text not null default 'raymax-3d-assets',
   output_asset_path text,
   output_payload jsonb not null default '{}'::jsonb check (jsonb_typeof(output_payload) = 'object'),
   thumbnail_payload jsonb not null default '{}'::jsonb check (jsonb_typeof(thumbnail_payload) = 'object'),
@@ -69,11 +69,11 @@ create policy splat_jobs_insert_own
 drop policy if exists splat_jobs_update_own on public.splat_generation_jobs;
 
 insert into storage.buckets (id, name, public)
-values ('deepx-3d-sources', 'deepx-3d-sources', false)
+values ('raymax-3d-sources', 'raymax-3d-sources', false)
 on conflict (id) do nothing;
 
 insert into storage.buckets (id, name, public)
-values ('deepx-3d-assets', 'deepx-3d-assets', true)
+values ('raymax-3d-assets', 'raymax-3d-assets', true)
 on conflict (id) do nothing;
 
 do $$
@@ -81,38 +81,38 @@ begin
   if not exists (
     select 1 from pg_policies
     where schemaname = 'storage' and tablename = 'objects'
-      and policyname = 'deepx_3d_sources_own_folder'
+      and policyname = 'raymax_3d_sources_own_folder'
   ) then
-    create policy deepx_3d_sources_own_folder
+    create policy raymax_3d_sources_own_folder
       on storage.objects
       for all
       to authenticated
-      using (bucket_id = 'deepx-3d-sources' and (storage.foldername(name))[1] = auth.uid()::text)
-      with check (bucket_id = 'deepx-3d-sources' and (storage.foldername(name))[1] = auth.uid()::text);
+      using (bucket_id = 'raymax-3d-sources' and (storage.foldername(name))[1] = auth.uid()::text)
+      with check (bucket_id = 'raymax-3d-sources' and (storage.foldername(name))[1] = auth.uid()::text);
   end if;
 
   if not exists (
     select 1 from pg_policies
     where schemaname = 'storage' and tablename = 'objects'
-      and policyname = 'deepx_3d_assets_public_read'
+      and policyname = 'raymax_3d_assets_public_read'
   ) then
-    create policy deepx_3d_assets_public_read
+    create policy raymax_3d_assets_public_read
       on storage.objects
       for select
       to anon, authenticated
-      using (bucket_id = 'deepx-3d-assets');
+      using (bucket_id = 'raymax-3d-assets');
   end if;
 
   if not exists (
     select 1 from pg_policies
     where schemaname = 'storage' and tablename = 'objects'
-      and policyname = 'deepx_3d_assets_own_folder'
+      and policyname = 'raymax_3d_assets_own_folder'
   ) then
-    create policy deepx_3d_assets_own_folder
+    create policy raymax_3d_assets_own_folder
       on storage.objects
       for all
       to authenticated
-      using (bucket_id = 'deepx-3d-assets' and (storage.foldername(name))[1] = auth.uid()::text)
-      with check (bucket_id = 'deepx-3d-assets' and (storage.foldername(name))[1] = auth.uid()::text);
+      using (bucket_id = 'raymax-3d-assets' and (storage.foldername(name))[1] = auth.uid()::text)
+      with check (bucket_id = 'raymax-3d-assets' and (storage.foldername(name))[1] = auth.uid()::text);
   end if;
 end $$;

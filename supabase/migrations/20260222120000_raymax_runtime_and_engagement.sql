@@ -1,4 +1,4 @@
--- DeepX runtime + moderation + recommendation exclusions.
+﻿-- RayMax runtime + moderation + recommendation exclusions.
 
 create table if not exists public.content_reports (
   id uuid primary key default gen_random_uuid(),

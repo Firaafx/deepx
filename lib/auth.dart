@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -357,7 +357,7 @@ class _AuthPageState extends State<AuthPage> {
         const SizedBox(height: 4),
         Text(
           signIn
-              ? 'Sign in to DeepX and continue building immersive presets.'
+              ? 'Sign in to RayMax and continue building immersive presets.'
               : 'Sign up and verify your email with a 6-digit OTP.',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: cs.onSurfaceVariant,
@@ -535,7 +535,7 @@ class _AuthPageState extends State<AuthPage> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Complete setup before entering DeepX.',
+          'Complete setup before entering RayMax.',
           style:
               theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
         ),
@@ -605,7 +605,7 @@ class _AuthPageState extends State<AuthPage> {
           width: double.infinity,
           child: FilledButton(
             onPressed: _loading ? null : _finishProfile,
-            child: Text(_loading ? 'Saving...' : 'Continue to DeepX'),
+            child: Text(_loading ? 'Saving...' : 'Continue to RayMax'),
           ),
         ),
       ],

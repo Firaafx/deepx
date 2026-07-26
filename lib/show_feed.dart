@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -1251,7 +1251,7 @@ class _StandalonePublicProfileRoutePageState
           'id': collection.id,
           'title': collection.name.isNotEmpty ? collection.name : 'Collection',
           'meta':
-              '${collection.itemsCount} items • ${_friendlyTime(collection.createdAt)}',
+              '${collection.itemsCount} items â€¢ ${_friendlyTime(collection.createdAt)}',
           'payload': collection.thumbnailPayload.isNotEmpty
               ? collection.thumbnailPayload
               : (collection.firstItem?.snapshot ?? const <String, dynamic>{}),
@@ -1341,7 +1341,7 @@ class _StandalonePublicProfileRoutePageState
                                 Text(
                                   profile.bio.trim().isNotEmpty
                                       ? profile.bio.trim()
-                                      : 'DeepX creator channel',
+                                      : 'RayMax creator channel',
                                   maxLines: 3,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(color: Colors.white70),
@@ -1953,7 +1953,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
   String get _title {
     switch (_activeTab) {
       case _ShellTab.home:
-        return 'DeepX';
+        return 'RayMax';
       case _ShellTab.collection:
         return 'Collection';
       case _ShellTab.post:
@@ -2021,7 +2021,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
     final Color headerTitleColor = isDark ? Colors.white : cs.onSurface;
     final bool swapHomeTitle = _activeTab == _ShellTab.home && _navExpanded;
     final String headerTitle = _activeTab == _ShellTab.home
-        ? (swapHomeTitle ? 'Home' : 'DeepX')
+        ? (swapHomeTitle ? 'Home' : 'RayMax')
         : _title;
     final int unreadNotifications =
         _headerNotifications.where((n) => !n.read).length;
@@ -2059,7 +2059,7 @@ class _ShowFeedPageState extends State<ShowFeedPage> {
                             const SizedBox(width: 10),
                             if (_navExpanded)
                               Text(
-                                'DeepX',
+                                'RayMax',
                                 style: GoogleFonts.orbitron(
                                   color: headerTitleColor,
                                   fontSize: 22,
@@ -3887,7 +3887,7 @@ class _CollectionFeedTile extends StatelessWidget {
       );
     }
     final String metaText =
-        '${_friendlyCount(summary.viewsCount)} views • ${_friendlyTime(summary.createdAt)} • ${summary.itemsCount} items';
+        '${_friendlyCount(summary.viewsCount)} views â€¢ ${_friendlyTime(summary.createdAt)} â€¢ ${summary.itemsCount} items';
     final Color accentColor = _cardAccentColorFromHex(summary.accentColorHex);
     return _SnapBackDraggableCard(
       child: Material(
@@ -4072,7 +4072,7 @@ class _FeedTile extends StatelessWidget {
       );
     }
     final String metaText =
-        '${_friendlyCount(post.viewsCount)} views • ${_friendlyTime(post.preset.createdAt)}';
+        '${_friendlyCount(post.viewsCount)} views â€¢ ${_friendlyTime(post.preset.createdAt)}';
     final Color accentColor =
         _cardAccentColorFromHex(post.preset.accentColorHex);
 
@@ -5367,7 +5367,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                       ),
                       const SizedBox(width: 10),
                       Text(
-                        '${_friendlyCount(_post.viewsCount)} views • ${_friendlyTime(_post.preset.createdAt)}',
+                        '${_friendlyCount(_post.viewsCount)} views â€¢ ${_friendlyTime(_post.preset.createdAt)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
@@ -5712,7 +5712,7 @@ class _PresetDetailPageState extends State<_PresetDetailPage> {
                               author:
                                   item.author?.displayName ?? 'Unknown creator',
                               metaText:
-                                  '${_friendlyCount(item.viewsCount)} views • ${_friendlyTime(item.preset.createdAt)}',
+                                  '${_friendlyCount(item.viewsCount)} views â€¢ ${_friendlyTime(item.preset.createdAt)}',
                               priceText: _cardPriceLabel(
                                 isPaid: item.preset.isPaid,
                                 priceCents: item.preset.priceCents,
@@ -6115,7 +6115,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   }
 
   Future<void> _uploadManualThreeDAsset({
-    required DeepXMediaType mediaType,
+    required RayMaxMediaType mediaType,
     required String accept,
     required Set<String> allowedExtensions,
   }) async {
@@ -6141,7 +6141,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         bytes: file.bytes,
         fileName: file.name,
         contentType: file.contentType,
-        folder: mediaType == DeepXMediaType.gaussianSplat
+        folder: mediaType == RayMaxMediaType.gaussianSplat
             ? 'gaussian-splats'
             : 'triangle-meshes',
         bucket: AppRepository.threeDAssetsBucket,
@@ -6260,7 +6260,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
   }
 
   Future<void> _uploadThreeDModelLayer({
-    required DeepXMediaType mediaType,
+    required RayMaxMediaType mediaType,
     required String accept,
     required Set<String> allowedExtensions,
   }) async {
@@ -6288,7 +6288,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
         contentType: file.contentType.trim().isEmpty
             ? 'application/octet-stream'
             : file.contentType,
-        folder: mediaType == DeepXMediaType.gaussianSplat
+        folder: mediaType == RayMaxMediaType.gaussianSplat
             ? 'gaussian-splats'
             : 'triangle-meshes',
         bucket: AppRepository.threeDAssetsBucket,
@@ -6933,7 +6933,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                           onPressed: _uploading
                               ? null
                               : () => _uploadThreeDModelLayer(
-                                    mediaType: DeepXMediaType.triangleMesh,
+                                    mediaType: RayMaxMediaType.triangleMesh,
                                     accept: '.glb,.gltf',
                                     allowedExtensions: const <String>{
                                       'glb',
@@ -6947,7 +6947,7 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                           onPressed: _uploading
                               ? null
                               : () => _uploadThreeDModelLayer(
-                                    mediaType: DeepXMediaType.gaussianSplat,
+                                    mediaType: RayMaxMediaType.gaussianSplat,
                                     accept: '.ply,.splat,.ksplat',
                                     allowedExtensions: const <String>{
                                       'ply',
@@ -7002,8 +7002,8 @@ class _PostStudioTabState extends State<_PostStudioTab> {
                             ? null
                             : () => _uploadManualThreeDAsset(
                                   mediaType: manualSplatMode
-                                      ? DeepXMediaType.gaussianSplat
-                                      : DeepXMediaType.triangleMesh,
+                                      ? RayMaxMediaType.gaussianSplat
+                                      : RayMaxMediaType.triangleMesh,
                                   accept: manualSplatMode
                                       ? '.ply,.splat,.ksplat'
                                       : '.glb,.gltf',
@@ -8359,7 +8359,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                       ),
                       const SizedBox(width: 10),
                       Text(
-                        '${_friendlyCount(summary.viewsCount)} views • ${_friendlyTime(summary.createdAt)}',
+                        '${_friendlyCount(summary.viewsCount)} views â€¢ ${_friendlyTime(summary.createdAt)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
@@ -8769,7 +8769,7 @@ class _CollectionDetailPageState extends State<_CollectionDetailPage> {
                               author:
                                   item.author?.displayName ?? 'Unknown creator',
                               metaText:
-                                  '${_friendlyCount(item.viewsCount)} views • ${_friendlyTime(item.createdAt)}',
+                                  '${_friendlyCount(item.viewsCount)} views â€¢ ${_friendlyTime(item.createdAt)}',
                               priceText: _cardPriceLabel(
                                 isPaid: item.isPaid,
                                 priceCents: item.priceCents,
@@ -9582,7 +9582,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                     isVerified: _authorById[preset.userId]?.isVerified == true,
                     accentColor: _cardAccentColorFromHex(preset.accentColorHex),
                     metaText:
-                        '${_friendlyCount(viewsCount)} views • ${_friendlyTime(preset.createdAt)}',
+                        '${_friendlyCount(viewsCount)} views â€¢ ${_friendlyTime(preset.createdAt)}',
                     showCollectionCount: false,
                     collectionCountText: '',
                     menuItems: menuItems,
@@ -9781,7 +9781,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                                       : preset?.accentColorHex,
                                 ),
                                 metaText:
-                                    '${_friendlyCount(viewsCount)} views • ${_friendlyTime(createdAt)}',
+                                    '${_friendlyCount(viewsCount)} views â€¢ ${_friendlyTime(createdAt)}',
                                 showCollectionCount: isCollection,
                                 collectionCountText: isCollection
                                     ? '${collection.itemsCount}'
@@ -11442,7 +11442,7 @@ Map<String, dynamic> _payloadWithThreeDImageLayer(
 }) {
   final Map<String, dynamic> base = payload == null || !isThreeDPayload(payload)
       ? simpleMissingThreeDPayload(
-          preferredType: DeepXMediaType.missing3d,
+          preferredType: RayMaxMediaType.missing3d,
           reason: 'png_layers_only',
           editor: 'three_d_image_layers',
         )
@@ -11482,7 +11482,7 @@ Map<String, dynamic> _payloadWithThreeDImageLayer(
 Map<String, dynamic> _payloadWithThreeDModelLayer(
   Map<String, dynamic>? payload,
   UploadedAsset asset, {
-  required DeepXMediaType mediaType,
+  required RayMaxMediaType mediaType,
   required String name,
   required String format,
   required int byteSize,
@@ -11490,7 +11490,7 @@ Map<String, dynamic> _payloadWithThreeDModelLayer(
 }) {
   final Map<String, dynamic> base = payload == null || !isThreeDPayload(payload)
       ? simpleMissingThreeDPayload(
-          preferredType: DeepXMediaType.missing3d,
+          preferredType: RayMaxMediaType.missing3d,
           reason: 'model_layers_only',
           editor: 'three_d_model_layers',
         )
@@ -12592,7 +12592,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
   late Map<String, dynamic> _payload;
   late Map<String, dynamic> _transformDraft;
   late Map<String, dynamic> _viewerDraft;
-  late DeepXMediaType _selectedMediaType;
+  late RayMaxMediaType _selectedMediaType;
   bool _saving = false;
   bool _uploading = false;
   double _uploadProgress = 0;
@@ -12607,9 +12607,9 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     _transformDraft = _transformFromThreeDPayload(_payload);
     _viewerDraft = _viewerStateFromThreeDPayload(_payload);
     _selectedMediaType =
-        mediaTypeFromPayload(_payload) == DeepXMediaType.triangleMesh
-            ? DeepXMediaType.triangleMesh
-            : DeepXMediaType.gaussianSplat;
+        mediaTypeFromPayload(_payload) == RayMaxMediaType.triangleMesh
+            ? RayMaxMediaType.triangleMesh
+            : RayMaxMediaType.gaussianSplat;
   }
 
   void _applyTransform(Map<String, dynamic> transform) {
@@ -12639,7 +12639,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     );
   }
 
-  void _setMediaType(DeepXMediaType mediaType) {
+  void _setMediaType(RayMaxMediaType mediaType) {
     setState(() {
       _selectedMediaType = mediaType;
       if (threeDAssetFromPayload(_payload) == null) {
@@ -12661,8 +12661,8 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
   Future<void> _replaceAsset() async {
     if (_uploading) return;
     final messenger = ScaffoldMessenger.of(context);
-    final DeepXMediaType mediaType = _selectedMediaType;
-    final bool mesh = mediaType == DeepXMediaType.triangleMesh;
+    final RayMaxMediaType mediaType = _selectedMediaType;
+    final bool mesh = mediaType == RayMaxMediaType.triangleMesh;
     setState(() {
       _uploading = true;
       _uploadProgress = 0;
@@ -12770,10 +12770,10 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     }
   }
 
-  Future<void> _addModelLayer(DeepXMediaType mediaType) async {
+  Future<void> _addModelLayer(RayMaxMediaType mediaType) async {
     if (_uploading) return;
     final messenger = ScaffoldMessenger.of(context);
-    final bool mesh = mediaType == DeepXMediaType.triangleMesh;
+    final bool mesh = mediaType == RayMaxMediaType.triangleMesh;
     setState(() {
       _uploading = true;
       _uploadProgress = 0;
@@ -12885,7 +12885,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
     if (_saving) return;
     final messenger = ScaffoldMessenger.of(context);
     if (threeDAssetFromPayload(_payload) == null &&
-        mediaTypeFromPayload(_payload) != DeepXMediaType.missing3d &&
+        mediaTypeFromPayload(_payload) != RayMaxMediaType.missing3d &&
         !_hasThreeDImageLayers(_payload) &&
         !_hasThreeDModelLayers(_payload)) {
       messenger.showSnackBar(
@@ -12977,20 +12977,20 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  SegmentedButton<DeepXMediaType>(
-                    segments: const <ButtonSegment<DeepXMediaType>>[
-                      ButtonSegment<DeepXMediaType>(
-                        value: DeepXMediaType.gaussianSplat,
+                  SegmentedButton<RayMaxMediaType>(
+                    segments: const <ButtonSegment<RayMaxMediaType>>[
+                      ButtonSegment<RayMaxMediaType>(
+                        value: RayMaxMediaType.gaussianSplat,
                         icon: Icon(Icons.blur_on_rounded),
                         label: Text('Gaussian'),
                       ),
-                      ButtonSegment<DeepXMediaType>(
-                        value: DeepXMediaType.triangleMesh,
+                      ButtonSegment<RayMaxMediaType>(
+                        value: RayMaxMediaType.triangleMesh,
                         icon: Icon(Icons.view_in_ar_outlined),
                         label: Text('Mesh'),
                       ),
                     ],
-                    selected: <DeepXMediaType>{_selectedMediaType},
+                    selected: <RayMaxMediaType>{_selectedMediaType},
                     onSelectionChanged: (value) => _setMediaType(value.first),
                   ),
                   const SizedBox(height: 12),
@@ -13020,7 +13020,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                         onPressed: _uploading
                             ? null
                             : () => _addModelLayer(
-                                  DeepXMediaType.triangleMesh,
+                                  RayMaxMediaType.triangleMesh,
                                 ),
                         icon: const Icon(Icons.view_in_ar_outlined),
                         label: const Text('Add Mesh Layer'),
@@ -13029,7 +13029,7 @@ class _ThreeDAssetEditorPageState extends State<_ThreeDAssetEditorPage> {
                         onPressed: _uploading
                             ? null
                             : () => _addModelLayer(
-                                  DeepXMediaType.gaussianSplat,
+                                  RayMaxMediaType.gaussianSplat,
                                 ),
                         icon: const Icon(Icons.blur_on_rounded),
                         label: const Text('Add Splat Layer'),
@@ -13446,7 +13446,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         if (!isThreeDPayload(payload)) {
           throw Exception('Post detail content must be 3D.');
         }
-        if (mediaTypeFromPayload(payload) != DeepXMediaType.missing3d &&
+        if (mediaTypeFromPayload(payload) != RayMaxMediaType.missing3d &&
             threeDAssetFromPayload(payload) == null) {
           throw Exception('Post needs one 3D asset.');
         }
@@ -13999,7 +13999,7 @@ class _PostCardComposerPageState extends State<_PostCardComposerPage> {
         baseColor: const Color(0xFFF0F0F0),
         accentColor: _cardAccentColorFromHex(_accentColorHex),
         title: _titleController.text.trim(),
-        metaText: '0 views • now',
+        metaText: '0 views â€¢ now',
         verticalUsername: 'USER',
         priceLabel: _cardPriceLabel(
           isPaid: _isPaidContent,
@@ -14681,7 +14681,7 @@ class _SettingsTabState extends State<_SettingsTab> {
                       fontSize: 18,
                       fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
-              Text('Choose how DeepX looks.',
+              Text('Choose how RayMax looks.',
                   style: TextStyle(color: cs.onSurfaceVariant)),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(

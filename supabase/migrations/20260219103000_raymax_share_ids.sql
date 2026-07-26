@@ -1,4 +1,4 @@
--- DeepX share id support for routeable post/collection links.
+﻿-- RayMax share id support for routeable post/collection links.
 
 create or replace function public.generate_base62_id(p_len integer default 8)
 returns text

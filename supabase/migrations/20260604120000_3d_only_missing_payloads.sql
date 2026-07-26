@@ -1,4 +1,4 @@
--- DeepX is 3D-first: legacy image detail payloads become explicit missing-3D placeholders.
+﻿-- RayMax is 3D-first: legacy image detail payloads become explicit missing-3D placeholders.
 -- Card/collection thumbnails remain image payloads and are intentionally untouched.
 
 alter table if exists public.presets

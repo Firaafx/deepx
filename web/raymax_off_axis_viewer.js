@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   const viewers = new Map();
   let modulePromise = null;
   let mediaPipePromise = null;
@@ -73,9 +73,9 @@
   installLifecycleHandlers();
 
   function injectStyles() {
-    if (document.getElementById('deepx-off-axis-style')) return;
+    if (document.getElementById('raymax-off-axis-style')) return;
     const style = document.createElement('style');
-    style.id = 'deepx-off-axis-style';
+    style.id = 'raymax-off-axis-style';
     style.textContent = `
       .dx-off-axis-root {
         position: relative;
@@ -94,43 +94,54 @@
         touch-action: none;
       }
       .dx-viewer-button {
-        min-width: 34px;
-        width: auto;
-        height: 30px;
-        padding: 0 6px;
+        width: 36px;
+        height: 36px;
+        padding: 0;
         border: 0;
-        border-radius: 4px;
-        background: rgba(0,0,0,0.5);
-        color: #fff;
+        border-radius: 10px;
+        background: rgba(25, 35, 54, 0.48);
+        color: rgba(255,255,255,0.94);
         display: grid;
         place-items: center;
         cursor: pointer;
-        font: 700 11px/1 system-ui, sans-serif;
-        backdrop-filter: blur(6px);
-        transition: background 140ms ease, opacity 140ms ease;
+        backdrop-filter: blur(12px) saturate(130%);
+        -webkit-backdrop-filter: blur(12px) saturate(130%);
+        box-shadow: 0 8px 22px rgba(0,0,0,0.18);
+        transition: background 140ms ease, opacity 140ms ease, transform 140ms ease;
       }
-      .dx-viewer-button:hover { background: rgba(0,0,0,0.72); }
-      .dx-viewer-button.is-active { background: #2563eb; }
-      .dx-viewer-button.dx-spatial-button {
-        min-width: 92px;
-        padding: 0 9px;
+      .dx-viewer-button:hover { background: rgba(58, 81, 119, 0.72); transform: translateY(-1px); }
+      .dx-viewer-button.is-active { background: rgba(54, 122, 246, 0.82); }
+      .dx-viewer-icon {
+        width: 18px;
+        height: 18px;
+        display: block;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
       }
       .dx-spatial-group {
+        position: relative;
         display: flex;
-        align-items: center;
-        gap: 4px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
       }
-      .dx-spatial-label {
-        height: 30px;
-        padding: 0 7px;
-        border-radius: 4px;
-        background: rgba(0,0,0,0.42);
-        color: rgba(255,255,255,0.82);
-        display: grid;
-        place-items: center;
-        font: 700 10px/1 system-ui, sans-serif;
-        letter-spacing: 0;
-        pointer-events: none;
+      .dx-spatial-menu {
+        display: none;
+        gap: 6px;
+        padding: 6px;
+        border-radius: 12px;
+        background: rgba(25, 35, 54, 0.46);
+        backdrop-filter: blur(12px) saturate(130%);
+        -webkit-backdrop-filter: blur(12px) saturate(130%);
+        box-shadow: 0 10px 24px rgba(0,0,0,0.22);
+      }
+      .dx-spatial-group.is-open .dx-spatial-menu { display: grid; }
+      .dx-viewer-button:focus-visible {
+        outline: 2px solid rgba(147,197,253,0.95);
+        outline-offset: 2px;
       }
       .dx-viewer-button:disabled {
         cursor: default;
@@ -242,8 +253,8 @@
         z-index: 14;
         width: 256px;
         height: 392px;
-        border: 2px solid #fff;
-        border-radius: 8px;
+        border: 0;
+        border-radius: 12px;
         overflow: hidden;
         background: #000;
         box-shadow: 0 16px 36px rgba(0,0,0,0.42);
@@ -252,17 +263,22 @@
       }
       .dx-tracking-controls {
         position: absolute;
-        inset: 0 0 auto 0;
-        min-height: 116px;
-        padding: 8px;
+        top: 16px;
+        right: 16px;
+        width: min(292px, calc(100% - 32px));
+        padding: 10px;
         box-sizing: border-box;
-        background: rgba(0,0,0,0.86);
+        border-radius: 12px;
+        background: rgba(25, 35, 54, 0.52);
         color: rgba(255,255,255,0.92);
         font: 700 10px/1.2 system-ui, sans-serif;
         display: grid;
         gap: 4px;
-        z-index: 3;
+        z-index: 15;
         pointer-events: auto;
+        backdrop-filter: blur(12px) saturate(130%);
+        -webkit-backdrop-filter: blur(12px) saturate(130%);
+        box-shadow: 0 12px 28px rgba(0,0,0,0.24);
       }
       .dx-tracking-control {
         display: grid;
@@ -281,17 +297,23 @@
       }
       .dx-camera-stats {
         position: absolute;
-        inset: 116px 0 auto 0;
+        top: 148px;
+        right: 16px;
+        width: min(292px, calc(100% - 32px));
         min-height: 84px;
-        padding: 8px;
+        padding: 10px;
         box-sizing: border-box;
-        background: rgba(0,0,0,0.82);
+        border-radius: 12px;
+        background: rgba(25, 35, 54, 0.52);
         color: rgba(255,255,255,0.92);
         font: 600 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 3px 8px;
-        z-index: 2;
+        z-index: 15;
+        backdrop-filter: blur(12px) saturate(130%);
+        -webkit-backdrop-filter: blur(12px) saturate(130%);
+        box-shadow: 0 12px 28px rgba(0,0,0,0.24);
       }
       .dx-camera-preview video,
       .dx-camera-preview canvas {
@@ -299,12 +321,13 @@
         left: 0;
         right: 0;
         bottom: 0;
-        top: 200px;
+        top: 0;
         width: 100%;
-        height: calc(100% - 200px);
+        height: 100%;
         object-fit: cover;
       }
       .dx-camera-preview video { transform: scaleX(-1); }
+      .dx-off-axis-root.dx-clean-view .dx-viewer-overlay { display: none !important; }
       .dx-loading-message {
         height: 100%;
         display: grid;
@@ -417,18 +440,18 @@
 
   function loadScriptOnce(src, globalName) {
     if (globalName && window[globalName]) return Promise.resolve();
-    const existing = document.querySelector(`script[data-deepx-src="${src}"]`);
-    if (existing && existing.__deepxPromise) return existing.__deepxPromise;
+    const existing = document.querySelector(`script[data-raymax-src="${src}"]`);
+    if (existing && existing.__raymaxPromise) return existing.__raymaxPromise;
     const script = existing || document.createElement('script');
-    script.setAttribute('data-deepx-src', src);
+    script.setAttribute('data-raymax-src', src);
     script.crossOrigin = 'anonymous';
     script.src = src;
-    script.__deepxPromise = new Promise((resolve, reject) => {
+    script.__raymaxPromise = new Promise((resolve, reject) => {
       script.addEventListener('load', () => resolve(), { once: true });
       script.addEventListener('error', () => reject(new Error(`Unable to load ${src}`)), { once: true });
     });
     if (!existing) document.head.appendChild(script);
-    return script.__deepxPromise;
+    return script.__raymaxPromise;
   }
 
   function loadMediaPipe() {
@@ -866,7 +889,7 @@
       : null;
     try {
       window.postMessage(JSON.stringify({
-        type: 'deepx-off-axis-load-state',
+        type: 'raymax-off-axis-load-state',
         elementId,
         status,
         progress: safeProgress,
@@ -879,7 +902,7 @@
     if (!ctx || (!ctx.editable && !force)) return;
     try {
       window.postMessage(JSON.stringify({
-        type: 'deepx-off-axis-transform-changed',
+        type: 'raymax-off-axis-transform-changed',
         elementId: ctx.elementId,
         transform: transformSnapshot(ctx.transform)
       }), window.location.origin);
@@ -890,7 +913,7 @@
     if (!ctx || (!ctx.editable && !force)) return;
     try {
       window.postMessage(JSON.stringify({
-        type: 'deepx-off-axis-viewer-state-changed',
+        type: 'raymax-off-axis-viewer-state-changed',
         elementId: ctx.elementId,
         viewer: viewerStateSnapshot(ctx)
       }), window.location.origin);
@@ -1307,6 +1330,9 @@
       this.showSpatialViewButton = options.showSpatialViewButton === true;
       this.spatialEye = normalizeSpatialEye(options.spatialEye);
       this.redCyanEnabled = false;
+      this.animationsPaused = false;
+      this.trackingPanelVisible = false;
+      this.overlaysHidden = false;
       this.viewerState = viewerStateFromPayload(payload);
       this.previewVisible = false;
       this.gridPreference = this.viewerState.gridVisible;
@@ -1486,7 +1512,7 @@
       const promise = loader.loadAsync(env.url).then((texture) => {
         texture.mapping = this.THREE.EquirectangularReflectionMapping;
         texture.userData = texture.userData || {};
-        texture.userData.deepxCachedTexture = true;
+        texture.userData.raymaxCachedTexture = true;
         return texture;
       });
       textureCache.set(key, promise);
@@ -1601,7 +1627,7 @@
           : await this.addGaussianSplat(layer, `Loading ${layer.name}`);
         if (this.disposed) return null;
         object.userData = object.userData || {};
-        object.userData.deepxModelLayerId = layer.id;
+        object.userData.raymaxModelLayerId = layer.id;
         this.modelLayerObjects.set(layer.id, object);
         this.applyModelLayerTransform(layer);
         if (layer.autoFit === true) {
@@ -1736,7 +1762,12 @@
       if (!object || !Array.isArray(clips) || !clips.length) return;
       const mixer = new this.THREE.AnimationMixer(object);
       for (const clip of clips) {
-        try { mixer.clipAction(clip).play(); } catch (_) {}
+        try {
+          const action = mixer.clipAction(clip);
+          action.setLoop(this.THREE.LoopRepeat, Infinity);
+          action.clampWhenFinished = false;
+          action.play();
+        } catch (_) {}
       }
       this.animationMixers.push(mixer);
     }
@@ -1744,7 +1775,7 @@
     markSharedAsset(object) {
       object.traverse((node) => {
         node.userData = node.userData || {};
-        node.userData.deepxSharedAsset = true;
+        node.userData.raymaxSharedAsset = true;
       });
     }
 
@@ -1852,7 +1883,7 @@
         texture.minFilter = this.THREE.LinearFilter;
         texture.magFilter = this.THREE.LinearFilter;
         texture.userData = texture.userData || {};
-        texture.userData.deepxCachedTexture = true;
+        texture.userData.raymaxCachedTexture = true;
         return texture;
       });
       textureCache.set(src, promise);
@@ -1959,8 +1990,8 @@
           fog: true
         });
         const mesh = new this.THREE.Mesh(geometry, material);
-        mesh.userData.deepxImageLayerId = layer.id;
-        mesh.userData.deepxImageLayerAspect = 1;
+        mesh.userData.raymaxImageLayerId = layer.id;
+        mesh.userData.raymaxImageLayerAspect = 1;
         mesh.visible = layer.visible !== false;
         group.add(mesh);
         this.imageLayerObjects.push(mesh);
@@ -1972,7 +2003,7 @@
             const image = texture.image || {};
             const width = Number(image.width) || 1;
             const height = Number(image.height) || 1;
-            mesh.userData.deepxImageLayerAspect = width / Math.max(height, 1);
+            mesh.userData.raymaxImageLayerAspect = width / Math.max(height, 1);
             material.needsUpdate = true;
             this.applyImageLayerTransform(layer);
             if (layer.autoFit === true) {
@@ -2005,14 +2036,14 @@
     }
 
     imageLayerMesh(id) {
-      return this.imageLayerObjects.find((mesh) => mesh.userData && mesh.userData.deepxImageLayerId === id) || null;
+      return this.imageLayerObjects.find((mesh) => mesh.userData && mesh.userData.raymaxImageLayerId === id) || null;
     }
 
     applyImageLayerTransform(layer) {
       const mesh = layer ? this.imageLayerMesh(layer.id) : null;
       if (!mesh) return;
       const transform = layer.transform;
-      const aspect = Number(mesh.userData.deepxImageLayerAspect) || 1;
+      const aspect = Number(mesh.userData.raymaxImageLayerAspect) || 1;
       mesh.position.set(transform.position[0], transform.position[1], transform.position[2]);
       mesh.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
       mesh.scale.set(transform.scale * aspect, transform.scale, transform.scale);
@@ -2235,7 +2266,7 @@
         light = new this.THREE.PointLight(layer.color, layer.intensity, 0, 1);
       }
       light.userData = light.userData || {};
-      light.userData.deepxLightLayerId = layer.id;
+      light.userData.raymaxLightLayerId = layer.id;
       this.scene.add(light);
       this.lightLayerObjects.set(layer.id, { light, target });
       this.applyLightLayerTransform(layer);
@@ -2420,11 +2451,11 @@
 
     buildChrome() {
       this.preview = document.createElement('div');
-      this.preview.className = 'dx-camera-preview';
+      this.preview.className = 'dx-camera-preview dx-viewer-overlay';
       this.trackingControls = document.createElement('div');
-      this.trackingControls.className = 'dx-tracking-controls';
+      this.trackingControls.className = 'dx-tracking-controls dx-viewer-overlay';
       this.statsPanel = document.createElement('div');
-      this.statsPanel.className = 'dx-camera-stats';
+      this.statsPanel.className = 'dx-camera-stats dx-viewer-overlay';
       this.previewVideo = document.createElement('video');
       this.previewVideo.autoplay = true;
       this.previewVideo.muted = true;
@@ -2433,31 +2464,54 @@
       this.previewCanvas.width = 320;
       this.previewCanvas.height = 240;
       this.buildTrackingControls();
-      this.preview.appendChild(this.trackingControls);
-      this.preview.appendChild(this.statsPanel);
       this.preview.appendChild(this.previewVideo);
       this.preview.appendChild(this.previewCanvas);
       this.root.appendChild(this.preview);
+      this.root.appendChild(this.trackingControls);
+      this.root.appendChild(this.statsPanel);
+      this.setTrackingPanelVisible(false);
 
       if (this.showModelControls) this.buildModelControls();
       this.buildBottomButtons();
     }
 
-    makeButton(label, title, onClick) {
+    makeButton(icon, title, onClick) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'dx-viewer-button';
-      button.textContent = label;
+      button.innerHTML = this.iconSvg(icon);
       button.title = title;
       button.setAttribute('aria-label', title);
       button.addEventListener('click', onClick);
       return button;
     }
 
+    iconSvg(icon) {
+      const paths = {
+        fullscreen: '<path d="M7 3H3v4M17 3h4v4M3 17v4h4M21 17v4h-4"/>',
+        minimize: '<path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/>',
+        sliders: '<path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 4v4M16 10v4M11 16v4"/>',
+        bug: '<rect x="7" y="7" width="10" height="12" rx="4"/><path d="M12 4v3M5 10h2M17 10h2M5 15h2M17 15h2M9 19l-2 2M15 19l2 2"/>',
+        grid: '<path d="M4 4h16v16H4zM4 10h16M10 4v16"/>',
+        target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+        cube: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',
+        camera: '<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/>',
+        reset: '<path d="M4 8V4h4"/><path d="M4.7 4.7A8 8 0 1 1 4 15"/>',
+        spatial: '<path d="M12 3 4 8l8 5 8-5-8-5Z"/><path d="m4 12 8 5 8-5M4 16l8 5 8-5"/>',
+        eye: '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/>',
+        anaglyph: '<circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/>',
+        pause: '<path d="M8 5v14M16 5v14"/>',
+        play: '<path d="m9 5 10 7-10 7z"/>',
+        panels: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/>',
+        plus: '<path d="M12 5v14M5 12h14"/>'
+      };
+      return `<svg class="dx-viewer-icon" viewBox="0 0 24 24" aria-hidden="true">${paths[icon] || paths.sliders}</svg>`;
+    }
+
     buildModelControls() {
       this.modelPanel = document.createElement('div');
-      this.modelPanel.className = 'dx-model-panel';
-      const closedButton = this.makeButton('CTL', 'Model controls', () => {
+      this.modelPanel.className = 'dx-model-panel dx-viewer-overlay';
+      const closedButton = this.makeButton('sliders', 'Model controls', () => {
         this.controlsOpen = true;
         this.refreshControlPanel();
       });
@@ -2469,7 +2523,7 @@
       if (!this.modelPanel) return;
       this.modelPanel.innerHTML = '';
       if (!this.controlsOpen) {
-        this.modelPanel.appendChild(this.makeButton('CTL', 'Model controls', () => {
+        this.modelPanel.appendChild(this.makeButton('sliders', 'Model controls', () => {
           this.controlsOpen = true;
           this.refreshControlPanel();
         }));
@@ -2479,7 +2533,7 @@
       panel.className = 'dx-model-controls';
       const header = document.createElement('div');
       header.className = 'dx-model-header';
-      header.appendChild(this.makeButton('CTL', 'Close controls', () => {
+      header.appendChild(this.makeButton('sliders', 'Close controls', () => {
         this.controlsOpen = false;
         this.refreshControlPanel();
       }));
@@ -2538,8 +2592,8 @@
       const row = document.createElement('div');
       row.className = 'dx-control-row';
       row.append(
-        this.makeButton('+ POINT', 'Add point light', () => this.addLightLayer('point')),
-        this.makeButton('+ SPOT', 'Add spot light', () => this.addLightLayer('spot'))
+        this.makeButton('plus', 'Add point light', () => this.addLightLayer('point')),
+        this.makeButton('plus', 'Add spot light', () => this.addLightLayer('spot'))
       );
       return row;
     }
@@ -2711,52 +2765,64 @@
 
     buildBottomButtons() {
       const buttons = document.createElement('div');
-      buttons.className = 'dx-bottom-buttons';
-      const fullscreen = this.makeButton('FS', 'Enter fullscreen', () => this.toggleFullscreen());
-      const settings = this.makeButton('CAL', 'Calibration settings', () => this.showCalibration());
-      const debug = this.makeButton('DBG', 'Toggle debug mode', () => {
+      buttons.className = 'dx-bottom-buttons dx-viewer-overlay';
+      const fullscreen = this.makeButton('fullscreen', 'Enter fullscreen', () => this.toggleFullscreen());
+      const settings = this.makeButton('sliders', 'Calibration settings', () => this.showCalibration());
+      const debug = this.makeButton('bug', 'Toggle debug mode', () => {
         this.setDebugMode(!this.debugMode);
         debug.classList.toggle('is-active', this.debugMode);
       });
-      const grid = this.makeButton('GRID', 'Toggle grid', () => {
+      const grid = this.makeButton('grid', 'Toggle grid', () => {
         this.setGridVisible(!(this.gridPreference === true), { notify: true, preference: true });
       });
       grid.classList.toggle('is-active', this.gridPreference === true);
-      const darts = this.makeButton('DART', 'Toggle darts', () => {
+      const darts = this.makeButton('target', 'Toggle depth targets', () => {
         this.setDartsVisible(!this.dartsVisible, true);
       });
       darts.classList.toggle('is-active', this.dartsVisible);
-      const object = this.makeButton('OBJ', 'Toggle 3D object', () => {
+      const object = this.makeButton('cube', 'Toggle 3D objects', () => {
         this.setObjectVisible(!this.objectVisible, true);
       });
       object.classList.toggle('is-active', this.objectVisible);
-      const preview = this.makeButton('CAM', 'Toggle camera preview', () => {
+      const preview = this.makeButton('camera', 'Toggle camera preview', () => {
         this.setPreviewVisible(!this.previewVisible);
         preview.classList.toggle('is-active', this.previewVisible);
       });
-      const reset = this.makeButton('RST', 'Reset model transform', () => this.resetTransform());
+      const trackingPanel = this.makeButton('panels', 'Show tracking controls and stats', () => {
+        this.setTrackingPanelVisible(!this.trackingPanelVisible);
+      });
+      const pause = this.makeButton('pause', 'Pause all 3D animations', () => {
+        this.setAnimationsPaused(!this.animationsPaused);
+      });
       const spatialGroup = document.createElement('div');
       spatialGroup.className = 'dx-spatial-group';
-      const spatialLabel = document.createElement('div');
-      spatialLabel.className = 'dx-spatial-label';
-      spatialLabel.textContent = 'Spatial View';
-      const spatial = this.makeButton('Free Viewing', 'Open free viewing spatial page', () => this.requestSpatialView());
-      spatial.classList.add('dx-spatial-button');
-      const redCyan = this.makeButton('Red/Cyan', 'Toggle red cyan spatial view', () => {
+      const spatial = this.makeButton('spatial', 'Spatial view options', () => {
+        const open = !spatialGroup.classList.contains('is-open');
+        spatialGroup.classList.toggle('is-open', open);
+        this.spatialMenuOpen = open;
+        spatial.classList.toggle('is-active', open || this.redCyanEnabled);
+      });
+      const spatialMenu = document.createElement('div');
+      spatialMenu.className = 'dx-spatial-menu';
+      const freeViewing = this.makeButton('eye', 'Open free viewing spatial page', () => this.requestSpatialView());
+      const redCyan = this.makeButton('anaglyph', 'Toggle red/cyan spatial view', () => {
         this.setRedCyanEnabled(!this.redCyanEnabled);
       });
-      redCyan.classList.add('dx-spatial-button');
-      spatialGroup.append(spatialLabel, spatial, redCyan);
+      spatialMenu.append(freeViewing, redCyan);
+      spatialGroup.append(spatial, spatialMenu);
       this.gridButton = grid;
       this.dartsButton = darts;
       this.objectButton = object;
       this.previewButton = preview;
+      this.trackingPanelButton = trackingPanel;
+      this.pauseButton = pause;
+      this.spatialButton = spatial;
       this.redCyanButton = redCyan;
       if (this.showSpatialViewButton) buttons.append(spatialGroup);
-      buttons.append(fullscreen, settings, debug, grid, darts, object, preview, reset);
+      buttons.append(fullscreen, settings, debug, grid, darts, object, preview, trackingPanel, pause);
       this.root.appendChild(buttons);
       document.addEventListener('fullscreenchange', () => {
-        fullscreen.textContent = document.fullscreenElement ? 'MIN' : 'FS';
+        fullscreen.innerHTML = this.iconSvg(document.fullscreenElement ? 'minimize' : 'fullscreen');
         fullscreen.title = document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen';
       });
       const onKeyDown = (event) => this.handleShortcut(event);
@@ -2782,6 +2848,9 @@
       } else if (key === 'c') {
         event.preventDefault();
         this.setPreviewVisible(!this.previewVisible);
+      } else if (key === 'h') {
+        event.preventDefault();
+        this.setOverlaysHidden(!this.overlaysHidden);
       }
     }
 
@@ -2799,7 +2868,7 @@
 
     requestSpatialView() {
       window.parent.postMessage({
-        type: 'deepx-off-axis-spatial-view-requested',
+        type: 'raymax-off-axis-spatial-view-requested',
         elementId: this.elementId
       }, '*');
     }
@@ -2807,6 +2876,35 @@
     setRedCyanEnabled(enabled) {
       this.redCyanEnabled = enabled === true;
       if (this.redCyanButton) this.redCyanButton.classList.toggle('is-active', this.redCyanEnabled);
+      if (this.spatialButton) this.spatialButton.classList.toggle('is-active', this.redCyanEnabled || (this.spatialMenuOpen === true));
+    }
+
+    setAnimationsPaused(paused) {
+      this.animationsPaused = paused === true;
+      if (this.pauseButton) {
+        this.pauseButton.classList.toggle('is-active', this.animationsPaused);
+        this.pauseButton.innerHTML = this.iconSvg(this.animationsPaused ? 'play' : 'pause');
+        this.pauseButton.title = this.animationsPaused ? 'Resume all 3D animations' : 'Pause all 3D animations';
+        this.pauseButton.setAttribute('aria-label', this.pauseButton.title);
+      }
+    }
+
+    setTrackingPanelVisible(visible) {
+      this.trackingPanelVisible = visible === true;
+      const display = this.trackingPanelVisible ? 'grid' : 'none';
+      if (this.trackingControls) this.trackingControls.style.display = display;
+      if (this.statsPanel) this.statsPanel.style.display = display;
+      if (this.trackingPanelButton) this.trackingPanelButton.classList.toggle('is-active', this.trackingPanelVisible);
+      if (this.trackingPanelButton) {
+        this.trackingPanelButton.title = this.trackingPanelVisible ? 'Hide tracking controls and stats' : 'Show tracking controls and stats';
+        this.trackingPanelButton.setAttribute('aria-label', this.trackingPanelButton.title);
+      }
+      if (this.trackingPanelVisible) this.updateStatsPanel();
+    }
+
+    setOverlaysHidden(hidden) {
+      this.overlaysHidden = hidden === true;
+      this.root.classList.toggle('dx-clean-view', this.overlaysHidden);
     }
 
     showCalibration() {
@@ -2816,7 +2914,7 @@
       }
       const calibration = getCalibration();
       const modal = document.createElement('div');
-      modal.className = 'dx-calibration-modal';
+      modal.className = 'dx-calibration-modal dx-viewer-overlay';
       const card = document.createElement('div');
       card.className = 'dx-calibration-card';
       const heading = document.createElement('h3');
@@ -3080,11 +3178,11 @@
       const faces = results && results.multiFaceLandmarks ? results.multiFaceLandmarks : [];
       if (faces.length && window.drawConnectors && window.drawLandmarks) {
         for (const landmarks of faces) {
-          window.drawConnectors(ctx, landmarks, window.FACEMESH_TESSELATION, { color: 'rgba(255,255,255,0.2)', lineWidth: 0.8 });
-          window.drawConnectors(ctx, landmarks, window.FACEMESH_RIGHT_EYE, { color: 'rgba(255,255,255,0.8)', lineWidth: 1.5 });
-          window.drawConnectors(ctx, landmarks, window.FACEMESH_LEFT_EYE, { color: 'rgba(255,255,255,0.8)', lineWidth: 1.5 });
-          window.drawConnectors(ctx, landmarks, window.FACEMESH_FACE_OVAL, { color: 'rgba(255,255,255,0.8)', lineWidth: 1.5 });
-          window.drawLandmarks(ctx, landmarks, { color: 'rgba(255,255,255,0.6)', lineWidth: 0.8, radius: 1.2 });
+          window.drawConnectors(ctx, landmarks, window.FACEMESH_TESSELATION, { color: 'rgba(255,255,255,0.16)', lineWidth: 0.55 });
+          window.drawConnectors(ctx, landmarks, window.FACEMESH_RIGHT_EYE, { color: 'rgba(255,255,255,0.4)', lineWidth: 0.7 });
+          window.drawConnectors(ctx, landmarks, window.FACEMESH_LEFT_EYE, { color: 'rgba(255,255,255,0.4)', lineWidth: 0.7 });
+          window.drawConnectors(ctx, landmarks, window.FACEMESH_FACE_OVAL, { color: 'rgba(255,255,255,0.4)', lineWidth: 0.7 });
+          window.drawLandmarks(ctx, landmarks, { color: 'rgba(255,255,255,0.5)', lineWidth: 0.45, radius: 0.65 });
         }
       }
       ctx.restore();
@@ -3098,7 +3196,7 @@
     }
 
     updateStatsPanel() {
-      if (!this.statsPanel || !this.previewVisible) return;
+      if (!this.statsPanel || !this.trackingPanelVisible) return;
       const stats = faceTracker.stats || {};
       const age = faceTracker.lastResultsAt ? performance.now() - faceTracker.lastResultsAt : null;
       const pose = this.headPose || defaultHeadPose();
@@ -3368,8 +3466,10 @@
       const now = performance.now();
       const delta = this.lastFrameAt ? (now - this.lastFrameAt) / 1000 : 0;
       this.lastFrameAt = now;
-      for (const mixer of this.animationMixers) {
-        try { mixer.update(delta); } catch (_) {}
+      if (!this.animationsPaused) {
+        for (const mixer of this.animationMixers) {
+          try { mixer.update(delta); } catch (_) {}
+        }
       }
       this.frameCounter++;
       if (now - this.fpsStartedAt >= 500) {
@@ -3443,7 +3543,7 @@
       if (!material) return;
       for (const key of Object.keys(material)) {
         const value = material[key];
-        if (value && value.isTexture && typeof value.dispose === 'function' && !(value.userData && value.userData.deepxCachedTexture)) {
+        if (value && value.isTexture && typeof value.dispose === 'function' && !(value.userData && value.userData.raymaxCachedTexture)) {
           value.dispose();
         }
       }
@@ -3457,7 +3557,7 @@
       }
       if (typeof object.traverse === 'function') {
         object.traverse((node) => {
-          if (node.userData && node.userData.deepxSharedAsset) return;
+          if (node.userData && node.userData.raymaxSharedAsset) return;
           if (node.geometry && typeof node.geometry.dispose === 'function') node.geometry.dispose();
           if (Array.isArray(node.material)) {
             node.material.forEach((material) => this.disposeMaterial(material));
@@ -3472,8 +3572,8 @@
   async function mount(elementId, payloadJson, optionsJson) {
     const root = document.getElementById(elementId);
     if (!root) return;
-    const token = (root.__deepxOffAxisMountToken || 0) + 1;
-    root.__deepxOffAxisMountToken = token;
+    const token = (root.__raymaxOffAxisMountToken || 0) + 1;
+    root.__raymaxOffAxisMountToken = token;
     dispose(elementId, { keepRootMessage: true });
 
     const payload = parseJson(payloadJson);
@@ -3501,16 +3601,16 @@
     );
     try {
       const modules = await loadModules();
-      if (root.__deepxOffAxisMountToken !== token) return;
+      if (root.__raymaxOffAxisMountToken !== token) return;
       const ctx = new ViewerContext(elementId, root, payload, options, modules);
       viewers.set(elementId, ctx);
       await ctx.initialize();
-      if (root.__deepxOffAxisMountToken !== token || ctx.disposed) {
+      if (root.__raymaxOffAxisMountToken !== token || ctx.disposed) {
         ctx.dispose();
       }
     } catch (error) {
       console.error(error);
-      if (root.__deepxOffAxisMountToken === token) {
+      if (root.__raymaxOffAxisMountToken === token) {
         const label = error && error.message ? error.message : 'Unable to load 3D asset.';
         notifyLoadState(elementId, 'error', null, label);
         setMessage(root, label);
@@ -3571,7 +3671,7 @@
     return ctx ? ctx.isAlive() : false;
   }
 
-  window.DeepXOffAxisViewer = {
+  window.RayMaxOffAxisViewer = {
     mount,
     dispose,
     setEditable,

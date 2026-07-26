@@ -1,4 +1,4 @@
--- DeepX v1.0.021 publish/tracker/guest feed upgrades.
+﻿-- RayMax v1.0.021 publish/tracker/guest feed upgrades.
 
 -- 1) Extend presets for publish metadata, visibility, and thumbnail payloads.
 alter table if exists public.presets

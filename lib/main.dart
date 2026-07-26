@@ -114,7 +114,7 @@ class _MyAppState extends State<MyApp> {
     }
 
     return MaterialApp(
-      title: 'DeepX',
+      title: 'RayMax',
       themeMode: _resolvedTheme,
       theme: ThemeData(
         brightness: Brightness.light,

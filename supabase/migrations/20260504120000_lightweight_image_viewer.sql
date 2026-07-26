@@ -1,8 +1,8 @@
--- DeepX lightweight image viewer migration.
+﻿-- RayMax lightweight image viewer migration.
 -- Normalizes active render payloads to a single image URL while preserving
 -- the existing render_mode enum for storage compatibility.
 
-create or replace function public.deepx_extract_image_url(p_payload jsonb)
+create or replace function public.raymax_extract_image_url(p_payload jsonb)
 returns text
 language plpgsql
 immutable
@@ -92,7 +92,7 @@ begin
 end;
 $$;
 
-create or replace function public.deepx_simple_image_payload(
+create or replace function public.raymax_simple_image_payload(
   p_payload jsonb,
   p_source_mode text,
   p_editor text
@@ -105,7 +105,7 @@ as $$
     'schemaVersion', 2,
     'mode', '2d',
     'scene', jsonb_build_object(
-      'imageUrl', coalesce(public.deepx_extract_image_url(p_payload), '')
+      'imageUrl', coalesce(public.raymax_extract_image_url(p_payload), '')
     ),
     'controls', '{}'::jsonb,
     'meta', jsonb_build_object(
@@ -117,12 +117,12 @@ $$;
 
 update public.presets
 set
-  payload = public.deepx_simple_image_payload(
+  payload = public.raymax_simple_image_payload(
     payload,
     mode::text,
     'lightweight_image_migration'
   ),
-  thumbnail_payload = public.deepx_simple_image_payload(
+  thumbnail_payload = public.raymax_simple_image_payload(
     coalesce(nullif(thumbnail_payload, '{}'::jsonb), payload),
     coalesce(thumbnail_mode::text, mode::text),
     'lightweight_thumbnail_migration'
@@ -132,7 +132,7 @@ set
 
 update public.collection_items
 set
-  preset_snapshot = public.deepx_simple_image_payload(
+  preset_snapshot = public.raymax_simple_image_payload(
     preset_snapshot,
     mode::text,
     'lightweight_collection_item_migration'
@@ -149,7 +149,7 @@ with first_items as (
 )
 update public.collections as c
 set
-  thumbnail_payload = public.deepx_simple_image_payload(
+  thumbnail_payload = public.raymax_simple_image_payload(
     coalesce(nullif(c.thumbnail_payload, '{}'::jsonb), first_items.preset_snapshot, '{}'::jsonb),
     coalesce(c.thumbnail_mode::text, first_items.mode::text, '2d'),
     'lightweight_collection_thumbnail_migration'
@@ -160,7 +160,7 @@ where first_items.collection_id = c.id;
 
 update public.collections
 set
-  thumbnail_payload = public.deepx_simple_image_payload(
+  thumbnail_payload = public.raymax_simple_image_payload(
     coalesce(nullif(thumbnail_payload, '{}'::jsonb), '{}'::jsonb),
     coalesce(thumbnail_mode::text, '2d'),
     'lightweight_collection_thumbnail_migration'

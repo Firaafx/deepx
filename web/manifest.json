@@ -1,6 +1,6 @@
-{
-    "name": "deepx",
-    "short_name": "deepx",
+﻿{
+  "name": "RayMax",
+  "short_name": "RayMax",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

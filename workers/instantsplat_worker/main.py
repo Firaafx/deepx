@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import mimetypes
@@ -14,11 +14,11 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 
-SOURCE_BUCKET_FALLBACK = "deepx-3d-sources"
-ASSET_BUCKET = os.getenv("THREE_D_ASSETS_BUCKET", "deepx-3d-assets")
+SOURCE_BUCKET_FALLBACK = "raymax-3d-sources"
+ASSET_BUCKET = os.getenv("THREE_D_ASSETS_BUCKET", "raymax-3d-assets")
 PREFERRED_FORMAT = os.getenv("PREFERRED_SPLAT_FORMAT", "ksplat").lstrip(".")
 
-app = FastAPI(title="DeepX InstantSplat Worker")
+app = FastAPI(title="RayMax InstantSplat Worker")
 
 
 class StartJobRequest(BaseModel):
@@ -242,7 +242,7 @@ async def _run_job(job_id: str, supabase_url: str) -> None:
                 {"status": "running", "progress": 10, "stage": "Downloading sources"},
             )
             job = await _fetch_job(client, supabase_url, job_id)
-            with tempfile.TemporaryDirectory(prefix=f"deepx-{job_id}-") as temp:
+            with tempfile.TemporaryDirectory(prefix=f"raymax-{job_id}-") as temp:
                 root = Path(temp)
                 input_dir = root / "input"
                 output_dir = root / "output"

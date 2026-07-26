@@ -1,4 +1,4 @@
--- Manual restoration notes for the pre-image-only DeepX renderer.
+﻿-- Manual restoration notes for the pre-image-only RayMax renderer.
 --
 -- This file is intentionally outside supabase/migrations so it never runs
 -- automatically. Use it only together with app code restored from version

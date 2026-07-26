@@ -1,4 +1,4 @@
-# DeepX InstantSplat Worker
+﻿# RayMax InstantSplat Worker
 
 GPU worker contract for training Gaussian splats from uploaded source images.
 
@@ -43,7 +43,7 @@ INSTANTSPLAT_COMMAND="python /opt/InstantSplat/run.py --input {input_dir} --outp
 Optional:
 
 - `SUPABASE_URL`: fallback Supabase URL when the request omits it.
-- `THREE_D_ASSETS_BUCKET`: defaults to `deepx-3d-assets`.
+- `THREE_D_ASSETS_BUCKET`: defaults to `raymax-3d-assets`.
 - `PREFERRED_SPLAT_FORMAT`: defaults to `ksplat`.
 - `INSTANTSPLAT_COMMAND_SHELL=1`: run the command through the shell.
 

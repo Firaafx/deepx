@@ -1,4 +1,4 @@
-// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
+﻿// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
 
 import 'dart:async';
 import 'dart:convert';
@@ -62,8 +62,8 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   @override
   void initState() {
     super.initState();
-    _elementId = 'deepx-off-axis-viewer-${_nextId++}';
-    _viewType = 'deepx-off-axis-view-$_elementId';
+    _elementId = 'raymax-off-axis-viewer-${_nextId++}';
+    _viewType = 'raymax-off-axis-view-$_elementId';
     _messageSub = html.window.onMessage.listen(_handleMessage);
     _resizeSub = html.window.onResize.listen((_) => _resizeOrRecover());
     _visibilitySub = html.document.onVisibilityChange.listen((_) {
@@ -82,7 +82,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
 
   @override
   void dispose() {
-    final dynamic viewer = js.context['DeepXOffAxisViewer'];
+    final dynamic viewer = js.context['RayMaxOffAxisViewer'];
     if (viewer != null) {
       viewer.callMethod('dispose', <Object>[_elementId]);
     }
@@ -95,7 +95,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   }
 
   void _mountOrUpdate({bool forceMount = false}) {
-    final dynamic viewer = js.context['DeepXOffAxisViewer'];
+    final dynamic viewer = js.context['RayMaxOffAxisViewer'];
     if (viewer == null) {
       _scheduleMountRetry(forceMount: forceMount);
       return;
@@ -175,7 +175,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
 
   void _resizeOrRecover() {
     if (!mounted) return;
-    final dynamic viewer = js.context['DeepXOffAxisViewer'];
+    final dynamic viewer = js.context['RayMaxOffAxisViewer'];
     if (viewer == null) return;
     if (_viewerAlive(viewer)) {
       try {
@@ -202,7 +202,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   }
 
   void _resizeIfAlive() {
-    final dynamic viewer = js.context['DeepXOffAxisViewer'];
+    final dynamic viewer = js.context['RayMaxOffAxisViewer'];
     if (viewer == null || !_viewerAlive(viewer)) return;
     try {
       viewer.callMethod('resize', <Object>[_elementId]);
@@ -251,7 +251,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
   void _handleMessage(html.MessageEvent event) {
     final Map<String, dynamic>? data = _messageMap(event.data);
     if (data == null || data['elementId'] != _elementId) return;
-    if (data['type'] == 'deepx-off-axis-load-state') {
+    if (data['type'] == 'raymax-off-axis-load-state') {
       final dynamic rawProgress = data['progress'];
       final double? progress = rawProgress is num
           ? rawProgress.toDouble().clamp(0, 1).toDouble()
@@ -264,7 +264,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       });
       return;
     }
-    if (data['type'] == 'deepx-off-axis-transform-changed') {
+    if (data['type'] == 'raymax-off-axis-transform-changed') {
       final callback = widget.onTransformChanged;
       if (callback == null) return;
       final Map<String, dynamic>? transform = _messageMap(data['transform']);
@@ -273,7 +273,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       callback(transform);
       return;
     }
-    if (data['type'] == 'deepx-off-axis-viewer-state-changed') {
+    if (data['type'] == 'raymax-off-axis-viewer-state-changed') {
       final callback = widget.onViewerStateChanged;
       if (callback == null) return;
       final Map<String, dynamic>? viewerState = _messageMap(data['viewer']);
@@ -282,7 +282,7 @@ class _ThreeDViewerState extends State<ThreeDViewer> {
       callback(viewerState);
       return;
     }
-    if (data['type'] == 'deepx-off-axis-spatial-view-requested') {
+    if (data['type'] == 'raymax-off-axis-spatial-view-requested') {
       widget.onSpatialViewRequested?.call();
     }
   }

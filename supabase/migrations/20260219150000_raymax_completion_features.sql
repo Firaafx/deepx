@@ -1,4 +1,4 @@
--- DeepX completion: watch later + collection engagement + view stats.
+﻿-- RayMax completion: watch later + collection engagement + view stats.
 
 create table if not exists public.watch_later_items (
   id uuid primary key default gen_random_uuid(),

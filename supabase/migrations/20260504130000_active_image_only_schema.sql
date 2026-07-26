@@ -1,8 +1,8 @@
--- DeepX active image-only schema reset.
+﻿-- RayMax active image-only schema reset.
 -- Historical migrations keep the old renderer chronology; this migration
 -- removes active render-mode and tracker storage from the live schema.
 
-create or replace function public.deepx_image_payload_v3(
+create or replace function public.raymax_image_payload_v3(
   p_payload jsonb,
   p_editor text default 'active_image_only_migration'
 )
@@ -13,7 +13,7 @@ as $$
   select jsonb_build_object(
     'schemaVersion', 3,
     'image', jsonb_build_object(
-      'url', coalesce(public.deepx_extract_image_url(p_payload), ''),
+      'url', coalesce(public.raymax_extract_image_url(p_payload), ''),
       'offsetX', 0.0,
       'offsetY', 0.0,
       'scale', 1.0,
@@ -33,20 +33,20 @@ $$;
 
 update public.presets
 set
-  payload = public.deepx_image_payload_v3(payload, 'active_image_only_post'),
-  thumbnail_payload = public.deepx_image_payload_v3(
+  payload = public.raymax_image_payload_v3(payload, 'active_image_only_post'),
+  thumbnail_payload = public.raymax_image_payload_v3(
     coalesce(nullif(thumbnail_payload, '{}'::jsonb), payload),
     'active_image_only_card'
   );
 
 update public.collection_items
-set preset_snapshot = public.deepx_image_payload_v3(
+set preset_snapshot = public.raymax_image_payload_v3(
   preset_snapshot,
   'active_image_only_collection_item'
 );
 
 update public.collections
-set thumbnail_payload = public.deepx_image_payload_v3(
+set thumbnail_payload = public.raymax_image_payload_v3(
   coalesce(nullif(thumbnail_payload, '{}'::jsonb), '{}'::jsonb),
   'active_image_only_collection_card'
 );

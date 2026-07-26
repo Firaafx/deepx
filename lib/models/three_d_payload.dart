@@ -1,43 +1,43 @@
-import 'dart:math' as math;
+﻿import 'dart:math' as math;
 
-enum DeepXMediaType {
+enum RayMaxMediaType {
   image,
   gaussianSplat,
   triangleMesh,
   missing3d,
 }
 
-extension DeepXMediaTypeX on DeepXMediaType {
+extension RayMaxMediaTypeX on RayMaxMediaType {
   String get databaseValue {
     return switch (this) {
-      DeepXMediaType.image => 'image',
-      DeepXMediaType.gaussianSplat => 'gaussian_splat',
-      DeepXMediaType.triangleMesh => 'triangle_mesh',
-      DeepXMediaType.missing3d => 'missing_3d',
+      RayMaxMediaType.image => 'image',
+      RayMaxMediaType.gaussianSplat => 'gaussian_splat',
+      RayMaxMediaType.triangleMesh => 'triangle_mesh',
+      RayMaxMediaType.missing3d => 'missing_3d',
     };
   }
 }
 
-DeepXMediaType mediaTypeFromString(String? value) {
+RayMaxMediaType mediaTypeFromString(String? value) {
   return switch ((value ?? '').trim().toLowerCase()) {
     'gaussian_splat' ||
     'splat' ||
     'ksplat' ||
     'ply' ||
     '3dgs' =>
-      DeepXMediaType.gaussianSplat,
+      RayMaxMediaType.gaussianSplat,
     'triangle_mesh' ||
     'mesh' ||
     'model' ||
     'glb' ||
     'gltf' =>
-      DeepXMediaType.triangleMesh,
+      RayMaxMediaType.triangleMesh,
     'missing_3d' ||
     'missing3d' ||
     'missing' ||
     'no_3d' =>
-      DeepXMediaType.missing3d,
-    _ => DeepXMediaType.image,
+      RayMaxMediaType.missing3d,
+    _ => RayMaxMediaType.image,
   };
 }
 
@@ -60,7 +60,7 @@ class ThreeDAssetPayload {
 
   static const int schemaVersion = 1;
 
-  final DeepXMediaType mediaType;
+  final RayMaxMediaType mediaType;
   final String assetUrl;
   final String assetPath;
   final String format;
@@ -255,7 +255,7 @@ Map<String, dynamic> payloadWithThreeDViewerState(
 
 extension ThreeDAssetPayloadCopy on ThreeDAssetPayload {
   ThreeDAssetPayload copyWith({
-    DeepXMediaType? mediaType,
+    RayMaxMediaType? mediaType,
     String? assetUrl,
     String? assetPath,
     String? format,

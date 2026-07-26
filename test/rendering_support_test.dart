@@ -1,13 +1,13 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:ui';
 
-import 'package:deepx/models/image_payload.dart';
-import 'package:deepx/models/render_preset.dart';
-import 'package:deepx/models/three_d_payload.dart';
-import 'package:deepx/rendering_support.dart';
-import 'package:deepx/services/appearance_settings_service.dart';
-import 'package:deepx/show_feed.dart';
-import 'package:deepx/widgets/svg_card_shell.dart';
+import 'package:raymax/models/image_payload.dart';
+import 'package:raymax/models/render_preset.dart';
+import 'package:raymax/models/three_d_payload.dart';
+import 'package:raymax/rendering_support.dart';
+import 'package:raymax/services/appearance_settings_service.dart';
+import 'package:raymax/show_feed.dart';
+import 'package:raymax/widgets/svg_card_shell.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -89,7 +89,7 @@ void main() {
 
   test('3D gaussian payload is detected without image normalization', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.gaussianSplat,
+      mediaType: RayMaxMediaType.gaussianSplat,
       assetUrl: 'https://example.com/scene.ksplat',
       assetPath: 'user/gaussian-splats/job/scene.ksplat',
       format: 'ksplat',
@@ -103,7 +103,7 @@ void main() {
     final ThreeDAssetPayload? asset = threeDAssetFromPayload(payload);
 
     expect(isThreeDPayload(payload), isTrue);
-    expect(mediaTypeFromPayload(payload), DeepXMediaType.gaussianSplat);
+    expect(mediaTypeFromPayload(payload), RayMaxMediaType.gaussianSplat);
     expect(asset, isNotNull);
     expect(asset!.assetUrl, 'https://example.com/scene.ksplat');
     expect(asset.format, 'ksplat');
@@ -113,7 +113,7 @@ void main() {
 
   test('render payload normalization preserves 3D payload contracts', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.triangleMesh,
+      mediaType: RayMaxMediaType.triangleMesh,
       assetUrl: 'https://example.com/model.glb',
       format: 'glb',
       meta: const <String, dynamic>{'keep': true},
@@ -124,7 +124,7 @@ void main() {
       editor: 'test_editor',
     );
 
-    expect(mediaTypeFromPayload(normalized), DeepXMediaType.triangleMesh);
+    expect(mediaTypeFromPayload(normalized), RayMaxMediaType.triangleMesh);
     expect(
         (normalized['media'] as Map)['url'], 'https://example.com/model.glb');
     expect((normalized['meta'] as Map)['editor'], 'test_editor');
@@ -133,7 +133,7 @@ void main() {
 
   test('render payload normalization preserves 3D camera and transform', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.gaussianSplat,
+      mediaType: RayMaxMediaType.gaussianSplat,
       assetUrl: 'https://example.com/scene.ksplat',
       format: 'ksplat',
       transform: const <String, dynamic>{
@@ -164,7 +164,7 @@ void main() {
 
   test('3D transform defaults match off-axis reference model controls', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.triangleMesh,
+      mediaType: RayMaxMediaType.triangleMesh,
       assetUrl: 'https://example.com/model.glb',
       format: 'glb',
     );
@@ -178,7 +178,7 @@ void main() {
 
   test('3D transform payload preserves model position scale and rotation', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.gaussianSplat,
+      mediaType: RayMaxMediaType.gaussianSplat,
       assetUrl: 'https://example.com/scene.ksplat',
       format: 'ksplat',
     );
@@ -194,12 +194,12 @@ void main() {
     expect(asset.transform['position'], <double>[0.25, -0.12, -0.8]);
     expect(asset.transform['scale'], 0.118);
     expect(asset.transform['rotation'], <double>[0.1, -0.7, 0.02]);
-    expect(asset.mediaType, DeepXMediaType.gaussianSplat);
+    expect(asset.mediaType, RayMaxMediaType.gaussianSplat);
   });
 
   test('3D viewer state defaults match WiiDesktopVR viewer controls', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.triangleMesh,
+      mediaType: RayMaxMediaType.triangleMesh,
       assetUrl: 'https://example.com/model.glb',
       format: 'glb',
     );
@@ -219,7 +219,7 @@ void main() {
 
   test('3D viewer state and image layers are preserved independently', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.gaussianSplat,
+      mediaType: RayMaxMediaType.gaussianSplat,
       assetUrl: 'https://example.com/scene.ksplat',
       format: 'ksplat',
       viewer: const <String, dynamic>{
@@ -284,7 +284,7 @@ void main() {
   test('collection snapshots accept 3D while thumbnails stay image payloads',
       () {
     final Map<String, dynamic> meshPayload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.triangleMesh,
+      mediaType: RayMaxMediaType.triangleMesh,
       assetUrl: 'https://example.com/model.glb',
       format: 'glb',
     );
@@ -301,9 +301,9 @@ void main() {
       editor: 'collection_thumbnail',
     );
 
-    expect(mediaTypeFromPayload(itemSnapshot), DeepXMediaType.triangleMesh);
+    expect(mediaTypeFromPayload(itemSnapshot), RayMaxMediaType.triangleMesh);
     expect(threeDAssetFromPayload(itemSnapshot), isNotNull);
-    expect(mediaTypeFromPayload(thumbnailSnapshot), DeepXMediaType.image);
+    expect(mediaTypeFromPayload(thumbnailSnapshot), RayMaxMediaType.image);
     expect(imageUrlFromPayload(thumbnailSnapshot),
         'https://example.com/thumb.webp');
   });
@@ -323,10 +323,10 @@ void main() {
       editor: 'card_thumbnail',
     );
 
-    expect(mediaTypeFromPayload(renderPayload), DeepXMediaType.missing3d);
+    expect(mediaTypeFromPayload(renderPayload), RayMaxMediaType.missing3d);
     expect(threeDAssetFromPayload(renderPayload), isNull);
     expect(missingThreeDAssetLabel(renderPayload), 'No 3D');
-    expect(mediaTypeFromPayload(thumbnailPayload), DeepXMediaType.image);
+    expect(mediaTypeFromPayload(thumbnailPayload), RayMaxMediaType.image);
     expect(imageUrlFromPayload(thumbnailPayload),
         'https://example.com/thumb.webp');
   });
@@ -354,7 +354,7 @@ void main() {
 
   test('render preset infers 3D media type while keeping image fallback', () {
     final Map<String, dynamic> splatPayload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.gaussianSplat,
+      mediaType: RayMaxMediaType.gaussianSplat,
       assetUrl: 'https://example.com/scene.ksplat',
       format: 'ksplat',
     );
@@ -402,18 +402,18 @@ void main() {
   });
 
   test('3D media detection accepts supported manual upload extensions', () {
-    expect(mediaTypeFromString('ply'), DeepXMediaType.gaussianSplat);
-    expect(mediaTypeFromString('ksplat'), DeepXMediaType.gaussianSplat);
-    expect(mediaTypeFromString('splat'), DeepXMediaType.gaussianSplat);
-    expect(mediaTypeFromString('3dgs'), DeepXMediaType.gaussianSplat);
-    expect(mediaTypeFromString('glb'), DeepXMediaType.triangleMesh);
-    expect(mediaTypeFromString('gltf'), DeepXMediaType.triangleMesh);
-    expect(mediaTypeFromString('missing_3d'), DeepXMediaType.missing3d);
+    expect(mediaTypeFromString('ply'), RayMaxMediaType.gaussianSplat);
+    expect(mediaTypeFromString('ksplat'), RayMaxMediaType.gaussianSplat);
+    expect(mediaTypeFromString('splat'), RayMaxMediaType.gaussianSplat);
+    expect(mediaTypeFromString('3dgs'), RayMaxMediaType.gaussianSplat);
+    expect(mediaTypeFromString('glb'), RayMaxMediaType.triangleMesh);
+    expect(mediaTypeFromString('gltf'), RayMaxMediaType.triangleMesh);
+    expect(mediaTypeFromString('missing_3d'), RayMaxMediaType.missing3d);
   });
 
   test('3D camera payload preserves rotation, fov, and distance', () {
     final Map<String, dynamic> payload = simpleThreeDPayload(
-      mediaType: DeepXMediaType.triangleMesh,
+      mediaType: RayMaxMediaType.triangleMesh,
       assetUrl: 'https://example.com/model.glb',
       format: 'glb',
     );
@@ -614,9 +614,9 @@ void main() {
       'blank' '${3}${6}${0}' 'Payload',
       'infer' '${3}${6}${0}' 'AssetKind',
       'assets/' 'tr' 'acker.html',
-      'deepx_' 'tr' 'acker_bridge',
-      'deepx_' 'three_viewer',
-      'DeepX' 'ThreeViewer',
+      'raymax_' 'tr' 'acker_bridge',
+      'raymax_' 'three_viewer',
+      'RayMax' 'ThreeViewer',
       'Tr' 'ackerOverlay',
       'tr' 'acker_controller',
     ];
@@ -630,8 +630,8 @@ void main() {
     for (final String path in <String>[
       'web/tracker.html',
       'web/tracker.js',
-      'web/deepx_tracker_bridge.js',
-      'web/deepx_three_viewer.js',
+      'web/raymax_tracker_bridge.js',
+      'web/raymax_three_viewer.js',
       'lib/widgets/tracker_overlay.dart',
       'lib/widgets/tracker_platform_view.dart',
       'lib/services/tracker_controller.dart',

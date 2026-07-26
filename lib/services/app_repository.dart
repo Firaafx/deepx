@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -37,10 +37,10 @@ class AppRepository {
 
   static final AppRepository instance = AppRepository._();
 
-  static const String assetsBucket = 'deepx-assets';
-  static const String avatarsBucket = 'deepx-avatars';
-  static const String sourceImagesBucket = 'deepx-3d-sources';
-  static const String threeDAssetsBucket = 'deepx-3d-assets';
+  static const String assetsBucket = 'raymax-assets';
+  static const String avatarsBucket = 'raymax-avatars';
+  static const String sourceImagesBucket = 'raymax-3d-sources';
+  static const String threeDAssetsBucket = 'raymax-3d-assets';
   static final RegExp _uuidPattern = RegExp(
     r'^[0-9a-fA-F]{8}\-'
     r'[0-9a-fA-F]{4}\-'
