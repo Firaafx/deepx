@@ -61,7 +61,7 @@
     autoFitPrimary: false,
     autoFitTargetId: '',
     autoFitNonce: 0,
-    trackingSmoothing: 0.3,
+    trackingSmoothing: 0.05,
     deadZoneX: 0,
     deadZoneY: 0,
     deadZoneZ: 0
@@ -251,12 +251,13 @@
         right: 16px;
         bottom: 16px;
         z-index: 14;
-        width: 256px;
-        height: 392px;
+        width: min(320px, calc(100% - 32px));
+        aspect-ratio: 4 / 3;
+        height: auto;
         border: 0;
         border-radius: 12px;
         overflow: hidden;
-        background: #000;
+        background: transparent;
         box-shadow: 0 16px 36px rgba(0,0,0,0.42);
         pointer-events: none;
         display: none;
@@ -324,9 +325,9 @@
         top: 0;
         width: 100%;
         height: 100%;
-        object-fit: cover;
+        object-fit: contain;
       }
-      .dx-camera-preview video { transform: scaleX(-1); }
+      .dx-camera-preview canvas { background: transparent; }
       .dx-off-axis-root.dx-clean-view .dx-viewer-overlay { display: none !important; }
       .dx-loading-message {
         height: 100%;
@@ -1181,8 +1182,8 @@
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          width: { ideal: 320, max: 640 },
-          height: { ideal: 240, max: 480 },
+          width: { ideal: 320, max: 320 },
+          height: { ideal: 240, max: 240 },
           frameRate: { ideal: 60, max: 60 },
           facingMode: 'user'
         }
@@ -1197,8 +1198,8 @@
         maxNumFaces: 1,
         refineLandmarks: true,
         selfieMode: false,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.65
+        minDetectionConfidence: 0.45,
+        minTrackingConfidence: 0.5
       });
       this.faceMesh.onResults((results) => this.handleResults(results));
       this.running = true;
@@ -3173,8 +3174,6 @@
       if (!ctx) return;
       ctx.save();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.scale(-1, 1);
-      ctx.translate(-canvas.width, 0);
       const faces = results && results.multiFaceLandmarks ? results.multiFaceLandmarks : [];
       if (faces.length && window.drawConnectors && window.drawLandmarks) {
         for (const landmarks of faces) {

@@ -11226,7 +11226,7 @@ Map<String, dynamic> _normalizedThreeDViewerState(dynamic value) {
     'autoFitNonce': raw['autoFitNonce'] is num
         ? (raw['autoFitNonce'] as num).toInt()
         : int.tryParse(raw['autoFitNonce']?.toString() ?? '') ?? 0,
-    'trackingSmoothing': _threeDTransformNumber(raw['trackingSmoothing'], 0.3)
+    'trackingSmoothing': _threeDTransformNumber(raw['trackingSmoothing'], 0.05)
         .clamp(0.0, 1.0)
         .toDouble(),
     'deadZoneX':
@@ -11413,7 +11413,7 @@ Map<String, dynamic> _payloadWithThreeDViewerStateSnapshot(
         : 0,
     trackingSmoothing: _threeDTransformNumber(
       normalized['trackingSmoothing'],
-      0.3,
+      0.05,
     ),
     deadZoneX: _threeDTransformNumber(normalized['deadZoneX'], 0),
     deadZoneY: _threeDTransformNumber(normalized['deadZoneY'], 0),

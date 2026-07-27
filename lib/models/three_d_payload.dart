@@ -343,7 +343,7 @@ Map<String, dynamic> _defaultViewerState() {
     'autoFitPrimary': false,
     'autoFitTargetId': '',
     'autoFitNonce': 0,
-    'trackingSmoothing': 0.3,
+    'trackingSmoothing': 0.05,
     'deadZoneX': 0.0,
     'deadZoneY': 0.0,
     'deadZoneZ': 0.0,
@@ -404,7 +404,7 @@ Map<String, dynamic> _normalizedViewerState(Map<String, dynamic> value) {
     'autoFitTargetId': _string(value['autoFitTargetId']),
     'autoFitNonce': _nullableInt(value['autoFitNonce']) ?? 0,
     'trackingSmoothing':
-        _safeDouble(value['trackingSmoothing'], 0.3).clamp(0, 1).toDouble(),
+        _safeDouble(value['trackingSmoothing'], 0.05).clamp(0, 1).toDouble(),
     'deadZoneX': _safeDouble(value['deadZoneX'], 0).clamp(0, 0.2).toDouble(),
     'deadZoneY': _safeDouble(value['deadZoneY'], 0).clamp(0, 0.2).toDouble(),
     'deadZoneZ': _safeDouble(value['deadZoneZ'], 0).clamp(0, 0.4).toDouble(),

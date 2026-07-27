@@ -211,7 +211,7 @@ void main() {
     expect(asset.viewer['objectVisible'], isTrue);
     expect(asset.viewer['selectedLayerId'], '');
     expect(asset.viewer['imageLayers'], isEmpty);
-    expect(asset.viewer['trackingSmoothing'], 0.3);
+    expect(asset.viewer['trackingSmoothing'], 0.05);
     expect(asset.viewer['deadZoneX'], 0.0);
     expect(asset.viewer['deadZoneY'], 0.0);
     expect(asset.viewer['deadZoneZ'], 0.0);
