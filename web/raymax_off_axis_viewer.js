@@ -5,6 +5,43 @@
   const loadingMessages = new WeakMap();
   const assetCache = new Map();
   const textureCache = new Map();
+  const globalCameraPreview = {
+    active: false,
+    root: null,
+    video: null,
+
+    show(stream) {
+      this.active = true;
+      if (!this.root) {
+        this.root = document.createElement('div');
+        this.root.className = 'dx-global-camera-preview';
+        this.video = document.createElement('video');
+        this.video.autoplay = true;
+        this.video.muted = true;
+        this.video.playsInline = true;
+        this.root.appendChild(this.video);
+        document.body.appendChild(this.root);
+      }
+      this.video.srcObject = stream || null;
+      if (stream) this.video.play().catch(() => {});
+    },
+
+    hide() {
+      this.active = false;
+      if (this.video) {
+        try { this.video.pause(); } catch (_) {}
+        this.video.srcObject = null;
+      }
+      if (this.root) this.root.remove();
+      this.root = null;
+      this.video = null;
+    },
+
+    sync(stream) {
+      if (!this.active) return;
+      this.show(stream);
+    }
+  };
 
   const WII_ROOM = Object.freeze({
     numGridlines: 10,
@@ -327,7 +364,30 @@
         height: 100%;
         object-fit: contain;
       }
+      .dx-camera-preview video { transform: scaleX(-1); }
+      .dx-camera-preview.is-mesh-only { background: transparent; box-shadow: none; }
+      .dx-camera-preview.is-mesh-only video { display: none; }
       .dx-camera-preview canvas { background: transparent; }
+      .dx-global-camera-preview {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 2147483647;
+        width: min(320px, calc(100vw - 32px));
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        border-radius: 12px;
+        background: #000;
+        box-shadow: 0 16px 36px rgba(0,0,0,0.42);
+        pointer-events: none;
+      }
+      .dx-global-camera-preview video {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        transform: scaleX(-1);
+      }
       .dx-off-axis-root.dx-clean-view .dx-viewer-overlay { display: none !important; }
       .dx-loading-message {
         height: 100%;
@@ -415,6 +475,7 @@
         ctx.ensureTracking();
         ctx.resize();
       }
+      if (globalCameraPreview.active) faceTracker.ensure().catch(() => {});
     });
     window.addEventListener('pagehide', () => faceTracker.stop('pagehide'));
     window.addEventListener('beforeunload', () => faceTracker.stop('beforeunload'));
@@ -1139,6 +1200,9 @@
     lastWorldPosition: { x: 0, y: 0, z: 0.6 },
     lastSentAt: 0,
     lastResultsAt: 0,
+    previousLandmarks: [],
+    latestLandmarks: [],
+    landmarkIntervalMs: 33,
     stats: {
       latencyMs: null,
       faceDetected: false,
@@ -1162,9 +1226,14 @@
       return DEFAULT_VIEWER_STATE;
     },
 
+    hasConsumer() {
+      return globalCameraPreview.active ||
+        [...viewers.values()].some((ctx) => ctx.trackingEnabled && !ctx.disposed);
+    },
+
     async ensure() {
       if (document.hidden) return;
-      if (![...viewers.values()].some((ctx) => ctx.trackingEnabled && !ctx.disposed)) {
+      if (!this.hasConsumer()) {
         await this.stop('no-viewers');
         return;
       }
@@ -1208,6 +1277,7 @@
     },
 
     syncPreviewStreams() {
+      globalCameraPreview.sync(this.stream);
       for (const ctx of viewers.values()) {
         if (ctx.previewVideo) {
           ctx.previewVideo.srcObject = this.stream || null;
@@ -1234,6 +1304,11 @@
     handleResults(results) {
       const now = performance.now();
       const landmarks = results && results.multiFaceLandmarks ? results.multiFaceLandmarks : [];
+      if (this.lastResultsAt) {
+        this.landmarkIntervalMs = clamp(now - this.lastResultsAt, 8, 120);
+      }
+      this.previousLandmarks = this.latestLandmarks;
+      this.latestLandmarks = landmarks;
       const firstFace = landmarks[0] || null;
       this.poseTracker.updateSettings(this.activeTrackingSettings());
       const pose = this.poseTracker.extractHeadPoseFromLandmarks(landmarks);
@@ -1255,8 +1330,34 @@
             ctx.headPose = this.lastPose;
           }
         }
-        if (ctx.previewVisible) ctx.drawPreview(results);
+        if (ctx.previewVisible) ctx.drawPreview();
       }
+    },
+
+    predictedLandmarks(now = performance.now()) {
+      const latestFaces = this.latestLandmarks || [];
+      const previousFaces = this.previousLandmarks || [];
+      if (!latestFaces.length) return latestFaces;
+      const elapsedMs = Math.max(0, now - this.lastResultsAt);
+      const processingMs = Number(this.stats.latencyMs) || 0;
+      const predictionMs = clamp(elapsedMs + processingMs * 0.55, 0, 72);
+      const ratio = predictionMs / Math.max(this.landmarkIntervalMs || 33, 8);
+      return latestFaces.map((face, faceIndex) => {
+        const previous = previousFaces[faceIndex];
+        if (!previous || previous.length !== face.length || ratio <= 0) return face;
+        return face.map((point, pointIndex) => {
+          const prior = previous[pointIndex];
+          if (!prior) return point;
+          return {
+            ...point,
+            x: clamp(point.x + (point.x - prior.x) * ratio, 0, 1),
+            y: clamp(point.y + (point.y - prior.y) * ratio, 0, 1),
+            z: Number.isFinite(point.z) && Number.isFinite(prior.z)
+              ? point.z + (point.z - prior.z) * ratio
+              : point.z
+          };
+        });
+      });
     },
 
     extractBlinkState(face) {
@@ -1296,6 +1397,9 @@
         this.stream = null;
       }
       this.sending = false;
+      this.previousLandmarks = [];
+      this.latestLandmarks = [];
+      this.landmarkIntervalMs = 33;
       this.stats = {
         latencyMs: null,
         faceDetected: false,
@@ -2471,9 +2575,15 @@
       this.root.appendChild(this.trackingControls);
       this.root.appendChild(this.statsPanel);
       this.setTrackingPanelVisible(false);
+      if (globalCameraPreview.active) {
+        this.previewVisible = true;
+        this.preview.style.display = 'block';
+        this.preview.classList.add('is-mesh-only');
+      }
 
       if (this.showModelControls) this.buildModelControls();
       this.buildBottomButtons();
+      if (globalCameraPreview.active) this.setGlobalPreviewVisible(true);
     }
 
     makeButton(icon, title, onClick) {
@@ -2497,6 +2607,7 @@
         target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
         cube: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',
         camera: '<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/>',
+        popout: '<path d="M14 4h6v6M20 4l-8 8"/><rect x="4" y="8" width="12" height="12" rx="2"/>',
         reset: '<path d="M4 8V4h4"/><path d="M4.7 4.7A8 8 0 1 1 4 15"/>',
         spatial: '<path d="M12 3 4 8l8 5 8-5-8-5Z"/><path d="m4 12 8 5 8-5M4 16l8 5 8-5"/>',
         eye: '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/>',
@@ -2789,6 +2900,9 @@
         this.setPreviewVisible(!this.previewVisible);
         preview.classList.toggle('is-active', this.previewVisible);
       });
+      const popout = this.makeButton('popout', 'Pop camera preview out', () => {
+        this.setGlobalPreviewVisible(!globalCameraPreview.active);
+      });
       const trackingPanel = this.makeButton('panels', 'Show tracking controls and stats', () => {
         this.setTrackingPanelVisible(!this.trackingPanelVisible);
       });
@@ -2815,12 +2929,13 @@
       this.dartsButton = darts;
       this.objectButton = object;
       this.previewButton = preview;
+      this.globalPreviewButton = popout;
       this.trackingPanelButton = trackingPanel;
       this.pauseButton = pause;
       this.spatialButton = spatial;
       this.redCyanButton = redCyan;
       if (this.showSpatialViewButton) buttons.append(spatialGroup);
-      buttons.append(fullscreen, settings, debug, grid, darts, object, preview, trackingPanel, pause);
+      buttons.append(fullscreen, settings, debug, grid, darts, object, preview, popout, trackingPanel, pause);
       this.root.appendChild(buttons);
       document.addEventListener('fullscreenchange', () => {
         fullscreen.innerHTML = this.iconSvg(document.fullscreenElement ? 'minimize' : 'fullscreen');
@@ -3167,14 +3282,44 @@
       }
     }
 
-    drawPreview(results) {
+    setGlobalPreviewVisible(visible) {
+      const enabled = visible === true;
+      if (enabled) {
+        this.setPreviewVisible(true);
+        if (this.preview) this.preview.classList.add('is-mesh-only');
+        globalCameraPreview.show(faceTracker.stream);
+        faceTracker.ensure().catch((error) => {
+          console.warn('Unable to start camera preview:', error);
+          globalCameraPreview.hide();
+          if (this.preview) this.preview.classList.remove('is-mesh-only');
+        });
+      } else {
+        globalCameraPreview.hide();
+        if (this.preview) this.preview.classList.remove('is-mesh-only');
+        if (faceTracker.stream && this.previewVideo) {
+          this.previewVideo.srcObject = faceTracker.stream;
+          this.previewVideo.play().catch(() => {});
+        }
+      }
+      if (this.globalPreviewButton) {
+        this.globalPreviewButton.classList.toggle('is-active', enabled);
+        this.globalPreviewButton.title = enabled
+          ? 'Return camera preview to the 3D viewer'
+          : 'Pop camera preview out';
+        this.globalPreviewButton.setAttribute('aria-label', this.globalPreviewButton.title);
+      }
+    }
+
+    drawPreview() {
       if (!this.previewVisible || !this.previewCanvas) return;
       const canvas = this.previewCanvas;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.save();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const faces = results && results.multiFaceLandmarks ? results.multiFaceLandmarks : [];
+      ctx.scale(-1, 1);
+      ctx.translate(-canvas.width, 0);
+      const faces = faceTracker.predictedLandmarks();
       if (faces.length && window.drawConnectors && window.drawLandmarks) {
         for (const landmarks of faces) {
           window.drawConnectors(ctx, landmarks, window.FACEMESH_TESSELATION, { color: 'rgba(255,255,255,0.16)', lineWidth: 0.55 });
@@ -3481,6 +3626,7 @@
         return;
       }
       this.updateOffAxisCamera();
+      if (this.previewVisible) this.drawPreview();
       this.updateStatsPanel();
       this.renderer.render(this.scene, this.camera);
     }
@@ -3632,7 +3778,7 @@
       const root = document.getElementById(elementId);
       if (root) root.innerHTML = '';
     }
-    if (![...viewers.values()].some((item) => item.trackingEnabled && !item.disposed)) {
+    if (!faceTracker.hasConsumer()) {
       faceTracker.stop('no-viewers');
     }
   }
